@@ -121,6 +121,7 @@
 
 @theme inline {
   --color-gold: var(--gold);
+  --color-glass: var(--glass);
   --color-gold-soft: var(--gold-soft);
   --color-gold-deep: var(--gold-deep);
   --font-display: "Instrument Serif", ui-serif, Georgia, serif;

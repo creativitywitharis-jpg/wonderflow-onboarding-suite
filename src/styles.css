@@ -309,6 +309,33 @@
   }
 }
 
+/* Soft pulsing AI glow for intelligence cards */
+@layer components {
+  .ai-glow {
+    animation: ai-glow-pulse 4.5s ease-in-out infinite;
+  }
+}
+@keyframes ai-glow-pulse {
+  0%,
+  100% {
+    box-shadow:
+      var(--shadow-elevate),
+      0 0 0 1px oklch(0.84 0.14 84 / 18%),
+      0 0 42px -14px oklch(0.84 0.14 84 / 35%);
+  }
+  50% {
+    box-shadow:
+      var(--shadow-elevate),
+      0 0 0 1px oklch(0.84 0.14 84 / 32%),
+      0 0 72px -8px oklch(0.84 0.14 84 / 55%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-glow {
+    animation: none;
+  }
+}
+
 @keyframes blink {
   0%,
   80%,

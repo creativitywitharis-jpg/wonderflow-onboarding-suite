@@ -162,7 +162,7 @@ const quickActions: { icon: LucideIcon; label: string }[] = [
 function AiBriefing({ company }: { company: string }) {
   return (
     <Reveal>
-      <GlassCard className="glass-strong relative overflow-hidden p-6 sm:p-7">
+      <GlassCard className="ai-glow glass-strong relative overflow-hidden p-6 sm:p-7">
         <div className="veil pointer-events-none absolute inset-0 opacity-70" />
         <div className="relative flex items-start gap-4">
           <span
@@ -700,6 +700,59 @@ function Topbar({ company, greeting, dateStr }: { company: string; greeting: str
   );
 }
 
+const revThisYear = [220, 238, 231, 255, 268, 281, 296, 312, 305, 331, 352, 374];
+const revLastYear = [180, 192, 198, 205, 214, 220, 232, 240, 246, 258, 270, 285];
+const revMonths = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
+
+function RevenueCard() {
+  const { ref, inView } = useInView();
+  const W = 720;
+  const H = 200;
+  const all = [...revThisYear, ...revLastYear];
+  const min = Math.min(...all) * 0.85;
+  const max = Math.max(...all) * 1.04;
+  const x = (i: number) => (i / (revThisYear.length - 1)) * W;
+  const y = (v: number) => H - ((v - min) / (max - min)) * H;
+  const line = (d: number[]) => d.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+  const area = `${line(revThisYear)} L ${W} ${H} L 0 ${H} Z`;
+  return (
+    <Reveal>
+      <GlassCard className="p-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <SectionLabel icon={LineChart}>Revenue</SectionLabel>
+            <div className="mt-2 flex items-baseline gap-3">
+              <span className="text-3xl font-semibold tracking-tight tabular-nums">$3.42M</span>
+              <Delta value="18%" />
+              <span className="text-xs text-muted-foreground">YTD vs last year</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 rounded" style={{ background: "var(--gold)" }} /> This year</span>
+            <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 rounded bg-muted-foreground/50" /> Last year</span>
+          </div>
+        </div>
+        <div ref={ref} className="mt-5">
+          <svg viewBox={`0 0 ${W} ${H}`} className="h-48 w-full" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="dash-rev" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="oklch(0.84 0.14 84 / 30%)" />
+                <stop offset="100%" stopColor="oklch(0.84 0.14 84 / 0%)" />
+              </linearGradient>
+            </defs>
+            <path d={area} fill="url(#dash-rev)" style={{ opacity: inView ? 1 : 0, transition: "opacity 0.9s ease" }} />
+            <path d={line(revLastYear)} fill="none" stroke="oklch(0.7 0.015 85 / 55%)" strokeWidth="1.8" strokeDasharray="5 4" style={{ opacity: inView ? 1 : 0, transition: "opacity 0.9s ease 0.3s" }} />
+            <path d={line(revThisYear)} fill="none" stroke="var(--gold)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" pathLength={1} className="spark-draw" />
+          </svg>
+          <div className="mt-2 flex justify-between px-1 text-[0.6rem] text-muted-foreground">
+            {revMonths.map((m, i) => <span key={i}>{m}</span>)}
+          </div>
+        </div>
+      </GlassCard>
+    </Reveal>
+  );
+}
+
 export function ExecutiveDashboard({ company }: { company: string }) {
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => setNow(new Date()), []);
@@ -730,6 +783,8 @@ export function ExecutiveDashboard({ company }: { company: string }) {
             <KpiCard key={k.label} kpi={k} index={i} />
           ))}
         </div>
+
+        <RevenueCard />
 
         <div className="grid gap-4 lg:grid-cols-2">
           <HealthScore />

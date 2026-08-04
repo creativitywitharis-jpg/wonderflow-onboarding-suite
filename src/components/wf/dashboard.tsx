@@ -44,7 +44,7 @@ const nav: { icon: LucideIcon; label: string; to?: string }[] = [
   { icon: CircleDollarSign, label: "Revenue" },
   { icon: ShoppingCart, label: "Orders", to: "/orders" },
   { icon: Users, label: "Customers", to: "/crm" },
-  { icon: Boxes, label: "Inventory" },
+  { icon: Boxes, label: "Inventory", to: "/inventory" },
   { icon: Workflow, label: "Automations" },
   { icon: Bot, label: "Copilot" },
   { icon: Settings, label: "Settings" },

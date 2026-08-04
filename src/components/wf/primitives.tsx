@@ -161,6 +161,48 @@ export function StatTile({
   );
 }
 
+/** Animated progress ring with a count-up center (0–100). */
+export function Ring({
+  value,
+  size = 140,
+  stroke = 10,
+  label,
+}: {
+  value: number;
+  size?: number;
+  stroke?: number;
+  label?: ReactNode;
+}) {
+  const { ref, inView } = useInView();
+  const shown = useCountUp(value, { start: inView });
+  const r = size / 2 - stroke;
+  const c = 2 * Math.PI * r;
+  return (
+    <div ref={ref} className="relative grid place-items-center" style={{ width: size, height: size }}>
+      <svg viewBox={`0 0 ${size} ${size}`} className="-rotate-90" style={{ width: size, height: size }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-border)" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="var(--gold)"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - shown / 100)}
+          style={{ transition: "stroke-dashoffset 80ms linear" }}
+        />
+      </svg>
+      <div className="absolute grid place-items-center text-center">
+        {label ?? (
+          <span className="text-3xl font-semibold tabular-nums gold-text">{Math.round(shown)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Avatar({ name, className }: { name: string; className?: string }) {
   const initials = name
     .split(" ")

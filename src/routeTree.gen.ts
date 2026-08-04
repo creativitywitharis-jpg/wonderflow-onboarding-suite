@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as GrowthRouteImport } from './routes/growth'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as OrdersRouteImport } from './routes/orders'
@@ -37,6 +38,11 @@ const CrmRoute = CrmRouteImport.update({
 const DashboardRoute = DashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GrowthRoute = GrowthRouteImport.update({
+  id: '/growth',
+  path: '/growth',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InventoryRoute = InventoryRouteImport.update({
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
+  '/growth': typeof GrowthRoute
   '/inventory': typeof InventoryRoute
   '/onboarding': typeof OnboardingRoute
   '/orders': typeof OrdersRoute
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
+  '/growth': typeof GrowthRoute
   '/inventory': typeof InventoryRoute
   '/onboarding': typeof OnboardingRoute
   '/orders': typeof OrdersRoute
@@ -93,6 +101,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
+  '/growth': typeof GrowthRoute
   '/inventory': typeof InventoryRoute
   '/onboarding': typeof OnboardingRoute
   '/orders': typeof OrdersRoute
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/crm'
     | '/dashboard'
+    | '/growth'
     | '/inventory'
     | '/onboarding'
     | '/orders'
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/crm'
     | '/dashboard'
+    | '/growth'
     | '/inventory'
     | '/onboarding'
     | '/orders'
@@ -128,6 +139,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/crm'
     | '/dashboard'
+    | '/growth'
     | '/inventory'
     | '/onboarding'
     | '/orders'
@@ -140,6 +152,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   CrmRoute: typeof CrmRoute
   DashboardRoute: typeof DashboardRoute
+  GrowthRoute: typeof GrowthRoute
   InventoryRoute: typeof InventoryRoute
   OnboardingRoute: typeof OnboardingRoute
   OrdersRoute: typeof OrdersRoute
@@ -175,6 +188,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof DashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/growth': {
+      id: '/growth'
+      path: '/growth'
+      fullPath: '/growth'
+      preLoaderRoute: typeof GrowthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/inventory': {
@@ -220,6 +240,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   CrmRoute: CrmRoute,
   DashboardRoute: DashboardRoute,
+  GrowthRoute: GrowthRoute,
   InventoryRoute: InventoryRoute,
   OnboardingRoute: OnboardingRoute,
   OrdersRoute: OrdersRoute,

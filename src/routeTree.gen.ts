@@ -14,6 +14,7 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AdvisorRouteImport } from './routes/advisor'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AuthRouteImport } from './routes/auth'
+import { Route as AutomationRouteImport } from './routes/automation'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as GrowthRouteImport } from './routes/growth'
@@ -46,6 +47,11 @@ const AnalyticsRoute = AnalyticsRouteImport.update({
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AutomationRoute = AutomationRouteImport.update({
+  id: '/automation',
+  path: '/automation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CrmRoute = CrmRouteImport.update({
@@ -95,6 +101,7 @@ export interface FileRoutesByFullPath {
   '/advisor': typeof AdvisorRoute
   '/analytics': typeof AnalyticsRoute
   '/auth': typeof AuthRoute
+  '/automation': typeof AutomationRoute
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
   '/growth': typeof GrowthRoute
@@ -110,6 +117,7 @@ export interface FileRoutesByTo {
   '/advisor': typeof AdvisorRoute
   '/analytics': typeof AnalyticsRoute
   '/auth': typeof AuthRoute
+  '/automation': typeof AutomationRoute
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
   '/growth': typeof GrowthRoute
@@ -126,6 +134,7 @@ export interface FileRoutesById {
   '/advisor': typeof AdvisorRoute
   '/analytics': typeof AnalyticsRoute
   '/auth': typeof AuthRoute
+  '/automation': typeof AutomationRoute
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
   '/growth': typeof GrowthRoute
@@ -143,6 +152,7 @@ export interface FileRouteTypes {
     | '/advisor'
     | '/analytics'
     | '/auth'
+    | '/automation'
     | '/crm'
     | '/dashboard'
     | '/growth'
@@ -158,6 +168,7 @@ export interface FileRouteTypes {
     | '/advisor'
     | '/analytics'
     | '/auth'
+    | '/automation'
     | '/crm'
     | '/dashboard'
     | '/growth'
@@ -173,6 +184,7 @@ export interface FileRouteTypes {
     | '/advisor'
     | '/analytics'
     | '/auth'
+    | '/automation'
     | '/crm'
     | '/dashboard'
     | '/growth'
@@ -189,6 +201,7 @@ export interface RootRouteChildren {
   AdvisorRoute: typeof AdvisorRoute
   AnalyticsRoute: typeof AnalyticsRoute
   AuthRoute: typeof AuthRoute
+  AutomationRoute: typeof AutomationRoute
   CrmRoute: typeof CrmRoute
   DashboardRoute: typeof DashboardRoute
   GrowthRoute: typeof GrowthRoute
@@ -234,6 +247,13 @@ declare module '@tanstack/react-router' {
       path: '/auth'
       fullPath: '/auth'
       preLoaderRoute: typeof AuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/automation': {
+      id: '/automation'
+      path: '/automation'
+      fullPath: '/automation'
+      preLoaderRoute: typeof AutomationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/crm': {
@@ -301,6 +321,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdvisorRoute: AdvisorRoute,
   AnalyticsRoute: AnalyticsRoute,
   AuthRoute: AuthRoute,
+  AutomationRoute: AutomationRoute,
   CrmRoute: CrmRoute,
   DashboardRoute: DashboardRoute,
   GrowthRoute: GrowthRoute,

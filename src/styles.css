@@ -289,6 +289,26 @@
   }
 }
 
+/* Flowing connector line for the workflow builder */
+@layer components {
+  .flow-line {
+    background-image: linear-gradient(oklch(0.84 0.14 84 / 0.8) 45%, transparent 45%);
+    background-size: 2px 12px;
+    background-repeat: repeat-y;
+    animation: flow-down 0.7s linear infinite;
+  }
+}
+@keyframes flow-down {
+  to {
+    background-position: 0 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-line {
+    animation: none;
+  }
+}
+
 @keyframes blink {
   0%,
   80%,

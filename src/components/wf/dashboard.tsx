@@ -19,6 +19,7 @@ import {
   Search,
   Send,
   Settings,
+  ShoppingCart,
   Sparkles,
   TrendingUp,
   Users,
@@ -41,6 +42,7 @@ import { useInView } from "@/hooks/use-in-view";
 const nav: { icon: LucideIcon; label: string; to?: string }[] = [
   { icon: Home, label: "Overview" },
   { icon: CircleDollarSign, label: "Revenue" },
+  { icon: ShoppingCart, label: "Orders", to: "/orders" },
   { icon: Users, label: "Customers", to: "/crm" },
   { icon: Boxes, label: "Inventory" },
   { icon: Workflow, label: "Automations" },

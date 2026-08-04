@@ -30,7 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
-import { Avatar, Bar, Delta, Reveal, SectionLabel, formatNum } from "@/components/wf/primitives";
+import { Avatar, Bar, Delta, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
 
@@ -154,47 +154,6 @@ const rewards = [
 /* ──────────────────────────────────────────────────────────────────────
  * Small viz primitives (CRM-specific)
  * ─────────────────────────────────────────────────────────────────── */
-
-function StatTile({
-  label,
-  value,
-  prefix,
-  suffix,
-  decimals,
-  delta,
-  positive = true,
-  icon: Icon,
-}: {
-  label: string;
-  value: number;
-  prefix?: string;
-  suffix?: string;
-  decimals?: number;
-  delta?: string;
-  positive?: boolean;
-  icon: LucideIcon;
-}) {
-  const { ref, inView } = useInView();
-  const v = useCountUp(value, { start: inView });
-  return (
-    <div ref={ref} className={cn("reveal h-full", inView && "reveal-in")}>
-      <GlassCard className="lift h-full p-5 hover:border-gold/40">
-        <div className="flex items-center justify-between">
-          <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass">
-            <Icon className="size-4 text-gold" />
-          </span>
-          {delta && <Delta value={delta} positive={positive} />}
-        </div>
-        <p className="mt-4 text-2xl font-semibold tabular-nums">
-          {prefix}
-          {formatNum(v, decimals ?? 0)}
-          {suffix}
-        </p>
-        <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-      </GlassCard>
-    </div>
-  );
-}
 
 /** Animated multi-segment donut. */
 function Donut({

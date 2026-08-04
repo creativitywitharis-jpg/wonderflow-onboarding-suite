@@ -14,6 +14,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as ScoreRouteImport } from './routes/score'
 
 const IndexRoute = IndexRouteImport.update({
@@ -41,6 +42,11 @@ const OnboardingRoute = OnboardingRouteImport.update({
   path: '/onboarding',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OrdersRoute = OrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ScoreRoute = ScoreRouteImport.update({
   id: '/score',
   path: '/score',
@@ -53,6 +59,7 @@ export interface FileRoutesByFullPath {
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
   '/onboarding': typeof OnboardingRoute
+  '/orders': typeof OrdersRoute
   '/score': typeof ScoreRoute
 }
 export interface FileRoutesByTo {
@@ -61,6 +68,7 @@ export interface FileRoutesByTo {
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
   '/onboarding': typeof OnboardingRoute
+  '/orders': typeof OrdersRoute
   '/score': typeof ScoreRoute
 }
 export interface FileRoutesById {
@@ -70,13 +78,16 @@ export interface FileRoutesById {
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
   '/onboarding': typeof OnboardingRoute
+  '/orders': typeof OrdersRoute
   '/score': typeof ScoreRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/crm' | '/dashboard' | '/onboarding' | '/score'
+  fullPaths:
+    '/' | '/auth' | '/crm' | '/dashboard' | '/onboarding' | '/orders' | '/score'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/crm' | '/dashboard' | '/onboarding' | '/score'
+  to:
+    '/' | '/auth' | '/crm' | '/dashboard' | '/onboarding' | '/orders' | '/score'
   id:
     | '__root__'
     | '/'
@@ -84,6 +95,7 @@ export interface FileRouteTypes {
     | '/crm'
     | '/dashboard'
     | '/onboarding'
+    | '/orders'
     | '/score'
   fileRoutesById: FileRoutesById
 }
@@ -93,6 +105,7 @@ export interface RootRouteChildren {
   CrmRoute: typeof CrmRoute
   DashboardRoute: typeof DashboardRoute
   OnboardingRoute: typeof OnboardingRoute
+  OrdersRoute: typeof OrdersRoute
   ScoreRoute: typeof ScoreRoute
 }
 
@@ -133,6 +146,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OnboardingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/orders': {
+      id: '/orders'
+      path: '/orders'
+      fullPath: '/orders'
+      preLoaderRoute: typeof OrdersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/score': {
       id: '/score'
       path: '/score'
@@ -149,6 +169,7 @@ const rootRouteChildren: RootRouteChildren = {
   CrmRoute: CrmRoute,
   DashboardRoute: DashboardRoute,
   OnboardingRoute: OnboardingRoute,
+  OrdersRoute: OrdersRoute,
   ScoreRoute: ScoreRoute,
 }
 export const routeTree = rootRouteImport

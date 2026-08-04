@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import {
   Activity,
   ArrowUpRight,
+  BarChart3,
   Bell,
   Bot,
   Boxes,
@@ -44,7 +45,7 @@ import { useInView } from "@/hooks/use-in-view";
 const nav: { icon: LucideIcon; label: string; to?: string }[] = [
   { icon: Home, label: "Overview" },
   { icon: Rocket, label: "Growth", to: "/growth" },
-  { icon: CircleDollarSign, label: "Revenue" },
+  { icon: BarChart3, label: "Analytics", to: "/analytics" },
   { icon: ShoppingCart, label: "Orders", to: "/orders" },
   { icon: Users, label: "Customers", to: "/crm" },
   { icon: Boxes, label: "Inventory", to: "/inventory" },

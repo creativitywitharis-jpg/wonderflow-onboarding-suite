@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
@@ -30,7 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
-import { Avatar, Bar, Delta, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
+import { Avatar, Bar, Delta, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
 
@@ -154,52 +154,6 @@ const rewards = [
 /* ──────────────────────────────────────────────────────────────────────
  * Small viz primitives (CRM-specific)
  * ─────────────────────────────────────────────────────────────────── */
-
-/** Animated multi-segment donut. */
-function Donut({
-  data,
-  size = 176,
-  center,
-}: {
-  data: { label: string; share: number; color: string }[];
-  size?: number;
-  center?: ReactNode;
-}) {
-  const { ref, inView } = useInView();
-  const r = 70;
-  const circ = 2 * Math.PI * r;
-  const total = data.reduce((a, s) => a + s.share, 0);
-  let acc = 0;
-  return (
-    <div ref={ref} className="relative grid place-items-center" style={{ width: size, height: size }}>
-      <svg viewBox="0 0 160 160" className="-rotate-90" style={{ width: size, height: size }}>
-        <circle cx="80" cy="80" r={r} fill="none" stroke="var(--color-border)" strokeWidth="14" />
-        {data.map((s) => {
-          const frac = s.share / total;
-          const dash = inView ? frac * circ : 0;
-          const el = (
-            <circle
-              key={s.label}
-              cx="80"
-              cy="80"
-              r={r}
-              fill="none"
-              stroke={s.color}
-              strokeWidth="14"
-              strokeLinecap="butt"
-              strokeDasharray={`${dash} ${circ - dash}`}
-              strokeDashoffset={-acc * circ}
-              style={{ transition: "stroke-dasharray 1.1s cubic-bezier(0.2,0.8,0.2,1)" }}
-            />
-          );
-          acc += frac;
-          return el;
-        })}
-      </svg>
-      {center && <div className="absolute inset-0 grid place-items-center text-center">{center}</div>}
-    </div>
-  );
-}
 
 function MiniRing({ value, size = 56 }: { value: number; size?: number }) {
   const { ref, inView } = useInView();

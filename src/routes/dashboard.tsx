@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Backdrop } from "@/components/wf/Backdrop";
+import { AppShell } from "@/components/wf/AppShell";
 import { ExecutiveDashboard } from "@/components/wf/dashboard";
 import { loadOnboarding } from "@/lib/onboarding-store";
 
@@ -33,9 +33,8 @@ function Dashboard() {
   }, []);
 
   return (
-    <main className="relative min-h-screen">
-      <Backdrop intensity={0.3} />
+    <AppShell>
       <ExecutiveDashboard company={company} />
-    </main>
+    </AppShell>
   );
 }

@@ -786,7 +786,7 @@ export function OrdersWorkspace() {
 
   return (
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
-      <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 lg:flex">
+      <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 !hidden">
         <Brand subtle />
         <p className="mt-6 px-1 text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">Orders</p>
         <nav className="mt-2 space-y-1">
@@ -830,7 +830,7 @@ export function OrdersWorkspace() {
           </button>
         </div>
 
-        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 lg:hidden">
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
           {views.map((v) => (
             <button
               key={v.key}

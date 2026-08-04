@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Backdrop } from "@/components/wf/Backdrop";
+import { AppShell } from "@/components/wf/AppShell";
 import { GrowthWorkspace } from "@/components/wf/growth";
 
 export const Route = createFileRoute("/growth")({
@@ -23,9 +23,8 @@ export const Route = createFileRoute("/growth")({
 
 function GrowthPage() {
   return (
-    <main className="relative min-h-screen">
-      <Backdrop intensity={0.3} />
+    <AppShell>
       <GrowthWorkspace />
-    </main>
+    </AppShell>
   );
 }

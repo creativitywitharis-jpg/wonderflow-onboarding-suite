@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Backdrop } from "@/components/wf/Backdrop";
+import { AppShell } from "@/components/wf/AppShell";
 import { CrmWorkspace } from "@/components/wf/crm";
 
 export const Route = createFileRoute("/crm")({
@@ -23,9 +23,8 @@ export const Route = createFileRoute("/crm")({
 
 function CrmPage() {
   return (
-    <main className="relative min-h-screen">
-      <Backdrop intensity={0.3} />
+    <AppShell>
       <CrmWorkspace />
-    </main>
+    </AppShell>
   );
 }

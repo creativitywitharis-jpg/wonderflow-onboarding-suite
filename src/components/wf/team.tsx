@@ -504,7 +504,7 @@ export function TeamWorkspace() {
   const open = (id: string) => { setSelectedId(id); setActive("people"); };
   return (
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
-      <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 lg:flex">
+      <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 !hidden">
         <Brand subtle />
         <p className="mt-6 flex items-center gap-1.5 px-1 text-[0.65rem] uppercase tracking-[0.2em] text-gold"><UsersRound className="size-3" /> Team Ops</p>
         <nav className="mt-2 space-y-1 overflow-y-auto">
@@ -527,7 +527,7 @@ export function TeamWorkspace() {
           <button onClick={() => setActive("assistant")} className="flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}><Bot className="size-4" stroke="oklch(0.2 0.02 70)" /> Staff assistant</button>
         </div>
 
-        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 lg:hidden">
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
           {views.map((v) => (
             <button key={v.key} onClick={() => { setActive(v.key); if (v.key !== "people") setSelectedId(null); }} className={cn("flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors", active === v.key ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={active === v.key ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>
               <v.icon className="size-3.5" />{v.label}

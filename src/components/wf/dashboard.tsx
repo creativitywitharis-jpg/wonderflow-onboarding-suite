@@ -623,7 +623,7 @@ function CopilotPanel() {
 
 function Sidebar() {
   return (
-    <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 lg:flex">
+    <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 !hidden">
       <Brand subtle />
       <nav className="mt-8 space-y-1">
         {nav.map((n, i) => {
@@ -748,7 +748,7 @@ export function ExecutiveDashboard({ company }: { company: string }) {
       </section>
 
       {/* AI Copilot rail — sticky on wide screens */}
-      <aside className="sticky top-6 hidden h-[calc(100vh-3rem)] w-[22rem] shrink-0 2xl:block">
+      <aside className="!hidden h-[calc(100vh-3rem)] w-[22rem] shrink-0">
         <CopilotPanel />
       </aside>
     </div>

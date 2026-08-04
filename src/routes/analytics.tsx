@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Backdrop } from "@/components/wf/Backdrop";
+import { AppShell } from "@/components/wf/AppShell";
 import { AnalyticsWorkspace } from "@/components/wf/analytics";
 
 export const Route = createFileRoute("/analytics")({
@@ -23,9 +23,8 @@ export const Route = createFileRoute("/analytics")({
 
 function AnalyticsPage() {
   return (
-    <main className="relative min-h-screen">
-      <Backdrop intensity={0.3} />
+    <AppShell>
       <AnalyticsWorkspace />
-    </main>
+    </AppShell>
   );
 }

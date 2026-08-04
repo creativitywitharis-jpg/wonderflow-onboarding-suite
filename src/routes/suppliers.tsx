@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Backdrop } from "@/components/wf/Backdrop";
+import { AppShell } from "@/components/wf/AppShell";
 import { SuppliersWorkspace } from "@/components/wf/suppliers";
 
 export const Route = createFileRoute("/suppliers")({
@@ -23,9 +23,8 @@ export const Route = createFileRoute("/suppliers")({
 
 function SuppliersPage() {
   return (
-    <main className="relative min-h-screen">
-      <Backdrop intensity={0.3} />
+    <AppShell>
       <SuppliersWorkspace />
-    </main>
+    </AppShell>
   );
 }

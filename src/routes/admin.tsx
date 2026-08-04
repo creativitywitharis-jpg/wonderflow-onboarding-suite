@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Backdrop } from "@/components/wf/Backdrop";
+import { AppShell } from "@/components/wf/AppShell";
 import { AdminWorkspace } from "@/components/wf/admin";
 
 export const Route = createFileRoute("/admin")({
@@ -23,9 +23,8 @@ export const Route = createFileRoute("/admin")({
 
 function AdminPage() {
   return (
-    <main className="relative min-h-screen">
-      <Backdrop intensity={0.3} />
+    <AppShell>
       <AdminWorkspace />
-    </main>
+    </AppShell>
   );
 }

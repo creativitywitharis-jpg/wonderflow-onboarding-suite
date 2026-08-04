@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Backdrop } from "@/components/wf/Backdrop";
+import { AppShell } from "@/components/wf/AppShell";
 import { AutomationWorkspace } from "@/components/wf/automation";
 
 export const Route = createFileRoute("/automation")({
@@ -23,9 +23,8 @@ export const Route = createFileRoute("/automation")({
 
 function AutomationPage() {
   return (
-    <main className="relative min-h-screen">
-      <Backdrop intensity={0.3} />
+    <AppShell>
       <AutomationWorkspace />
-    </main>
+    </AppShell>
   );
 }

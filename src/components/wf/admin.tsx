@@ -497,7 +497,7 @@ export function AdminWorkspace() {
   const meta = viewMeta[active];
   return (
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
-      <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 lg:flex">
+      <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 !hidden">
         <Brand subtle />
         <p className="mt-6 flex items-center gap-1.5 px-1 text-[0.65rem] uppercase tracking-[0.2em] text-gold"><Shield className="size-3" /> Administration</p>
         <nav className="mt-2 space-y-1 overflow-y-auto">
@@ -522,7 +522,7 @@ export function AdminWorkspace() {
           <span className="flex items-center gap-2 rounded-full border border-gold/25 bg-glass px-4 py-2 text-xs text-foreground/80"><ShieldCheck className="size-4 text-gold" /> Owner access</span>
         </div>
 
-        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 lg:hidden">
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
           {views.map((v) => (
             <button key={v.key} onClick={() => setActive(v.key)} className={cn("flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors", active === v.key ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={active === v.key ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>
               <v.icon className="size-3.5" />

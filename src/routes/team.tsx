@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Backdrop } from "@/components/wf/Backdrop";
+import { AppShell } from "@/components/wf/AppShell";
 import { TeamWorkspace } from "@/components/wf/team";
 
 export const Route = createFileRoute("/team")({
@@ -23,9 +23,8 @@ export const Route = createFileRoute("/team")({
 
 function TeamPage() {
   return (
-    <main className="relative min-h-screen">
-      <Backdrop intensity={0.3} />
+    <AppShell>
       <TeamWorkspace />
-    </main>
+    </AppShell>
   );
 }

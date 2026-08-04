@@ -52,7 +52,7 @@ const nav: { icon: LucideIcon; label: string; to?: string }[] = [
   { icon: Factory, label: "Suppliers", to: "/suppliers" },
   { icon: Workflow, label: "Automations" },
   { icon: Bot, label: "AI Advisor", to: "/advisor" },
-  { icon: Settings, label: "Settings" },
+  { icon: Settings, label: "Settings", to: "/admin" },
 ];
 
 type Kpi = {

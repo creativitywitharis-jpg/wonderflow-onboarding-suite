@@ -1,0 +1,548 @@
+import { useState, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowLeft,
+  Bot,
+  Building2,
+  Check,
+  Cpu,
+  Database,
+  Globe,
+  KeyRound,
+  Lock,
+  Mail,
+  Plug,
+  ScrollText,
+  Search,
+  Server,
+  Shield,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  UserPlus,
+  Users,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { GlassCard } from "@/components/wf/ui";
+import { Brand } from "@/components/wf/Brand";
+import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/primitives";
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Primitives
+ * ─────────────────────────────────────────────────────────────────── */
+
+function Toggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      disabled={disabled}
+      onClick={() => onChange(!on)}
+      className={cn("relative h-6 w-11 shrink-0 rounded-full border transition-colors disabled:opacity-40", on ? "border-transparent" : "border-border bg-background/40")}
+      style={on ? { background: "var(--gradient-gold)" } : undefined}
+    >
+      <span className="absolute top-0.5 size-5 rounded-full transition-all duration-200" style={{ left: on ? "1.375rem" : "0.125rem", background: on ? "oklch(0.2 0.02 70)" : "oklch(0.8 0.015 85)" }} />
+    </button>
+  );
+}
+
+function SettingRow({ label, desc, children }: { label: string; desc?: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-3">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-foreground">{label}</p>
+        {desc && <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+const inputCls = "w-full rounded-xl border border-border bg-background/40 px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-gold/50";
+
+function StatusDot({ tone }: { tone: "ok" | "warn" | "err" }) {
+  const c = tone === "ok" ? "oklch(0.72 0.14 155)" : tone === "warn" ? "oklch(0.84 0.14 84)" : "oklch(0.68 0.16 25)";
+  return <span className="inline-block size-2 rounded-full" style={{ background: c, boxShadow: `0 0 8px ${c}` }} />;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Data
+ * ─────────────────────────────────────────────────────────────────── */
+
+type ViewKey = "settings" | "users" | "roles" | "permissions" | "ai" | "integrations" | "security" | "audit" | "monitoring";
+
+const views: { key: ViewKey; label: string; icon: LucideIcon }[] = [
+  { key: "settings", label: "Business settings", icon: Building2 },
+  { key: "users", label: "Users", icon: Users },
+  { key: "roles", label: "Roles", icon: Shield },
+  { key: "permissions", label: "Permissions", icon: KeyRound },
+  { key: "ai", label: "AI configuration", icon: Bot },
+  { key: "integrations", label: "Integrations", icon: Plug },
+  { key: "security", label: "Security", icon: Lock },
+  { key: "audit", label: "Audit logs", icon: ScrollText },
+  { key: "monitoring", label: "System monitoring", icon: Activity },
+];
+
+const seedUsers = [
+  { name: "Aisha Imran", email: "aisha@wonderglow.co", role: "Owner", status: "Active", last: "now" },
+  { name: "Marcus Reid", email: "marcus@wonderglow.co", role: "Admin", status: "Active", last: "12m ago" },
+  { name: "Priya Nair", email: "priya@wonderglow.co", role: "Manager", status: "Active", last: "3h ago" },
+  { name: "Leo Park", email: "leo@wonderglow.co", role: "Analyst", status: "Active", last: "1d ago" },
+  { name: "Sam Idris", email: "sam@contractor.io", role: "Viewer", status: "Invited", last: "—" },
+];
+
+const roles = [
+  { name: "Owner", members: 1, desc: "Full control, billing and data. Cannot be restricted.", perms: "All", locked: true },
+  { name: "Admin", members: 2, desc: "Manage the platform, users and configuration.", perms: "18 / 20", locked: false },
+  { name: "Manager", members: 4, desc: "Run operations — orders, inventory, customers.", perms: "12 / 20", locked: false },
+  { name: "Analyst", members: 3, desc: "Read analytics and generate reports.", perms: "6 / 20", locked: false },
+  { name: "Viewer", members: 6, desc: "View-only access to dashboards.", perms: "3 / 20", locked: false },
+];
+
+const capabilities = ["View analytics", "Manage orders", "Edit inventory", "Manage users", "Configure AI", "Billing & plans", "Delete data"];
+const permRoles = ["Admin", "Manager", "Analyst", "Viewer"];
+const defaultPerms: Record<string, Record<string, boolean>> = {
+  "View analytics": { Admin: true, Manager: true, Analyst: true, Viewer: true },
+  "Manage orders": { Admin: true, Manager: true, Analyst: false, Viewer: false },
+  "Edit inventory": { Admin: true, Manager: true, Analyst: false, Viewer: false },
+  "Manage users": { Admin: true, Manager: false, Analyst: false, Viewer: false },
+  "Configure AI": { Admin: true, Manager: false, Analyst: false, Viewer: false },
+  "Billing & plans": { Admin: true, Manager: false, Analyst: false, Viewer: false },
+  "Delete data": { Admin: false, Manager: false, Analyst: false, Viewer: false },
+};
+
+const aiModels = [
+  { id: "precision", name: "Precision", desc: "Most capable — deep reasoning for strategy & analysis." },
+  { id: "balanced", name: "Balanced", desc: "Great quality at lower cost — the everyday default." },
+  { id: "fast", name: "Fast", desc: "Instant responses for high-volume automations." },
+];
+const autonomyLevels = [
+  { id: "suggest", name: "Suggest only", desc: "AI proposes; you do everything." },
+  { id: "approve", name: "Ask approval", desc: "AI drafts actions and waits for your OK." },
+  { id: "auto", name: "Autopilot", desc: "AI executes low-risk actions on its own." },
+];
+
+const seedIntegrations = [
+  { name: "Shopify", desc: "Sync orders, products & inventory", icon: Globe, connected: true },
+  { name: "Stripe", desc: "Payments & payouts", icon: Zap, connected: true },
+  { name: "Klaviyo", desc: "Email & SMS marketing", icon: Mail, connected: true },
+  { name: "Slack", desc: "Alerts & AI briefings", icon: Activity, connected: false },
+  { name: "QuickBooks", desc: "Accounting & finance sync", icon: Database, connected: false },
+  { name: "Google Analytics", desc: "Web & marketing analytics", icon: Globe, connected: true },
+];
+
+const sessions = [
+  { device: "MacBook Pro · Chrome", loc: "Austin, TX", last: "Active now", current: true },
+  { device: "iPhone 15 · Safari", loc: "Austin, TX", last: "2h ago", current: false },
+  { device: "Windows · Edge", loc: "Denver, CO", last: "3d ago", current: false },
+];
+
+const auditLog = [
+  { actor: "Marcus Reid", action: "updated AI autonomy to 'Ask approval'", cat: "AI", time: "8m ago", ip: "72.14.x.x" },
+  { actor: "Aisha Imran", action: "invited sam@contractor.io as Viewer", cat: "Users", time: "22m ago", ip: "72.14.x.x" },
+  { actor: "System", action: "auto-reorder created PO-2043", cat: "Orders", time: "1h ago", ip: "—" },
+  { actor: "Priya Nair", action: "exported financial report (YTD)", cat: "Data", time: "3h ago", ip: "98.20.x.x" },
+  { actor: "Marcus Reid", action: "connected Stripe integration", cat: "Integrations", time: "1d ago", ip: "72.14.x.x" },
+  { actor: "Aisha Imran", action: "enabled 2-factor authentication", cat: "Security", time: "2d ago", ip: "72.14.x.x" },
+];
+const catColor: Record<string, string> = { AI: "oklch(0.84 0.14 84)", Users: "oklch(0.66 0.09 200)", Orders: "oklch(0.7 0.11 60)", Data: "oklch(0.62 0.12 300)", Integrations: "oklch(0.75 0.13 150)", Security: "oklch(0.68 0.16 25)" };
+
+const services = [
+  { name: "API gateway", tone: "ok" as const, note: "142ms avg" },
+  { name: "Database", tone: "ok" as const, note: "healthy" },
+  { name: "AI engine", tone: "ok" as const, note: "3 models live" },
+  { name: "Webhooks", tone: "warn" as const, note: "elevated latency" },
+  { name: "Storage", tone: "ok" as const, note: "41% used" },
+];
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Views
+ * ─────────────────────────────────────────────────────────────────── */
+
+function SettingsView() {
+  const [statusPage, setStatusPage] = useState(true);
+  const [maintenance, setMaintenance] = useState(false);
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Reveal className="h-full">
+        <GlassCard className="h-full p-6">
+          <SectionLabel icon={Building2}>Business profile</SectionLabel>
+          <div className="mt-4 space-y-4">
+            <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Company name</span><input defaultValue="WonderGlow Studio" className={inputCls} /></label>
+            <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Legal entity</span><input defaultValue="WonderGlow Studio LLC" className={inputCls} /></label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Timezone</span><select className={inputCls}><option>America/Chicago</option><option>America/New_York</option><option>UTC</option></select></label>
+              <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Currency</span><select className={inputCls}><option>USD $</option><option>EUR €</option><option>GBP £</option></select></label>
+            </div>
+          </div>
+        </GlassCard>
+      </Reveal>
+
+      <Reveal className="h-full" delay={80}>
+        <GlassCard className="flex h-full flex-col p-6">
+          <SectionLabel icon={Sparkles}>Preferences</SectionLabel>
+          <div className="mt-2 divide-y divide-border">
+            <SettingRow label="Public status page" desc="Show a live uptime page to customers"><Toggle on={statusPage} onChange={setStatusPage} /></SettingRow>
+            <SettingRow label="Maintenance mode" desc="Temporarily take the workspace offline"><Toggle on={maintenance} onChange={setMaintenance} /></SettingRow>
+            <SettingRow label="Weekly digest" desc="Email the team a Monday summary"><Toggle on onChange={() => {}} /></SettingRow>
+          </div>
+          <button className="mt-auto flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}><Check className="size-4" /> Save changes</button>
+        </GlassCard>
+      </Reveal>
+    </div>
+  );
+}
+
+function UsersView() {
+  const [users, setUsers] = useState(seedUsers);
+  const [q, setQ] = useState("");
+  const filtered = users.filter((u) => u.name.toLowerCase().includes(q.toLowerCase()) || u.email.toLowerCase().includes(q.toLowerCase()));
+  const statusColor: Record<string, string> = { Active: "oklch(0.72 0.14 155)", Invited: "oklch(0.84 0.14 84)", Disabled: "oklch(0.7 0.02 250)" };
+  const toggleStatus = (email: string) => setUsers((us) => us.map((u) => (u.email === email && u.role !== "Owner" ? { ...u, status: u.status === "Disabled" ? "Active" : "Disabled" } : u)));
+  return (
+    <Reveal>
+      <GlassCard className="p-5 sm:p-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex flex-1 items-center gap-2 rounded-full border border-border bg-background/40 px-4 py-2.5 focus-within:border-gold/50">
+            <Search className="size-4 text-muted-foreground" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search team…" className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70" />
+          </label>
+          <button className="flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}><UserPlus className="size-4" /> Invite</button>
+        </div>
+        <div className="mt-5 space-y-1">
+          {filtered.map((u) => (
+            <div key={u.email} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.8fr_0.8fr_auto]">
+              <div className="flex items-center gap-3">
+                <Avatar name={u.name} />
+                <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{u.name}</p><p className="truncate text-xs text-muted-foreground">{u.email}</p></div>
+              </div>
+              <span className="hidden text-sm text-muted-foreground sm:block">{u.role}</span>
+              <span className="hidden items-center gap-1.5 text-xs sm:flex" style={{ color: statusColor[u.status] }}><span className="size-1.5 rounded-full" style={{ background: statusColor[u.status] }} />{u.status}</span>
+              <button onClick={() => toggleStatus(u.email)} disabled={u.role === "Owner"} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40 disabled:opacity-40">{u.status === "Disabled" ? "Enable" : "Disable"}</button>
+            </div>
+          ))}
+        </div>
+      </GlassCard>
+    </Reveal>
+  );
+}
+
+function RolesView() {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {roles.map((r, i) => (
+        <Reveal key={r.name} delay={i * 50} className="h-full">
+          <GlassCard className="lift flex h-full flex-col p-6 hover:border-gold/40">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-2 text-sm font-semibold text-foreground"><Shield className="size-4 text-gold" />{r.name}</span>
+              {r.locked && <Lock className="size-3.5 text-muted-foreground" />}
+            </div>
+            <p className="mt-3 flex-1 text-sm leading-relaxed text-muted-foreground">{r.desc}</p>
+            <div className="mt-4 flex items-center justify-between border-t border-border pt-4 text-xs">
+              <span className="text-muted-foreground">{r.members} member{r.members === 1 ? "" : "s"}</span>
+              <span className="text-gold">{r.perms} permissions</span>
+            </div>
+          </GlassCard>
+        </Reveal>
+      ))}
+    </div>
+  );
+}
+
+function PermissionsView() {
+  const [perms, setPerms] = useState(defaultPerms);
+  const toggle = (cap: string, role: string) => setPerms((p) => ({ ...p, [cap]: { ...p[cap], [role]: !p[cap][role] } }));
+  return (
+    <Reveal>
+      <GlassCard className="overflow-x-auto p-6">
+        <SectionLabel icon={KeyRound}>Permission matrix</SectionLabel>
+        <p className="mt-1 text-xs text-muted-foreground">Owner has every permission. Toggle capabilities for each role.</p>
+        <div className="mt-5 min-w-[36rem]">
+          <div className="grid grid-cols-[1.4fr_repeat(4,1fr)] items-center gap-2 border-b border-border pb-2 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+            <span>Capability</span>
+            {permRoles.map((r) => <span key={r} className="text-center">{r}</span>)}
+          </div>
+          {capabilities.map((cap) => (
+            <div key={cap} className="grid grid-cols-[1.4fr_repeat(4,1fr)] items-center gap-2 border-b border-border/60 py-2.5">
+              <span className="text-sm text-foreground/85">{cap}</span>
+              {permRoles.map((role) => {
+                const on = perms[cap][role];
+                return (
+                  <div key={role} className="flex justify-center">
+                    <button onClick={() => toggle(cap, role)} className={cn("grid size-7 place-items-center rounded-lg border transition-colors", on ? "border-transparent text-primary-foreground" : "border-border text-transparent hover:border-gold/40")} style={on ? { background: "var(--gradient-gold)" } : undefined} aria-pressed={on}>
+                      <Check className="size-4" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </GlassCard>
+    </Reveal>
+  );
+}
+
+function AiConfigView() {
+  const [model, setModel] = useState("balanced");
+  const [autonomy, setAutonomy] = useState("approve");
+  const [features, setFeatures] = useState<Record<string, boolean>>({ briefings: true, reorder: true, replies: false, alerts: true, content: true });
+  const [learn, setLearn] = useState(true);
+  const toggleF = (k: string) => setFeatures((f) => ({ ...f, [k]: !f[k] }));
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Reveal className="h-full">
+          <GlassCard className="h-full p-6">
+            <SectionLabel icon={Cpu}>AI model</SectionLabel>
+            <div className="mt-4 space-y-2">
+              {aiModels.map((m) => (
+                <button key={m.id} onClick={() => setModel(m.id)} className={cn("flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-colors", model === m.id ? "border-gold/50 bg-glass" : "border-border bg-background/30 hover:border-gold/30")}>
+                  <span className={cn("mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border", model === m.id ? "border-transparent" : "border-border")} style={model === m.id ? { background: "var(--gradient-gold)" } : undefined}>{model === m.id && <Check className="size-3.5" stroke="oklch(0.2 0.02 70)" />}</span>
+                  <div><p className="text-sm font-medium text-foreground">{m.name}</p><p className="text-xs text-muted-foreground">{m.desc}</p></div>
+                </button>
+              ))}
+            </div>
+          </GlassCard>
+        </Reveal>
+
+        <Reveal className="h-full" delay={80}>
+          <GlassCard className="h-full p-6">
+            <SectionLabel icon={Zap}>Autonomy level</SectionLabel>
+            <div className="mt-4 space-y-2">
+              {autonomyLevels.map((a) => (
+                <button key={a.id} onClick={() => setAutonomy(a.id)} className={cn("flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-colors", autonomy === a.id ? "border-gold/50 bg-glass" : "border-border bg-background/30 hover:border-gold/30")}>
+                  <span className={cn("mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border", autonomy === a.id ? "border-transparent" : "border-border")} style={autonomy === a.id ? { background: "var(--gradient-gold)" } : undefined}>{autonomy === a.id && <Check className="size-3.5" stroke="oklch(0.2 0.02 70)" />}</span>
+                  <div><p className="text-sm font-medium text-foreground">{a.name}</p><p className="text-xs text-muted-foreground">{a.desc}</p></div>
+                </button>
+              ))}
+            </div>
+          </GlassCard>
+        </Reveal>
+      </div>
+
+      <Reveal>
+        <GlassCard className="p-6">
+          <SectionLabel icon={Bot}>AI features</SectionLabel>
+          <div className="mt-2 grid gap-x-8 sm:grid-cols-2">
+            {([["briefings", "Daily AI briefings", "Morning summaries across the business"], ["reorder", "Auto-reorder", "Draft POs when stock runs low"], ["replies", "AI-suggested replies", "Draft responses in the CRM inbox"], ["alerts", "Predictive alerts", "Warn before stockouts & churn"], ["content", "Content generation", "Draft marketing copy on demand"]] as const).map(([k, label, desc]) => (
+              <div key={k} className="border-b border-border/60"><SettingRow label={label} desc={desc}><Toggle on={features[k]} onChange={() => toggleF(k)} /></SettingRow></div>
+            ))}
+            <div className="border-b border-border/60"><SettingRow label="Learn from my data" desc="Improve suggestions using your history"><Toggle on={learn} onChange={setLearn} /></SettingRow></div>
+          </div>
+        </GlassCard>
+      </Reveal>
+    </div>
+  );
+}
+
+function IntegrationsView() {
+  const [items, setItems] = useState(seedIntegrations);
+  const toggle = (name: string) => setItems((its) => its.map((i) => (i.name === name ? { ...i, connected: !i.connected } : i)));
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {items.map((it, i) => (
+        <Reveal key={it.name} delay={i * 50} className="h-full">
+          <GlassCard className="flex h-full flex-col p-6">
+            <div className="flex items-center justify-between">
+              <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><it.icon className="size-5 text-gold" /></span>
+              {it.connected && <span className="flex items-center gap-1.5 text-xs text-emerald-300"><StatusDot tone="ok" /> Connected</span>}
+            </div>
+            <p className="mt-4 text-sm font-semibold text-foreground">{it.name}</p>
+            <p className="mt-1 flex-1 text-xs text-muted-foreground">{it.desc}</p>
+            <button onClick={() => toggle(it.name)} className={cn("mt-4 rounded-full px-4 py-2 text-xs font-semibold transition-all active:scale-[0.98]", it.connected ? "border border-border bg-glass text-foreground/80 hover:border-gold/40" : "text-primary-foreground hover:brightness-110")} style={!it.connected ? { background: "var(--gradient-gold)" } : undefined}>
+              {it.connected ? "Disconnect" : "Connect"}
+            </button>
+          </GlassCard>
+        </Reveal>
+      ))}
+    </div>
+  );
+}
+
+function SecurityView() {
+  const [twoFa, setTwoFa] = useState(true);
+  const [sso, setSso] = useState(false);
+  const [strongPw, setStrongPw] = useState(true);
+  const [ipAllow, setIpAllow] = useState(false);
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Reveal className="h-full">
+        <GlassCard className="h-full p-6">
+          <SectionLabel icon={ShieldCheck}>Authentication</SectionLabel>
+          <div className="mt-2 divide-y divide-border">
+            <SettingRow label="Two-factor authentication" desc="Require 2FA for every team member"><Toggle on={twoFa} onChange={setTwoFa} /></SettingRow>
+            <SettingRow label="Single sign-on (SAML)" desc="Log in with your identity provider"><Toggle on={sso} onChange={setSso} /></SettingRow>
+            <SettingRow label="Strong password policy" desc="12+ chars, rotation every 90 days"><Toggle on={strongPw} onChange={setStrongPw} /></SettingRow>
+            <SettingRow label="IP allowlist" desc="Restrict access to known networks"><Toggle on={ipAllow} onChange={setIpAllow} /></SettingRow>
+            <SettingRow label="Session timeout" desc="Auto-logout after inactivity"><select className="rounded-lg border border-border bg-background/40 px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-gold/50"><option>30 min</option><option>1 hour</option><option>8 hours</option></select></SettingRow>
+          </div>
+        </GlassCard>
+      </Reveal>
+
+      <Reveal className="h-full" delay={80}>
+        <GlassCard className="h-full p-6">
+          <SectionLabel icon={Lock}>Active sessions</SectionLabel>
+          <div className="mt-4 space-y-2">
+            {sessions.map((s) => (
+              <div key={s.device} className="flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-3">
+                <span className="grid size-9 place-items-center rounded-lg border border-border bg-glass"><Server className="size-4 text-gold" /></span>
+                <div className="min-w-0 flex-1"><p className="truncate text-sm text-foreground/90">{s.device} {s.current && <span className="ml-1 text-xs text-gold">· this device</span>}</p><p className="text-xs text-muted-foreground">{s.loc} · {s.last}</p></div>
+                {!s.current && <button className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300"><Trash2 className="size-3.5" /></button>}
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-gold/25 bg-glass p-3 text-xs text-foreground/80"><ShieldCheck className="size-4 text-gold" /> Security posture: strong. No anomalies detected.</div>
+        </GlassCard>
+      </Reveal>
+    </div>
+  );
+}
+
+function AuditView() {
+  const [q, setQ] = useState("");
+  const filtered = auditLog.filter((l) => (l.actor + l.action + l.cat).toLowerCase().includes(q.toLowerCase()));
+  return (
+    <Reveal>
+      <GlassCard className="p-5 sm:p-6">
+        <div className="flex items-center justify-between gap-3">
+          <SectionLabel icon={ScrollText}>Audit log</SectionLabel>
+          <label className="flex items-center gap-2 rounded-full border border-border bg-background/40 px-3 py-2 focus-within:border-gold/50">
+            <Search className="size-4 text-muted-foreground" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter…" className="w-32 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70" />
+          </label>
+        </div>
+        <div className="mt-5 space-y-1">
+          {filtered.map((l, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
+              <Avatar name={l.actor === "System" ? "S Y" : l.actor} />
+              <div className="min-w-0 flex-1"><p className="truncate text-sm text-foreground/90"><span className="font-medium">{l.actor}</span> {l.action}</p><p className="text-xs text-muted-foreground">{l.time} · {l.ip}</p></div>
+              <span className="shrink-0 rounded-full px-2 py-0.5 text-[0.65rem] font-medium" style={{ color: catColor[l.cat], background: `color-mix(in oklch, ${catColor[l.cat]} 14%, transparent)` }}>{l.cat}</span>
+            </div>
+          ))}
+          {filtered.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No matching events.</p>}
+        </div>
+      </GlassCard>
+    </Reveal>
+  );
+}
+
+function MonitoringView() {
+  const meters = [{ label: "API quota", value: 62, note: "620k / 1M calls" }, { label: "Storage", value: 41, note: "41 / 100 GB" }, { label: "Seats", value: 53, note: "8 / 15 used" }];
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile label="Uptime (30d)" value={99.98} suffix="%" decimals={2} icon={Activity} />
+        <StatTile label="Avg latency" value={142} suffix=" ms" positive icon={Zap} />
+        <StatTile label="Requests today" value={1240000} icon={Server} />
+        <StatTile label="Error rate" value={0.02} suffix="%" decimals={2} positive icon={AlertTriangle} />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Reveal className="h-full">
+          <GlassCard className="h-full p-6">
+            <SectionLabel icon={Server}>Service status</SectionLabel>
+            <div className="mt-4 space-y-1">
+              {services.map((s) => (
+                <div key={s.name} className="flex items-center gap-3 rounded-xl px-2 py-3">
+                  <StatusDot tone={s.tone} />
+                  <span className="flex-1 text-sm text-foreground/90">{s.name}</span>
+                  <span className="text-xs text-muted-foreground">{s.note}</span>
+                  <span className="text-xs" style={{ color: s.tone === "ok" ? "oklch(0.72 0.14 155)" : "oklch(0.84 0.14 84)" }}>{s.tone === "ok" ? "Operational" : "Degraded"}</span>
+                </div>
+              ))}
+            </div>
+          </GlassCard>
+        </Reveal>
+        <Reveal className="h-full" delay={80}>
+          <GlassCard className="h-full p-6">
+            <SectionLabel icon={Database}>Usage</SectionLabel>
+            <div className="mt-5 space-y-5">
+              {meters.map((m) => (
+                <div key={m.label}>
+                  <div className="flex items-baseline justify-between text-sm"><span className="text-foreground/85">{m.label}</span><span className="text-xs text-muted-foreground">{m.note}</span></div>
+                  <div className="mt-2"><Bar value={m.value} /></div>
+                </div>
+              ))}
+            </div>
+          </GlassCard>
+        </Reveal>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Workspace shell
+ * ─────────────────────────────────────────────────────────────────── */
+
+const viewMeta: Record<ViewKey, { title: string; sub: string }> = {
+  settings: { title: "Business settings", sub: "Complete control of your OS" },
+  users: { title: "Users", sub: "Manage your team" },
+  roles: { title: "Roles", sub: "Who can do what" },
+  permissions: { title: "Permissions", sub: "Fine-grained access control" },
+  ai: { title: "AI configuration", sub: "Tune your AI's behavior" },
+  integrations: { title: "Integrations", sub: "Connect your tools" },
+  security: { title: "Security", sub: "Protect your business" },
+  audit: { title: "Audit logs", sub: "Every action, recorded" },
+  monitoring: { title: "System monitoring", sub: "Health of your platform" },
+};
+
+export function AdminWorkspace() {
+  const [active, setActive] = useState<ViewKey>("settings");
+  const meta = viewMeta[active];
+  return (
+    <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
+      <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 lg:flex">
+        <Brand subtle />
+        <p className="mt-6 flex items-center gap-1.5 px-1 text-[0.65rem] uppercase tracking-[0.2em] text-gold"><Shield className="size-3" /> Administration</p>
+        <nav className="mt-2 space-y-1 overflow-y-auto">
+          {views.map((v) => (
+            <button key={v.key} onClick={() => setActive(v.key)} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors", active === v.key ? "text-foreground" : "text-muted-foreground hover:bg-glass hover:text-foreground")} style={active === v.key ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>
+              <v.icon className={cn("size-4", active === v.key && "text-gold")} />
+              {v.label}
+            </button>
+          ))}
+        </nav>
+        <Link to="/dashboard" className="mt-4 flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground">
+          <ArrowLeft className="size-4" /> Command center
+        </Link>
+      </aside>
+
+      <section className="min-w-0 flex-1 space-y-5">
+        <div className="rise flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{meta.sub}</p>
+            <h1 className="mt-2 text-3xl tracking-tight sm:text-4xl" style={{ fontFamily: "var(--font-display)" }}><span className="gold-text italic">{meta.title}</span></h1>
+          </div>
+          <span className="flex items-center gap-2 rounded-full border border-gold/25 bg-glass px-4 py-2 text-xs text-foreground/80"><ShieldCheck className="size-4 text-gold" /> Owner access</span>
+        </div>
+
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 lg:hidden">
+          {views.map((v) => (
+            <button key={v.key} onClick={() => setActive(v.key)} className={cn("flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors", active === v.key ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={active === v.key ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>
+              <v.icon className="size-3.5" />
+              {v.label}
+            </button>
+          ))}
+        </div>
+
+        <div key={active} className="rise">
+          {active === "settings" && <SettingsView />}
+          {active === "users" && <UsersView />}
+          {active === "roles" && <RolesView />}
+          {active === "permissions" && <PermissionsView />}
+          {active === "ai" && <AiConfigView />}
+          {active === "integrations" && <IntegrationsView />}
+          {active === "security" && <SecurityView />}
+          {active === "audit" && <AuditView />}
+          {active === "monitoring" && <MonitoringView />}
+        </div>
+      </section>
+    </div>
+  );
+}

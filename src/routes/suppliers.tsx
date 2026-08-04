@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AppShell } from "@/components/wf/AppShell";
 import { SuppliersWorkspace } from "@/components/wf/suppliers";
 
 export const Route = createFileRoute("/suppliers")({
@@ -23,8 +22,6 @@ export const Route = createFileRoute("/suppliers")({
 
 function SuppliersPage() {
   return (
-    <AppShell>
-      <SuppliersWorkspace />
-    </AppShell>
+    <SuppliersWorkspace />
   );
 }

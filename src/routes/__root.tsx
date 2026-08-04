@@ -4,12 +4,14 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+import { AppShell } from "../components/wf/AppShell";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
 function NotFoundComponent() {
@@ -127,13 +129,36 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
+// App routes that render inside the persistent AppShell chrome.
+const APP_PREFIXES = [
+  "/dashboard",
+  "/crm",
+  "/orders",
+  "/inventory",
+  "/suppliers",
+  "/growth",
+  "/analytics",
+  "/advisor",
+  "/admin",
+  "/automation",
+  "/team",
+];
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isApp = APP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 
   return (
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      {isApp ? (
+        <AppShell>
+          <Outlet />
+        </AppShell>
+      ) : (
+        <Outlet />
+      )}
     </QueryClientProvider>
   );
 }

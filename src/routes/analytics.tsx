@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AppShell } from "@/components/wf/AppShell";
 import { AnalyticsWorkspace } from "@/components/wf/analytics";
 
 export const Route = createFileRoute("/analytics")({
@@ -23,8 +22,6 @@ export const Route = createFileRoute("/analytics")({
 
 function AnalyticsPage() {
   return (
-    <AppShell>
-      <AnalyticsWorkspace />
-    </AppShell>
+    <AnalyticsWorkspace />
   );
 }

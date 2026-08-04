@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AppShell } from "@/components/wf/AppShell";
 import { AutomationWorkspace } from "@/components/wf/automation";
 
 export const Route = createFileRoute("/automation")({
@@ -23,8 +22,6 @@ export const Route = createFileRoute("/automation")({
 
 function AutomationPage() {
   return (
-    <AppShell>
-      <AutomationWorkspace />
-    </AppShell>
+    <AutomationWorkspace />
   );
 }

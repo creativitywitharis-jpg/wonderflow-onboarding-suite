@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AppShell } from "@/components/wf/AppShell";
 import { AdminWorkspace } from "@/components/wf/admin";
 
 export const Route = createFileRoute("/admin")({
@@ -23,8 +22,6 @@ export const Route = createFileRoute("/admin")({
 
 function AdminPage() {
   return (
-    <AppShell>
-      <AdminWorkspace />
-    </AppShell>
+    <AdminWorkspace />
   );
 }

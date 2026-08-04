@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AppShell } from "@/components/wf/AppShell";
 import { CrmWorkspace } from "@/components/wf/crm";
 
 export const Route = createFileRoute("/crm")({
@@ -23,8 +22,6 @@ export const Route = createFileRoute("/crm")({
 
 function CrmPage() {
   return (
-    <AppShell>
-      <CrmWorkspace />
-    </AppShell>
+    <CrmWorkspace />
   );
 }

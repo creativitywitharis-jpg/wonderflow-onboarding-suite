@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AppShell } from "@/components/wf/AppShell";
 import { GrowthWorkspace } from "@/components/wf/growth";
 
 export const Route = createFileRoute("/growth")({
@@ -23,8 +22,6 @@ export const Route = createFileRoute("/growth")({
 
 function GrowthPage() {
   return (
-    <AppShell>
-      <GrowthWorkspace />
-    </AppShell>
+    <GrowthWorkspace />
   );
 }

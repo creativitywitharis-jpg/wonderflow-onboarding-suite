@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { AppShell } from "@/components/wf/AppShell";
 import { ExecutiveDashboard } from "@/components/wf/dashboard";
 import { loadOnboarding } from "@/lib/onboarding-store";
 
@@ -33,8 +32,6 @@ function Dashboard() {
   }, []);
 
   return (
-    <AppShell>
-      <ExecutiveDashboard company={company} />
-    </AppShell>
+    <ExecutiveDashboard company={company} />
   );
 }

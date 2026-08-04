@@ -50,7 +50,7 @@ const nav: { icon: LucideIcon; label: string; to?: string }[] = [
   { icon: Boxes, label: "Inventory", to: "/inventory" },
   { icon: Factory, label: "Suppliers", to: "/suppliers" },
   { icon: Workflow, label: "Automations" },
-  { icon: Bot, label: "Copilot" },
+  { icon: Bot, label: "AI Advisor", to: "/advisor" },
   { icon: Settings, label: "Settings" },
 ];
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
@@ -30,143 +30,18 @@ import {
 import { cn } from "@/lib/utils";
 import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
+import { Avatar, Bar, Delta, Reveal, SectionLabel, Sparkline, formatNum } from "@/components/wf/primitives";
 import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
-
-/* ──────────────────────────────────────────────────────────────────────
- * Primitives
- * ─────────────────────────────────────────────────────────────────── */
-
-function formatNum(v: number, decimals = 0) {
-  return v.toLocaleString("en-US", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
-}
-
-/** Blur-rise wrapper that animates when scrolled into view. */
-function Reveal({
-  children,
-  delay = 0,
-  className,
-}: {
-  children: ReactNode;
-  delay?: number;
-  className?: string;
-}) {
-  const { ref, inView } = useInView();
-  return (
-    <div
-      ref={ref}
-      className={cn("reveal", inView && "reveal-in", className)}
-      style={{ transitionDelay: `${delay}ms` }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function SectionLabel({ icon: Icon, children }: { icon?: LucideIcon; children: ReactNode }) {
-  return (
-    <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-      {Icon && <Icon className="size-4 text-gold" />}
-      {children}
-    </h2>
-  );
-}
-
-function Delta({ value, positive = true }: { value: string; positive?: boolean }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums",
-        positive ? "text-emerald-300" : "text-rose-300",
-      )}
-      style={{
-        background: positive ? "oklch(0.72 0.14 155 / 12%)" : "oklch(0.65 0.2 22 / 14%)",
-      }}
-    >
-      <ArrowUpRight className={cn("size-3", !positive && "rotate-90")} />
-      {value}
-    </span>
-  );
-}
-
-/** Compact SVG sparkline with gradient fill + draw-in animation. */
-function Sparkline({ data, id }: { data: number[]; id: string }) {
-  const w = 120;
-  const h = 40;
-  const max = Math.max(...data);
-  const min = Math.min(...data);
-  const range = max - min || 1;
-  const pts = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * w;
-    const y = h - ((v - min) / range) * (h - 6) - 3;
-    return [x, y] as const;
-  });
-  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
-  const area = `${line} L ${w} ${h} L 0 ${h} Z`;
-
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="h-10 w-full" preserveAspectRatio="none" aria-hidden>
-      <defs>
-        <linearGradient id={`spark-${id}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="oklch(0.84 0.14 84 / 28%)" />
-          <stop offset="100%" stopColor="oklch(0.84 0.14 84 / 0%)" />
-        </linearGradient>
-      </defs>
-      <path d={area} fill={`url(#spark-${id})`} />
-      <path
-        d={line}
-        fill="none"
-        stroke="var(--gold)"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        pathLength={1}
-        className="spark-draw"
-      />
-    </svg>
-  );
-}
-
-/** Animated progress bar. */
-function Bar({ value, tone = "gold" }: { value: number; tone?: "gold" | "muted" }) {
-  const { ref, inView } = useInView();
-  return (
-    <div ref={ref} className="h-1.5 overflow-hidden rounded-full bg-border">
-      <div
-        className="h-full rounded-full transition-[width] duration-1000 ease-out"
-        style={{
-          width: inView ? `${value}%` : "0%",
-          background: tone === "gold" ? "var(--gradient-gold)" : "oklch(0.7 0.015 85 / 60%)",
-        }}
-      />
-    </div>
-  );
-}
-
-function Avatar({ name }: { name: string }) {
-  const initials = name
-    .split(" ")
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("");
-  return (
-    <span className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-glass text-[0.7rem] font-semibold text-foreground/80">
-      {initials}
-    </span>
-  );
-}
 
 /* ──────────────────────────────────────────────────────────────────────
  * Data
  * ─────────────────────────────────────────────────────────────────── */
 
-const nav: { icon: LucideIcon; label: string }[] = [
+const nav: { icon: LucideIcon; label: string; to?: string }[] = [
   { icon: Home, label: "Overview" },
   { icon: CircleDollarSign, label: "Revenue" },
-  { icon: Users, label: "Customers" },
+  { icon: Users, label: "Customers", to: "/crm" },
   { icon: Boxes, label: "Inventory" },
   { icon: Workflow, label: "Automations" },
   { icon: Bot, label: "Copilot" },
@@ -742,21 +617,30 @@ function Sidebar() {
     <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 lg:flex">
       <Brand subtle />
       <nav className="mt-8 space-y-1">
-        {nav.map((n, i) => (
-          <button
-            key={n.label}
-            className={cn(
-              "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
-              i === 0
-                ? "text-foreground"
-                : "text-muted-foreground hover:bg-glass hover:text-foreground",
-            )}
-            style={i === 0 ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}
-          >
-            <n.icon className={cn("size-4", i === 0 && "text-gold")} />
-            {n.label}
-          </button>
-        ))}
+        {nav.map((n, i) => {
+          const cls = cn(
+            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
+            i === 0
+              ? "text-foreground"
+              : "text-muted-foreground hover:bg-glass hover:text-foreground",
+          );
+          const style = i === 0 ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined;
+          const inner = (
+            <>
+              <n.icon className={cn("size-4", i === 0 && "text-gold")} />
+              {n.label}
+            </>
+          );
+          return n.to ? (
+            <Link key={n.label} to={n.to} className={cls} style={style}>
+              {inner}
+            </Link>
+          ) : (
+            <button key={n.label} className={cls} style={style}>
+              {inner}
+            </button>
+          );
+        })}
       </nav>
       <div className="mt-auto rounded-2xl border border-border p-4">
         <p className="flex items-center gap-2 text-xs font-medium text-foreground">

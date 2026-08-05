@@ -50,26 +50,21 @@ export async function createOrganization(input: {
   const user = userData.user;
   if (!user) return { data: null, error: new Error("You must be signed in to create a workspace.") };
 
-  const { data, error } = await supabase
-    .from("organizations")
-    .insert({
-      name: input.name.trim(),
-      slug: slugify(input.name),
-      industry: input.industry ?? null,
-      enabled_modules: input.enabledModules ?? enabledModulesFor(input.industry),
-      created_by: user.id,
-    })
-    .select(ORG_COLS)
-    .single();
-
+  const slug = slugify(input.name);
+  // Insert without asking for the row back — the owner membership is created by
+  // a trigger, so the row isn't yet SELECT-visible in the same statement.
+  const { error } = await supabase.from("organizations").insert({
+    name: input.name.trim(),
+    slug,
+    industry: input.industry ?? null,
+    enabled_modules: input.enabledModules ?? enabledModulesFor(input.industry),
+    created_by: user.id,
+  });
   if (error) return { data: null, error: new Error(error.message) };
 
-  let org = data as OrgRow | null;
-  // Fallback: if RLS withheld the returned row, fetch the newest org we own.
-  if (!org) {
-    const mine = await getMyOrgs();
-    org = mine[mine.length - 1] ?? null;
-  }
+  // Read it back by its unique slug (membership now exists → RLS allows the read).
+  const { data } = await supabase.from("organizations").select(ORG_COLS).eq("slug", slug).single();
+  const org = (data as OrgRow | null) ?? null;
   if (org) setActiveOrgId(org.id);
   return { data: org, error: null };
 }

@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowRight,
   BarChart3,
   Bell,
   Boxes,
   BrainCircuit,
+  Check,
   ChevronLeft,
   ChevronRight,
+  ChevronsUpDown,
   Crown,
+  LogOut,
   FileText,
   Factory,
   HelpCircle,
@@ -35,6 +38,8 @@ import { cn } from "@/lib/utils";
 import { Backdrop } from "@/components/wf/Backdrop";
 import { Mark } from "@/components/wf/Brand";
 import { Ring } from "@/components/wf/primitives";
+import { useOrg } from "@/lib/org-context";
+import { signOut } from "@/lib/use-auth";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Navigation model
@@ -83,6 +88,33 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     ],
   },
 ];
+
+// Which module each nav destination belongs to (for enabled-module filtering).
+const ROUTE_MODULE: Record<string, string> = {
+  "/dashboard": "dashboard",
+  "/crm": "crm",
+  "/orders": "orders",
+  "/inventory": "inventory",
+  "/suppliers": "suppliers",
+  "/growth": "growth",
+  "/advisor": "advisor",
+  "/analytics": "analytics",
+  "/automation": "automation",
+  "/team": "team",
+  "/admin": "admin",
+};
+const ALL_MODULES = Object.values(ROUTE_MODULE);
+
+function healthTier(score: number) {
+  if (score >= 85) return "Excellent";
+  if (score >= 70) return "Healthy & growing";
+  if (score >= 50) return "Stable";
+  return "Needs attention";
+}
+
+function initials(name: string) {
+  return name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "•";
+}
 
 type Command = { label: string; hint: string; to: string; icon: LucideIcon; ai?: boolean };
 const commands: Command[] = [
@@ -253,31 +285,102 @@ function AiPanel({ onClose }: { onClose: () => void }) {
  * ─────────────────────────────────────────────────────────────────── */
 
 function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const { org, orgs, role, userName, userEmail, switchOrg } = useOrg();
+  const navigate = useNavigate();
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+
+  const enabled = org?.enabled_modules ?? ALL_MODULES;
+  const groups = navGroups
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((it) => {
+        const m = ROUTE_MODULE[it.to];
+        return !m || m === "admin" || enabled.includes(m);
+      }),
+    }))
+    .filter((g) => g.items.length > 0);
+
+  const health = org?.health_score ?? 80;
+  const orgName = org?.name ?? "Your business";
+
+  const pick = (id: string) => {
+    setSwitcherOpen(false);
+    if (id !== org?.id) {
+      switchOrg(id);
+      navigate({ to: "/dashboard" });
+    }
+  };
+
+  const doSignOut = async () => {
+    await signOut();
+    navigate({ to: "/auth" });
+  };
+
   return (
     <aside
       style={{ width: collapsed ? "5rem" : "15rem" }}
       className="glass sticky top-0 hidden h-screen min-w-0 shrink-0 flex-col overflow-x-hidden p-3 transition-[width] duration-300 lg:flex"
     >
-      {/* brand + health */}
-      <Link to="/dashboard" className="flex items-center gap-3 rounded-xl px-2 py-2">
-        <Mark className="size-9" />
-        {!collapsed && (
-          <span className="flex min-w-0 flex-col leading-none">
-            <span className="truncate text-sm font-semibold tracking-tight">WonderFlow <span className="gold-text">OS</span></span>
-            <span className="mt-1 truncate text-[0.68rem] text-muted-foreground">WonderGlow Studio</span>
-          </span>
+      {/* org switcher */}
+      <div className="relative">
+        <button
+          onClick={() => !collapsed && setSwitcherOpen((o) => !o)}
+          className={cn("flex w-full items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-glass", collapsed && "justify-center px-0")}
+        >
+          <Mark className="size-9" />
+          {!collapsed && (
+            <>
+              <span className="flex min-w-0 flex-1 flex-col text-left leading-none">
+                <span className="truncate text-sm font-semibold tracking-tight">{orgName}</span>
+                <span className="mt-1 truncate text-[0.68rem] text-muted-foreground">WonderFlow OS</span>
+              </span>
+              <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
+            </>
+          )}
+        </button>
+        {switcherOpen && !collapsed && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setSwitcherOpen(false)} />
+            <div className="glass-strong absolute left-1 right-1 top-full z-40 mt-1 rounded-xl p-1.5">
+              <p className="px-2 py-1 text-[0.6rem] uppercase tracking-[0.16em] text-muted-foreground">Your businesses</p>
+              {orgs.map((o) => (
+                <button
+                  key={o.id}
+                  onClick={() => pick(o.id)}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-glass"
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md text-[0.6rem] font-semibold" style={{ background: "var(--gradient-gold)", color: "oklch(0.2 0.02 70)" }}>
+                    {initials(o.name)}
+                  </span>
+                  <span className="flex-1 truncate text-left text-foreground/90">{o.name}</span>
+                  {o.id === org?.id && <Check className="size-3.5 shrink-0 text-gold" />}
+                </button>
+              ))}
+              <button
+                onClick={() => { setSwitcherOpen(false); navigate({ to: "/onboarding" }); }}
+                className="mt-1 flex w-full items-center gap-2 rounded-lg border-t border-border px-2 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <Plus className="size-4" /> Add a business
+              </button>
+            </div>
+          </>
         )}
-      </Link>
+      </div>
+
+      {/* business health */}
       {!collapsed && (
-        <div className="mx-2 mt-3 flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-2.5">
-          <Ring value={84} size={40} stroke={4} label={<span className="text-xs font-semibold tabular-nums gold-text">84</span>} />
-          <div><p className="text-xs font-medium text-foreground">Business health</p><p className="text-[0.65rem] text-muted-foreground">Healthy & growing</p></div>
+        <div className="mx-1 mt-3 flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-2.5">
+          <Ring value={health} size={40} stroke={4} label={<span className="text-xs font-semibold tabular-nums gold-text">{health}</span>} />
+          <div>
+            <p className="text-xs font-medium text-foreground">Business health</p>
+            <p className="text-[0.65rem] text-muted-foreground">{healthTier(health)}</p>
+          </div>
         </div>
       )}
 
-      {/* nav */}
+      {/* nav (filtered by enabled modules) */}
       <nav className="mt-4 flex-1 space-y-4 overflow-y-auto pb-2">
-        {navGroups.map((g) => (
+        {groups.map((g) => (
           <div key={g.label}>
             {!collapsed && <p className="px-3 pb-1 text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">{g.label}</p>}
             <div className="space-y-0.5">
@@ -302,9 +405,15 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       <div className="space-y-0.5 border-t border-border pt-2">
         <Link to="/admin" title={collapsed ? "Settings" : undefined} className={cn("flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><Settings className="size-4 shrink-0" />{!collapsed && "Settings"}</Link>
         <button title={collapsed ? "Help" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><HelpCircle className="size-4 shrink-0" />{!collapsed && "Help"}</button>
+        <button onClick={doSignOut} title={collapsed ? "Sign out" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><LogOut className="size-4 shrink-0" />{!collapsed && "Sign out"}</button>
         <div className={cn("flex items-center gap-3 rounded-xl px-2 py-2", collapsed && "justify-center px-0")}>
-          <span className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-glass text-xs font-semibold text-foreground/80">AI</span>
-          {!collapsed && <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium text-foreground">Aisha Imran</p><p className="truncate text-[0.65rem] text-muted-foreground">Owner</p></div>}
+          <span className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-glass text-xs font-semibold text-foreground/80">{initials(userName)}</span>
+          {!collapsed && (
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-medium text-foreground">{userName}</p>
+              <p className="truncate text-[0.65rem] capitalize text-muted-foreground">{role ?? userEmail}</p>
+            </div>
+          )}
           <button onClick={onToggle} aria-label="Collapse sidebar" className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground">
             <ChevronLeft className={cn("size-4 transition-transform", collapsed && "rotate-180")} />
           </button>
@@ -345,7 +454,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [aiOpen, setAiOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { signedIn, authLoading, loading, orgs } = useOrg();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -356,8 +466,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // close mobile AI drawer on route change
-  useEffect(() => { /* keep panel state across routes on desktop */ }, [pathname]);
+  // Signed in but no business yet → finish onboarding first.
+  useEffect(() => {
+    if (!authLoading && signedIn && !loading && orgs.length === 0) navigate({ to: "/onboarding" });
+  }, [authLoading, signedIn, loading, orgs, navigate]);
 
   return (
     <div className="relative flex min-h-screen">

@@ -13,6 +13,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { useNavigate } from "@tanstack/react-router";
 import { AppShell } from "../components/wf/AppShell";
+import { OrgProvider } from "../lib/org-context";
 import { useAuth } from "../lib/use-auth";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
@@ -162,9 +163,11 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       {isApp ? (
-        <AppShell>
-          <Outlet />
-        </AppShell>
+        <OrgProvider>
+          <AppShell>
+            <Outlet />
+          </AppShell>
+        </OrgProvider>
       ) : (
         <Outlet />
       )}

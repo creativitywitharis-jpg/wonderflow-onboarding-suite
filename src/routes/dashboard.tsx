@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import { ExecutiveDashboard } from "@/components/wf/dashboard";
-import { loadOnboarding } from "@/lib/onboarding-store";
+import { useOrg } from "@/lib/org-context";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -24,14 +23,6 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 function Dashboard() {
-  const [company, setCompany] = useState("your business");
-
-  useEffect(() => {
-    const d = loadOnboarding();
-    if (d.company.trim()) setCompany(d.company.trim());
-  }, []);
-
-  return (
-    <ExecutiveDashboard company={company} />
-  );
+  const { org } = useOrg();
+  return <ExecutiveDashboard company={org?.name ?? "your business"} />;
 }

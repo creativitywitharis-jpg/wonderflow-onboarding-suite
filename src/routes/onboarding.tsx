@@ -1,10 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, Sparkles } from "lucide-react";
 import { Backdrop } from "@/components/wf/Backdrop";
 import { Brand } from "@/components/wf/Brand";
 import { Field, GhostButton, GlassCard, GoldButton, inputClass } from "@/components/wf/ui";
 import { emptyOnboarding, saveOnboarding, type OnboardingData } from "@/lib/onboarding-store";
+import { createOrganization, enabledModulesFor } from "@/lib/org";
+import { useAuth } from "@/lib/use-auth";
 
 export const Route = createFileRoute("/onboarding")({
   head: () => ({
@@ -77,6 +79,12 @@ function Onboarding() {
   const [step, setStep] = useState(0);
   const [data, setData] = useState<OnboardingData>(emptyOnboarding);
   const navigate = useNavigate();
+  const { session, loading } = useAuth();
+
+  // Must be signed in to create a workspace.
+  useEffect(() => {
+    if (!loading && !session) navigate({ to: "/auth" });
+  }, [loading, session, navigate]);
 
   const set = <K extends keyof OnboardingData>(key: K, value: OnboardingData[K]) =>
     setData((d) => ({ ...d, [key]: value }));
@@ -262,9 +270,22 @@ function Header({ title, sub }: { title: string; sub: string }) {
 
 function AISetup({ data, onDone }: { data: OnboardingData; onDone: () => void }) {
   const [progress, setProgress] = useState(0);
+  const [orgReady, setOrgReady] = useState(false);
+  const [orgError, setOrgError] = useState<string | null>(null);
+  const createdRef = useRef(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     saveOnboarding(data);
+    // Create the real organization once (guarded against React strict double-run).
+    if (!createdRef.current) {
+      createdRef.current = true;
+      createOrganization({
+        name: data.company || "My business",
+        industry: data.industry || undefined,
+        enabledModules: enabledModulesFor(data.industry || undefined),
+      }).then(({ error }) => (error ? setOrgError(error.message) : setOrgReady(true)));
+    }
     const id = window.setInterval(() => {
       setProgress((p) => {
         if (p >= agentTasks.length) {
@@ -277,7 +298,7 @@ function AISetup({ data, onDone }: { data: OnboardingData; onDone: () => void })
     return () => window.clearInterval(id);
   }, [data]);
 
-  const done = progress >= agentTasks.length;
+  const done = progress >= agentTasks.length && orgReady;
 
   return (
     <div className="space-y-7">
@@ -334,15 +355,26 @@ function AISetup({ data, onDone }: { data: OnboardingData; onDone: () => void })
         })}
       </div>
 
-      <GoldButton disabled={!done} onClick={onDone} className="w-full">
-        {done ? (
-          <>
-            See my transformation score <ArrowRight className="size-4" />
-          </>
-        ) : (
-          "Working…"
-        )}
-      </GoldButton>
+      {orgError ? (
+        <div className="space-y-3">
+          <p className="flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-200">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" /> Couldn't create your workspace: {orgError}
+          </p>
+          <GhostButton onClick={() => navigate({ to: "/auth" })} className="w-full">
+            Back to sign in
+          </GhostButton>
+        </div>
+      ) : (
+        <GoldButton disabled={!done} onClick={onDone} className="w-full">
+          {done ? (
+            <>
+              See my transformation score <ArrowRight className="size-4" />
+            </>
+          ) : (
+            "Working…"
+          )}
+        </GoldButton>
+      )}
     </div>
   );
 }

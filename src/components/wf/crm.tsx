@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
@@ -9,7 +9,6 @@ import {
   Brain,
   Building2,
   Crown,
-  Filter,
   Gift,
   Heart,
   Home,
@@ -17,6 +16,7 @@ import {
   Mail,
   MessageSquare,
   Phone,
+  Plus,
   Search,
   Send,
   Sparkles,
@@ -33,6 +33,8 @@ import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Delta, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
+import { useOrg } from "@/lib/org-context";
+import { createCustomer, insertCustomers, listCustomers, type DbCustomer, type NewCustomer } from "@/lib/customers";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -83,16 +85,101 @@ type Customer = {
   orders: number;
 };
 
-const customers: Customer[] = [
-  { id: "c1", name: "Ava Chen", company: "Northwind Co", email: "ava@northwind.co", ltv: 18420, health: 94, tier: "Champion", last: "2h ago", sentiment: "Positive", tags: ["High intent", "Upsell ready"], spark: [30, 34, 33, 40, 44, 51, 58, 66, 74], since: "2023", orders: 34 },
-  { id: "c2", name: "Leo Park", company: "Brightloom", email: "leo@brightloom.io", ltv: 12960, health: 88, tier: "Loyal", last: "1d ago", sentiment: "Positive", tags: ["Renewal soon"], spark: [40, 41, 44, 43, 47, 49, 52, 55, 58], since: "2022", orders: 27 },
-  { id: "c3", name: "Mara Silva", company: "Fjord Studio", email: "mara@fjord.design", ltv: 9840, health: 72, tier: "Potential", last: "3d ago", sentiment: "Neutral", tags: ["Price sensitive"], spark: [20, 26, 30, 28, 34, 36, 41, 44, 48], since: "2024", orders: 14 },
-  { id: "c4", name: "Noah Reed", company: "Ridgeway", email: "noah@ridgeway.com", ltv: 21500, health: 91, tier: "Champion", last: "5h ago", sentiment: "Positive", tags: ["Advocate", "Case study"], spark: [50, 54, 58, 61, 66, 70, 76, 82, 90], since: "2021", orders: 41 },
-  { id: "c5", name: "Priya Nair", company: "Solstice", email: "priya@solstice.co", ltv: 4120, health: 58, tier: "New", last: "6h ago", sentiment: "Neutral", tags: ["Onboarding"], spark: [8, 12, 18, 24, 30, 34, 38, 41, 44], since: "2025", orders: 4 },
-  { id: "c6", name: "Sam Idris", company: "Halcyon", email: "sam@halcyon.app", ltv: 15230, health: 41, tier: "At risk", last: "21d ago", sentiment: "Negative", tags: ["Churn risk", "Ticket open"], spark: [60, 58, 55, 50, 44, 40, 34, 30, 26], since: "2022", orders: 22 },
-  { id: "c7", name: "Ivy Zhou", company: "Meridian", email: "ivy@meridian.co", ltv: 7350, health: 66, tier: "Loyal", last: "2d ago", sentiment: "Positive", tags: ["Referral source"], spark: [30, 32, 35, 37, 40, 42, 45, 47, 50], since: "2023", orders: 18 },
-  { id: "c8", name: "Dane Ford", company: "Cobalt", email: "dane@cobalt.io", ltv: 3010, health: 28, tier: "Dormant", last: "58d ago", sentiment: "Negative", tags: ["Win-back"], spark: [40, 36, 30, 26, 20, 16, 12, 10, 8], since: "2022", orders: 9 },
+// Sample data for the one-click "add sample customers" seed action.
+const SAMPLE_CUSTOMERS: NewCustomer[] = [
+  { name: "Ava Chen", company: "Northwind Co", email: "ava@northwind.co", ltv: 18420, health: 94, tier: "Champion", sentiment: "Positive", tags: ["High intent", "Upsell ready"], since: "2023", orders: 34 },
+  { name: "Leo Park", company: "Brightloom", email: "leo@brightloom.io", ltv: 12960, health: 88, tier: "Loyal", sentiment: "Positive", tags: ["Renewal soon"], since: "2022", orders: 27 },
+  { name: "Mara Silva", company: "Fjord Studio", email: "mara@fjord.design", ltv: 9840, health: 72, tier: "Potential", sentiment: "Neutral", tags: ["Price sensitive"], since: "2024", orders: 14 },
+  { name: "Noah Reed", company: "Ridgeway", email: "noah@ridgeway.com", ltv: 21500, health: 91, tier: "Champion", sentiment: "Positive", tags: ["Advocate", "Case study"], since: "2021", orders: 41 },
+  { name: "Priya Nair", company: "Solstice", email: "priya@solstice.co", ltv: 4120, health: 58, tier: "New", sentiment: "Neutral", tags: ["Onboarding"], since: "2025", orders: 4 },
+  { name: "Sam Idris", company: "Halcyon", email: "sam@halcyon.app", ltv: 15230, health: 41, tier: "At risk", sentiment: "Negative", tags: ["Churn risk", "Ticket open"], since: "2022", orders: 22 },
+  { name: "Ivy Zhou", company: "Meridian", email: "ivy@meridian.co", ltv: 7350, health: 66, tier: "Loyal", sentiment: "Positive", tags: ["Referral source"], since: "2023", orders: 18 },
+  { name: "Dane Ford", company: "Cobalt", email: "dane@cobalt.io", ltv: 3010, health: 28, tier: "Dormant", sentiment: "Negative", tags: ["Win-back"], since: "2022", orders: 9 },
 ];
+
+function genSpark(health: number): number[] {
+  const b = Math.max(12, Math.min(88, health));
+  return Array.from({ length: 9 }, (_, i) => Math.round(b * (0.55 + (i / 8) * 0.55)));
+}
+
+function toUi(c: DbCustomer): Customer {
+  return {
+    id: c.id,
+    name: c.name,
+    company: c.company ?? "",
+    email: c.email ?? "",
+    ltv: Number(c.ltv),
+    health: c.health,
+    tier: c.tier as Customer["tier"],
+    last: "recently",
+    sentiment: c.sentiment as Customer["sentiment"],
+    tags: c.tags ?? [],
+    spark: genSpark(c.health),
+    since: c.since ?? "—",
+    orders: c.orders,
+  };
+}
+
+type CustomersState = {
+  customers: Customer[];
+  loading: boolean;
+  addCustomer: (c: NewCustomer) => Promise<void>;
+  seed: () => Promise<void>;
+};
+const CustomersCtx = createContext<CustomersState | null>(null);
+function useCustomersData() {
+  const ctx = useContext(CustomersCtx);
+  if (!ctx) throw new Error("useCustomersData must be used within CustomersProvider");
+  return ctx;
+}
+function CustomersProvider({ children }: { children: ReactNode }) {
+  const { org } = useOrg();
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!org) {
+      setCustomers([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const rows = await listCustomers(org.id);
+      setCustomers(rows.map(toUi));
+    } catch {
+      setCustomers([]);
+    }
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const addCustomer = useCallback(
+    async (c: NewCustomer) => {
+      if (!org) return;
+      await createCustomer(org.id, c);
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+
+  const seed = useCallback(
+    async () => {
+      if (!org) return;
+      await insertCustomers(org.id, SAMPLE_CUSTOMERS);
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+
+  return <CustomersCtx.Provider value={{ customers, loading, addCustomer, seed }}>{children}</CustomersCtx.Provider>;
+}
 
 const segments = [
   { label: "Champions", count: 486, share: 34, trend: 8, color: GOLD, desc: "Buy often, spend the most, and advocate for you." },
@@ -214,12 +301,14 @@ function SentimentDot({ sentiment }: { sentiment: Customer["sentiment"] }) {
  * ─────────────────────────────────────────────────────────────────── */
 
 function OverviewView() {
-  const total = 2841;
+  const { customers } = useCustomersData();
+  const total = customers.length;
+  const avgLtv = customers.length ? Math.round(customers.reduce((a, c) => a + c.ltv, 0) / customers.length) : 0;
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Total customers" value={2841} delta="6.2%" icon={Users} />
-        <StatTile label="Avg lifetime value" value={4820} prefix="$" delta="11%" icon={TrendingUp} />
+        <StatTile label="Total customers" value={total} icon={Users} />
+        <StatTile label="Avg lifetime value" value={avgLtv} prefix="$" icon={TrendingUp} />
         <StatTile label="Retention rate" value={92} suffix="%" delta="2.1 pts" icon={Heart} />
         <StatTile label="Net promoter score" value={72} delta="6" icon={Star} />
       </div>
@@ -317,9 +406,15 @@ function OverviewView() {
   );
 }
 
+const CRM_INPUT = "w-full rounded-xl border border-border bg-background/40 px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-gold/50";
+
 function CustomersView({ onOpen }: { onOpen: (id: string) => void }) {
+  const { customers, loading, addCustomer, seed } = useCustomersData();
   const [q, setQ] = useState("");
   const [tier, setTier] = useState<string>("All");
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ name: "", company: "", email: "", tier: "New" });
   const tiers = ["All", "Champion", "Loyal", "Potential", "New", "At risk", "Dormant"];
   const filtered = customers.filter(
     (c) =>
@@ -328,6 +423,63 @@ function CustomersView({ onOpen }: { onOpen: (id: string) => void }) {
         c.name.toLowerCase().includes(q.toLowerCase()) ||
         c.company.toLowerCase().includes(q.toLowerCase())),
   );
+
+  const submitAdd = async () => {
+    if (!form.name.trim() || busy) return;
+    setBusy(true);
+    await addCustomer({
+      name: form.name.trim(),
+      company: form.company.trim() || undefined,
+      email: form.email.trim() || undefined,
+      tier: form.tier,
+    });
+    setBusy(false);
+    setForm({ name: "", company: "", email: "", tier: "New" });
+    setAdding(false);
+  };
+
+  const addForm = (
+    <div className="grid gap-3 rounded-2xl border border-border bg-background/30 p-4 text-left sm:grid-cols-2">
+      <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Full name *" className={CRM_INPUT} />
+      <input value={form.company} onChange={(e) => setForm((f) => ({ ...f, company: e.target.value }))} placeholder="Company" className={CRM_INPUT} />
+      <input value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="Email" className={CRM_INPUT} />
+      <select value={form.tier} onChange={(e) => setForm((f) => ({ ...f, tier: e.target.value }))} className={CRM_INPUT}>
+        {tiers.slice(1).map((t) => <option key={t}>{t}</option>)}
+      </select>
+      <div className="flex gap-2 sm:col-span-2">
+        <button onClick={submitAdd} disabled={!form.name.trim() || busy} className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>
+          <Plus className="size-3.5" /> {busy ? "Saving…" : "Save customer"}
+        </button>
+        <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+      </div>
+    </div>
+  );
+
+  // Empty state — no customers in this workspace yet.
+  if (!loading && customers.length === 0) {
+    return (
+      <Reveal>
+        <GlassCard className="p-8 text-center sm:p-10">
+          <span className="orb mx-auto grid size-14 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+            <Users className="size-6" stroke="oklch(0.2 0.02 70)" />
+          </span>
+          <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>No customers yet</h2>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+            Your customer intelligence lives here. Add your first customer, or drop in a sample set to explore the CRM.
+          </p>
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            <button onClick={async () => { setBusy(true); await seed(); setBusy(false); }} disabled={busy} className="flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
+              <Sparkles className="size-4" /> {busy ? "Adding…" : "Add sample customers"}
+            </button>
+            <button onClick={() => setAdding((a) => !a)} className="rounded-full border border-border bg-glass px-5 py-2.5 text-sm text-foreground/85 transition-colors hover:border-gold/40">
+              Add manually
+            </button>
+          </div>
+          {adding && <div className="mx-auto mt-6 max-w-lg">{addForm}</div>}
+        </GlassCard>
+      </Reveal>
+    );
+  }
 
   return (
     <Reveal>
@@ -342,10 +494,12 @@ function CustomersView({ onOpen }: { onOpen: (id: string) => void }) {
               className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
             />
           </label>
-          <div className="flex items-center gap-1.5 text-muted-foreground">
-            <Filter className="size-4" />
-          </div>
+          <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-1.5 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
+            <Plus className="size-4" stroke="oklch(0.2 0.02 70)" /> New customer
+          </button>
         </div>
+
+        {adding && <div className="mt-4">{addForm}</div>}
 
         <div className="mt-4 flex flex-wrap gap-2">
           {tiers.map((t) => (
@@ -375,41 +529,43 @@ function CustomersView({ onOpen }: { onOpen: (id: string) => void }) {
         </div>
 
         <div className="space-y-1">
-          {filtered.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => onOpen(c.id)}
-              className="lift grid w-full grid-cols-1 items-center gap-4 rounded-2xl border border-transparent px-3 py-3 text-left hover:border-gold/30 hover:bg-glass md:grid-cols-[1.6fr_1fr_0.8fr_0.9fr_auto]"
-            >
-              <div className="flex items-center gap-3">
-                <Avatar name={c.name} />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-foreground">{c.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{c.company}</p>
+          {loading && <p className="py-10 text-center text-sm text-muted-foreground">Loading customers…</p>}
+          {!loading &&
+            filtered.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => onOpen(c.id)}
+                className="lift grid w-full grid-cols-1 items-center gap-4 rounded-2xl border border-transparent px-3 py-3 text-left hover:border-gold/30 hover:bg-glass md:grid-cols-[1.6fr_1fr_0.8fr_0.9fr_auto]"
+              >
+                <div className="flex items-center gap-3">
+                  <Avatar name={c.name} />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">{c.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{c.company}</p>
+                  </div>
                 </div>
-              </div>
-              <div className="hidden flex-wrap gap-1.5 md:flex">
-                {c.tags.slice(0, 2).map((t) => (
-                  <span
-                    key={t}
-                    className="rounded-full border border-border bg-glass px-2 py-0.5 text-[0.65rem] text-muted-foreground"
-                  >
-                    {t}
-                  </span>
-                ))}
-              </div>
-              <span className="hidden text-right text-sm font-semibold tabular-nums text-gold md:block">
-                ${formatNum(c.ltv)}
-              </span>
-              <div className="hidden md:block">
-                <SentimentDot sentiment={c.sentiment} />
-              </div>
-              <div className="hidden justify-self-center md:block">
-                <MiniRing value={c.health} />
-              </div>
-            </button>
-          ))}
-          {filtered.length === 0 && (
+                <div className="hidden flex-wrap gap-1.5 md:flex">
+                  {c.tags.slice(0, 2).map((t) => (
+                    <span
+                      key={t}
+                      className="rounded-full border border-border bg-glass px-2 py-0.5 text-[0.65rem] text-muted-foreground"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+                <span className="hidden text-right text-sm font-semibold tabular-nums text-gold md:block">
+                  ${formatNum(c.ltv)}
+                </span>
+                <div className="hidden md:block">
+                  <SentimentDot sentiment={c.sentiment} />
+                </div>
+                <div className="hidden justify-self-center md:block">
+                  <MiniRing value={c.health} />
+                </div>
+              </button>
+            ))}
+          {!loading && filtered.length === 0 && (
             <p className="py-10 text-center text-sm text-muted-foreground">No customers match that filter.</p>
           )}
         </div>
@@ -425,7 +581,17 @@ function ProfilesView({
   selectedId: string;
   onSelect: (id: string) => void;
 }) {
+  const { customers } = useCustomersData();
   const c = customers.find((x) => x.id === selectedId) ?? customers[0];
+  if (!c) {
+    return (
+      <Reveal>
+        <GlassCard className="p-10 text-center text-sm text-muted-foreground">
+          Add a customer first — their AI profile will appear here.
+        </GlassCard>
+      </Reveal>
+    );
+  }
   const timeline = [
     { icon: Star, t: "Left a 5-star review", d: "2 days ago" },
     { icon: TrendingUp, t: "Upgraded to Growth plan", d: "3 weeks ago" },
@@ -895,6 +1061,7 @@ export function CrmWorkspace() {
   };
 
   return (
+    <CustomersProvider>
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
       <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 !hidden">
         <Brand subtle />
@@ -973,5 +1140,6 @@ export function CrmWorkspace() {
         </div>
       </section>
     </div>
+    </CustomersProvider>
   );
 }

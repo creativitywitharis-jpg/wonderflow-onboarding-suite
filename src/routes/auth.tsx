@@ -1,9 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { ArrowRight, Check, Lock, Mail, User } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Lock, Mail, User } from "lucide-react";
 import { Backdrop } from "@/components/wf/Backdrop";
 import { Brand } from "@/components/wf/Brand";
 import { Field, GhostButton, GlassCard, GoldButton, inputClass } from "@/components/wf/ui";
+import { supabase } from "@/lib/supabase";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -32,13 +33,52 @@ const perks = [
 
 function AuthScreen() {
   const [mode, setMode] = useState<"signup" | "signin">("signup");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
+    setNotice(null);
     setPending(true);
-    window.setTimeout(() => navigate({ to: "/onboarding" }), 900);
+    try {
+      if (mode === "signup") {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: name } },
+        });
+        if (error) throw error;
+        if (data.session) {
+          navigate({ to: "/onboarding" });
+        } else {
+          setNotice("Check your email to confirm your account, then sign in.");
+          setMode("signin");
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        navigate({ to: "/dashboard" });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function google() {
+    setError(null);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/onboarding` },
+    });
+    if (error) setError(error.message);
   }
 
   return (
@@ -95,7 +135,13 @@ function AuthScreen() {
               <Field label="Full name">
                 <div className="relative">
                   <User className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <input required className={`${inputClass} pl-10`} placeholder="Ava Lindqvist" />
+                  <input
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className={`${inputClass} pl-10`}
+                    placeholder="Aisha Imran"
+                  />
                 </div>
               </Field>
             )}
@@ -105,38 +151,66 @@ function AuthScreen() {
                 <input
                   required
                   type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className={`${inputClass} pl-10`}
-                  placeholder="ava@company.com"
+                  placeholder="you@company.com"
                 />
               </div>
             </Field>
-            <Field label="Password" hint="Minimum 10 characters, one symbol.">
+            <Field label="Password" hint="Minimum 6 characters.">
               <div className="relative">
                 <Lock className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <input
                   required
                   type="password"
                   minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   className={`${inputClass} pl-10`}
                   placeholder="••••••••••"
                 />
               </div>
             </Field>
 
+            {error && (
+              <p className="flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-200">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" /> {error}
+              </p>
+            )}
+            {notice && (
+              <p className="flex items-start gap-2 rounded-xl border border-gold/30 bg-glass px-3 py-2.5 text-xs text-foreground/85">
+                <Check className="mt-0.5 size-3.5 shrink-0 text-gold" /> {notice}
+              </p>
+            )}
+
             <GoldButton type="submit" disabled={pending} className="w-full">
               {pending ? (
-                "Preparing your workspace…"
+                "Please wait…"
               ) : (
                 <>
-                  {mode === "signup" ? "Create workspace" : "Continue"}
+                  {mode === "signup" ? "Create workspace" : "Sign in"}
                   <ArrowRight className="size-4" />
                 </>
               )}
             </GoldButton>
           </form>
 
+          <div className="my-4 flex items-center gap-3 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+            <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
+          </div>
+          <GhostButton type="button" onClick={google} className="w-full">
+            <svg className="size-4" viewBox="0 0 24 24" aria-hidden>
+              <path fill="currentColor" d="M21.35 11.1H12v2.9h5.35c-.25 1.36-1 2.5-2.13 3.28v2.72h3.44c2.02-1.86 3.19-4.6 3.19-7.86 0-.66-.06-1.3-.17-1.9z" />
+              <path fill="currentColor" d="M12 22c2.7 0 4.96-.9 6.62-2.42l-3.44-2.72c-.95.64-2.17 1.02-3.18 1.02-2.45 0-4.53-1.65-5.27-3.88H3.15v2.44C4.8 19.98 8.14 22 12 22z" opacity=".8" />
+              <path fill="currentColor" d="M6.73 13.98A5.86 5.86 0 0 1 6.4 12c0-.69.12-1.36.33-1.98V7.58H3.15A9.98 9.98 0 0 0 2 12c0 1.6.38 3.12 1.15 4.42l3.58-2.44z" opacity=".6" />
+              <path fill="currentColor" d="M12 6.14c1.47 0 2.79.5 3.83 1.5l2.87-2.87C16.96 3.13 14.7 2 12 2 8.14 2 4.8 4.02 3.15 7.58l3.58 2.44C7.47 7.8 9.55 6.14 12 6.14z" opacity=".9" />
+            </svg>
+            Continue with Google
+          </GhostButton>
+
           <p className="mt-5 text-center text-xs leading-relaxed text-muted-foreground">
-            Protected by enterprise SSO, SOC 2 Type II controls and regional data residency.
+            Protected by enterprise controls, encrypted storage and per-business data isolation.
           </p>
         </GlassCard>
       </div>

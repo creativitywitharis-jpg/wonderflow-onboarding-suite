@@ -11,7 +11,9 @@ import {
 import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+import { useNavigate } from "@tanstack/react-router";
 import { AppShell } from "../components/wf/AppShell";
+import { useAuth } from "../lib/use-auth";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
 function NotFoundComponent() {
@@ -148,6 +150,13 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isApp = APP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
+  const { session, loading } = useAuth();
+  const navigate = useNavigate();
+
+  // Protect the workspace: unauthenticated visitors are sent to sign in.
+  useEffect(() => {
+    if (isApp && !loading && !session) navigate({ to: "/auth" });
+  }, [isApp, loading, session, navigate]);
 
   return (
     <QueryClientProvider client={queryClient}>

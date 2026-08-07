@@ -14,13 +14,143 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      customers: {
+        Row: {
+          company: string | null
+          created_at: string
+          email: string | null
+          health: number
+          id: string
+          ltv: number
+          name: string
+          orders: number
+          org_id: string
+          sentiment: string
+          since: string | null
+          tags: string[]
+          tier: string
+        }
+        Insert: {
+          company?: string | null
+          created_at?: string
+          email?: string | null
+          health?: number
+          id?: string
+          ltv?: number
+          name: string
+          orders?: number
+          org_id: string
+          sentiment?: string
+          since?: string | null
+          tags?: string[]
+          tier?: string
+        }
+        Update: {
+          company?: string | null
+          created_at?: string
+          email?: string | null
+          health?: number
+          id?: string
+          ltv?: number
+          name?: string
+          orders?: number
+          org_id?: string
+          sentiment?: string
+          since?: string | null
+          tags?: string[]
+          tier?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customers_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      memberships: {
+        Row: {
+          created_at: string
+          id: string
+          org_id: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          org_id: string
+          role?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          org_id?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "memberships_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organizations: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          enabled_modules: string[]
+          health_score: number
+          id: string
+          industry: string | null
+          name: string
+          plan: string
+          slug: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          enabled_modules?: string[]
+          health_score?: number
+          id?: string
+          industry?: string | null
+          name: string
+          plan?: string
+          slug?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          enabled_modules?: string[]
+          health_score?: number
+          id?: string
+          industry?: string | null
+          name?: string
+          plan?: string
+          slug?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_org_role: {
+        Args: { _org_id: string; _roles: string[]; _user_id: string }
+        Returns: boolean
+      }
+      is_org_member: {
+        Args: { _org_id: string; _user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never

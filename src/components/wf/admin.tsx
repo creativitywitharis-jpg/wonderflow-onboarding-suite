@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
@@ -7,10 +7,12 @@ import {
   Bot,
   Building2,
   Check,
+  CreditCard,
   Cpu,
   Database,
   Globe,
   KeyRound,
+  Loader2,
   Lock,
   Mail,
   Plug,
@@ -30,6 +32,8 @@ import { cn } from "@/lib/utils";
 import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/primitives";
+import { useOrg } from "@/lib/org-context";
+import { PLANS, getSubscription, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Primitives
@@ -74,10 +78,11 @@ function StatusDot({ tone }: { tone: "ok" | "warn" | "err" }) {
  * Data
  * ─────────────────────────────────────────────────────────────────── */
 
-type ViewKey = "settings" | "users" | "roles" | "permissions" | "ai" | "integrations" | "security" | "audit" | "monitoring";
+type ViewKey = "settings" | "billing" | "users" | "roles" | "permissions" | "ai" | "integrations" | "security" | "audit" | "monitoring";
 
 const views: { key: ViewKey; label: string; icon: LucideIcon }[] = [
   { key: "settings", label: "Business settings", icon: Building2 },
+  { key: "billing", label: "Billing & plan", icon: CreditCard },
   { key: "users", label: "Users", icon: Users },
   { key: "roles", label: "Roles", icon: Shield },
   { key: "permissions", label: "Permissions", icon: KeyRound },
@@ -476,12 +481,161 @@ function MonitoringView() {
   );
 }
 
+function BillingView() {
+  const { org, role } = useOrg();
+  const [sub, setSub] = useState<SubscriptionRow | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<PlanId | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const canManage = role === "owner" || role === "admin";
+
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get("billing");
+    if (p === "success") setNotice("Payment received — your plan is activating. It'll refresh here in a moment.");
+    if (p === "cancelled") setNotice("Checkout cancelled — no charge was made.");
+  }, []);
+
+  useEffect(() => {
+    if (!org) return;
+    let alive = true;
+    setLoading(true);
+    getSubscription(org.id)
+      .then((s) => alive && setSub(s))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [org?.id]);
+
+  const activePlan = sub && (sub.status === "active" || sub.status === "trialing") ? sub.plan : null;
+  const renews = sub?.current_period_end ? new Date(sub.current_period_end).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : null;
+
+  async function choose(plan: PlanId) {
+    if (!org) return;
+    setError(null);
+    setBusy(plan);
+    try {
+      await startCheckout(plan, org.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start checkout.");
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      {notice && (
+        <Reveal>
+          <div className="flex items-center gap-2 rounded-2xl border border-gold/30 bg-glass px-4 py-3 text-sm text-foreground/85">
+            <Sparkles className="size-4 text-gold" /> {notice}
+          </div>
+        </Reveal>
+      )}
+      {error && (
+        <Reveal>
+          <div className="flex items-center gap-2 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            <AlertTriangle className="size-4" /> {error}
+          </div>
+        </Reveal>
+      )}
+
+      <Reveal>
+        <GlassCard className="flex flex-wrap items-center justify-between gap-4 p-6">
+          <div className="flex items-center gap-4">
+            <span className="grid size-12 place-items-center rounded-2xl border border-gold/25 bg-glass"><CreditCard className="size-5 text-gold" /></span>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Current plan</p>
+              {loading ? (
+                <p className="mt-1 flex items-center gap-2 text-lg text-foreground/70"><Loader2 className="size-4 animate-spin" /> Loading…</p>
+              ) : (
+                <p className="mt-0.5 text-2xl text-foreground" style={{ fontFamily: "var(--font-display)" }}>
+                  {activePlan ? <span className="gold-text italic">{PLANS.find((p) => p.id === activePlan)?.name ?? activePlan}</span> : <span className="italic text-muted-foreground">No active plan</span>}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="text-right text-xs text-muted-foreground">
+            {activePlan ? (
+              <>
+                <p className="flex items-center justify-end gap-1.5 text-emerald-300"><span className="size-1.5 rounded-full bg-emerald-400" /> {sub?.status}</p>
+                {renews && <p className="mt-1">Renews {renews}</p>}
+              </>
+            ) : (
+              <p>Choose a plan below to unlock your full workspace.</p>
+            )}
+          </div>
+        </GlassCard>
+      </Reveal>
+
+      {!canManage && (
+        <p className="text-xs text-muted-foreground">Only owners and admins can change the plan.</p>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        {PLANS.map((plan, i) => {
+          const isCurrent = activePlan === plan.id;
+          return (
+            <Reveal key={plan.id} delay={i * 70} className="h-full">
+              <GlassCard className={cn("flex h-full flex-col p-6", plan.popular ? "border-gold/50" : "", isCurrent && "ring-1 ring-gold/40")}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-foreground">{plan.name}</span>
+                  {plan.popular && <span className="rounded-full px-2.5 py-0.5 text-[0.65rem] font-semibold text-primary-foreground" style={{ background: "var(--gradient-gold)" }}>Most popular</span>}
+                </div>
+                <p className="mt-4 flex items-baseline gap-1">
+                  <span className="text-4xl tracking-tight text-foreground" style={{ fontFamily: "var(--font-display)" }}>${plan.price}</span>
+                  <span className="text-sm text-muted-foreground">/mo</span>
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">{plan.tagline}</p>
+                <ul className="mt-5 flex-1 space-y-2.5">
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex items-start gap-2 text-sm text-foreground/85">
+                      <Check className="mt-0.5 size-4 shrink-0 text-gold" /> {f}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => choose(plan.id)}
+                  disabled={isCurrent || !canManage || busy !== null}
+                  className={cn(
+                    "mt-6 flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition-all active:scale-[0.98] disabled:cursor-not-allowed",
+                    isCurrent
+                      ? "border border-gold/40 bg-glass text-foreground/70"
+                      : "text-primary-foreground hover:brightness-110 disabled:opacity-50",
+                  )}
+                  style={!isCurrent ? { background: "var(--gradient-gold)", boxShadow: plan.popular ? "var(--shadow-gold)" : undefined } : undefined}
+                >
+                  {busy === plan.id ? (
+                    <><Loader2 className="size-4 animate-spin" /> Redirecting…</>
+                  ) : isCurrent ? (
+                    <><Check className="size-4" /> Current plan</>
+                  ) : activePlan ? (
+                    `Switch to ${plan.name}`
+                  ) : (
+                    `Choose ${plan.name}`
+                  )}
+                </button>
+              </GlassCard>
+            </Reveal>
+          );
+        })}
+      </div>
+
+      <p className="text-center text-xs text-muted-foreground">
+        Secure checkout by Stripe · Test mode · Cancel anytime. Prices in USD.
+      </p>
+    </div>
+  );
+}
+
 /* ──────────────────────────────────────────────────────────────────────
  * Workspace shell
  * ─────────────────────────────────────────────────────────────────── */
 
 const viewMeta: Record<ViewKey, { title: string; sub: string }> = {
   settings: { title: "Business settings", sub: "Complete control of your OS" },
+  billing: { title: "Billing & plan", sub: "Your subscription" },
   users: { title: "Users", sub: "Manage your team" },
   roles: { title: "Roles", sub: "Who can do what" },
   permissions: { title: "Permissions", sub: "Fine-grained access control" },
@@ -533,6 +687,7 @@ export function AdminWorkspace() {
 
         <div key={active} className="rise">
           {active === "settings" && <SettingsView />}
+          {active === "billing" && <BillingView />}
           {active === "users" && <UsersView />}
           {active === "roles" && <RolesView />}
           {active === "permissions" && <PermissionsView />}

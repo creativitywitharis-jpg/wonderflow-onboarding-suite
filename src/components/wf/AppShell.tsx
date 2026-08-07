@@ -144,12 +144,11 @@ function CommandPalette({ open, onClose, onAsk }: { open: boolean; onClose: () =
   const filtered = commands.filter((c) => (c.label + c.hint).toLowerCase().includes(q.toLowerCase()));
 
   useEffect(() => {
-    if (open) {
-      setQ("");
-      setActive(0);
-      const t = window.setTimeout(() => inputRef.current?.focus(), 20);
-      return () => window.clearTimeout(t);
-    }
+    if (!open) return undefined;
+    setQ("");
+    setActive(0);
+    const t = window.setTimeout(() => inputRef.current?.focus(), 20);
+    return () => window.clearTimeout(t);
   }, [open]);
 
   useEffect(() => setActive(0), [q]);

@@ -40,6 +40,7 @@ import { Mark } from "@/components/wf/Brand";
 import { Ring } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
 import { signOut } from "@/lib/use-auth";
+import { askAI } from "@/lib/ai";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Navigation model
@@ -218,24 +219,35 @@ const insights = [
 ];
 
 function AiPanel({ onClose }: { onClose: () => void }) {
+  const { org } = useOrg();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, thinking]);
 
-  const answer = (q: string) => {
-    const s = q.toLowerCase();
-    if (s.includes("today")) return "Today: 148 orders (+12%), 3 approvals waiting, and one supply risk I've drafted a fix for.";
-    if (s.includes("money") || s.includes("losing")) return "Two overstocked SKUs tie up $18k, and paid-social CAC is rising. Shift budget to referral and clear the overstock.";
-    if (s.includes("focus")) return "Referral engine + a measured 8% price increase — combined +9% MRR at low risk.";
-    return "On it. I'll pull that together from your live data and surface it in the workspace.";
-  };
-  const send = (text: string) => {
-    const q = text.trim(); if (!q || thinking) return;
-    setMessages((m) => [...m, { role: "user", text: q }]); setInput(""); setThinking(true);
-    window.setTimeout(() => { setThinking(false); setMessages((m) => [...m, { role: "ai", text: answer(q) }]); }, 1200);
-  };
+  async function send(text: string) {
+    const q = text.trim();
+    if (!q || thinking) return;
+    const next: ChatMsg[] = [...messages, { role: "user", text: q }];
+    setMessages(next);
+    setInput("");
+    setThinking(true);
+    try {
+      const reply = await askAI(
+        next.map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }) as const),
+        { name: org?.name, industry: org?.industry },
+      );
+      setMessages((m) => [...m, { role: "ai", text: reply || "I don't have an answer for that yet." }]);
+    } catch {
+      setMessages((m) => [
+        ...m,
+        { role: "ai", text: "I couldn't reach the AI service. Make sure the ai-chat function is deployed and the ANTHROPIC_API_KEY secret is set." },
+      ]);
+    } finally {
+      setThinking(false);
+    }
+  }
 
   return (
     <div className="flex h-full flex-col p-5">

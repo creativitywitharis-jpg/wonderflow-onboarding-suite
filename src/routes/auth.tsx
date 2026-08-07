@@ -5,6 +5,7 @@ import { Backdrop } from "@/components/wf/Backdrop";
 import { Brand } from "@/components/wf/Brand";
 import { Field, GhostButton, GlassCard, GoldButton, inputClass } from "@/components/wf/ui";
 import { supabase } from "@/lib/supabase";
+import { lovable } from "@/integrations/lovable/index";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -74,11 +75,15 @@ function AuthScreen() {
 
   async function google() {
     setError(null);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: `${window.location.origin}/onboarding` },
+    const result = await lovable.auth.signInWithOAuth("google", {
+      redirect_uri: window.location.origin,
     });
-    if (error) setError(error.message);
+    if (result.error) {
+      setError(result.error.message ?? "Google sign-in failed. Please try again.");
+      return;
+    }
+    if (result.redirected) return;
+    navigate({ to: "/onboarding" });
   }
 
   return (

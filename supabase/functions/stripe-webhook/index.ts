@@ -27,9 +27,14 @@ const admin = createClient(
 async function upsertFromSubscription(sub: Stripe.Subscription, plan: string, orgId: string) {
   if (!orgId) return;
   const status = sub.status; // active | trialing | past_due | canceled | incomplete | ...
-  const periodEnd = sub.current_period_end
-    ? new Date(sub.current_period_end * 1000).toISOString()
-    : null;
+  // `current_period_end` lives on the subscription in older API versions and on
+  // the subscription item in newer ones (2025-03-31.basil+). Read either.
+  const s = sub as unknown as {
+    current_period_end?: number;
+    items?: { data?: Array<{ current_period_end?: number }> };
+  };
+  const periodEndUnix = s.current_period_end ?? s.items?.data?.[0]?.current_period_end ?? null;
+  const periodEnd = periodEndUnix ? new Date(periodEndUnix * 1000).toISOString() : null;
 
   await admin.from("subscriptions").upsert(
     {

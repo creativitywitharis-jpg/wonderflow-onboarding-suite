@@ -33,9 +33,9 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY") ?? Deno.env.get("STRIPE_TEST_API_KEY");
   if (!stripeKey) {
-    return json({ error: "Billing isn't configured yet — set the STRIPE_SECRET_KEY secret." }, 500);
+    return json({ error: "Billing isn't configured yet — set a Stripe API key secret." }, 500);
   }
 
   let body: { plan?: string; orgId?: string; origin?: string } = {};
@@ -68,7 +68,6 @@ Deno.serve(async (req: Request) => {
     .select("id")
     .eq("org_id", orgId)
     .eq("user_id", user.id)
-    .eq("status", "active")
     .maybeSingle();
   if (!membership) return json({ error: "You don't have access to this workspace." }, 403);
 

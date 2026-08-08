@@ -40,6 +40,7 @@ function AuthScreen() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
   const navigate = useNavigate();
 
   async function submit(e: React.FormEvent) {
@@ -58,7 +59,8 @@ function AuthScreen() {
         if (data.session) {
           navigate({ to: "/onboarding" });
         } else {
-          setNotice("Check your email to confirm your account, then sign in.");
+          setConfirmEmail(email);
+          setNotice(`We sent a confirmation link to ${email}. Open it, then sign in.`);
           setMode("signin");
         }
       } else {
@@ -71,6 +73,14 @@ function AuthScreen() {
     } finally {
       setPending(false);
     }
+  }
+
+  async function resendConfirmation() {
+    if (!confirmEmail) return;
+    setError(null);
+    const { error } = await supabase.auth.resend({ type: "signup", email: confirmEmail });
+    if (error) setError(error.message);
+    else setNotice(`Confirmation email re-sent to ${confirmEmail}.`);
   }
 
   async function google() {
@@ -184,9 +194,20 @@ function AuthScreen() {
               </p>
             )}
             {notice && (
-              <p className="flex items-start gap-2 rounded-xl border border-gold/30 bg-glass px-3 py-2.5 text-xs text-foreground/85">
-                <Check className="mt-0.5 size-3.5 shrink-0 text-gold" /> {notice}
-              </p>
+              <div className="space-y-2">
+                <p className="flex items-start gap-2 rounded-xl border border-gold/30 bg-glass px-3 py-2.5 text-xs text-foreground/85">
+                  <Check className="mt-0.5 size-3.5 shrink-0 text-gold" /> {notice}
+                </p>
+                {confirmEmail && (
+                  <button
+                    type="button"
+                    onClick={resendConfirmation}
+                    className="pl-1 text-xs text-gold underline-offset-2 hover:underline"
+                  >
+                    Didn't get it? Resend confirmation email
+                  </button>
+                )}
+              </div>
             )}
 
             <GoldButton type="submit" disabled={pending} className="w-full">

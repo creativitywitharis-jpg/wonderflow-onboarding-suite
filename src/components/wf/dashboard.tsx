@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
@@ -38,6 +38,8 @@ import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Delta, Reveal, SectionLabel, Sparkline, formatNum } from "@/components/wf/primitives";
 import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
+import { useOrg } from "@/lib/org-context";
+import { listCustomers, type DbCustomer } from "@/lib/customers";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Data
@@ -101,24 +103,6 @@ const kpis: Kpi[] = [
     positive: true,
     spark: [22, 26, 30, 33, 37, 41, 46, 52, 58, 63, 69, 74],
   },
-];
-
-const health = {
-  score: 87,
-  tier: "Excellent",
-  pillars: [
-    { label: "Financial", value: 92 },
-    { label: "Operations", value: 84 },
-    { label: "Customer", value: 88 },
-    { label: "Growth", value: 79 },
-  ],
-};
-
-const customerSegments = [
-  { label: "Champions", value: 34 },
-  { label: "Loyal", value: 28 },
-  { label: "New", value: 26 },
-  { label: "At risk", value: 12 },
 ];
 
 const inventory = {
@@ -223,7 +207,7 @@ function KpiCard({ kpi, index }: { kpi: Kpi; index: number }) {
       <GlassCard className="lift group h-full p-5 hover:border-gold/40">
         <div className="flex items-center justify-between">
           <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{kpi.label}</p>
-          <Delta value={kpi.delta} positive={kpi.positive} />
+          {kpi.delta && <Delta value={kpi.delta} positive={kpi.positive} />}
         </div>
         <p className="mt-3 text-2xl font-semibold tracking-tight tabular-nums">
           {kpi.prefix}
@@ -238,10 +222,25 @@ function KpiCard({ kpi, index }: { kpi: Kpi; index: number }) {
   );
 }
 
+function healthTierLabel(score: number) {
+  if (score >= 85) return "Excellent";
+  if (score >= 70) return "Healthy & growing";
+  if (score >= 50) return "Stable";
+  return "Needs attention";
+}
+
 function HealthScore() {
   const { ref, inView } = useInView();
-  const shown = useCountUp(health.score, { start: inView, duration: 1400 });
+  const s = useDash();
+  const score = s.healthScore;
+  const shown = useCountUp(score, { start: inView, duration: 1400 });
   const circumference = 2 * Math.PI * 70;
+  const pillars = [
+    { label: "Customer health", value: s.avgHealth },
+    { label: "Champions", value: pct(s.champions, s.total) },
+    { label: "Retention", value: s.total ? Math.round(((s.total - s.dormant) / s.total) * 100) : 0 },
+    { label: "Engagement", value: s.total ? 100 - pct(s.atRisk, s.total) : 0 },
+  ];
   return (
     <div ref={ref} className={cn("reveal h-full", inView && "reveal-in")}>
       <GlassCard className="flex h-full flex-col p-6">
@@ -274,15 +273,15 @@ function HealthScore() {
           </div>
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <TrendingUp className="size-4 text-gold" /> {health.tier}
+              <TrendingUp className="size-4 text-gold" /> {healthTierLabel(score)}
             </p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Top 8% of comparable operators. Up 4 points this month.
+              A blended score across your customer base and workspace activity.
             </p>
           </div>
         </div>
         <div className="mt-5 grid grid-cols-2 gap-x-5 gap-y-3">
-          {health.pillars.map((p) => (
+          {pillars.map((p) => (
             <div key={p.label}>
               <div className="flex items-baseline justify-between text-xs">
                 <span className="text-foreground/80">{p.label}</span>
@@ -300,44 +299,50 @@ function HealthScore() {
 }
 
 function CustomerIntelligence() {
+  const s = useDash();
+  const stats = [
+    { k: "New", v: s.newC },
+    { k: "Champions", v: s.champions },
+    { k: "At risk", v: s.atRisk },
+  ];
   return (
     <Reveal className="h-full">
       <GlassCard className="flex h-full flex-col p-6">
         <SectionLabel icon={Users}>Customer intelligence</SectionLabel>
         <div className="mt-4 grid grid-cols-3 gap-3">
-          {[
-            { k: "New (30d)", v: "142", d: "+18%" },
-            { k: "NPS", v: "72", d: "+6" },
-            { k: "At risk", v: "27", d: "watch" },
-          ].map((m) => (
+          {stats.map((m) => (
             <div key={m.k} className="rounded-2xl border border-border bg-background/30 px-3 py-3">
               <p className="text-[0.7rem] text-muted-foreground">{m.k}</p>
               <p className="mt-1 text-lg font-semibold tabular-nums">{m.v}</p>
-              <p className="text-[0.7rem] text-gold">{m.d}</p>
             </div>
           ))}
         </div>
         <div className="mt-5 space-y-3">
-          {customerSegments.map((s) => (
-            <div key={s.label}>
+          {s.segments.map((seg) => (
+            <div key={seg.label}>
               <div className="flex items-baseline justify-between text-xs">
-                <span className="text-foreground/80">{s.label}</span>
-                <span className="tabular-nums text-muted-foreground">{s.value}%</span>
+                <span className="text-foreground/80">{seg.label}</span>
+                <span className="tabular-nums text-muted-foreground">{seg.value}%</span>
               </div>
               <div className="mt-1.5">
-                <Bar value={s.value} tone={s.label === "At risk" ? "muted" : "gold"} />
+                <Bar value={seg.value} tone={seg.label === "At risk" ? "muted" : "gold"} />
               </div>
             </div>
           ))}
         </div>
-        <button className="lift mt-5 flex items-center justify-between rounded-2xl border border-gold/25 bg-glass px-4 py-3 text-left text-sm transition-colors hover:border-gold/50">
+        <Link
+          to="/crm"
+          className="lift mt-5 flex items-center justify-between rounded-2xl border border-gold/25 bg-glass px-4 py-3 text-left text-sm transition-colors hover:border-gold/50"
+        >
           <span className="text-foreground/85">
-            Re-engage <span className="text-gold">148 dormant accounts</span>
+            {s.dormant > 0 ? (
+              <>Re-engage <span className="text-gold">{s.dormant} dormant customer{s.dormant === 1 ? "" : "s"}</span></>
+            ) : (
+              <>Open the <span className="text-gold">customer database</span></>
+            )}
           </span>
-          <span className="flex items-center gap-1 text-xs text-gold">
-            $31k pipeline <ArrowUpRight className="size-3.5" />
-          </span>
-        </button>
+          <ArrowUpRight className="size-3.5 text-gold" />
+        </Link>
       </GlassCard>
     </Reveal>
   );
@@ -753,6 +758,91 @@ function RevenueCard() {
   );
 }
 
+/* ──────────────────────────────────────────────────────────────────────
+ * Real per-tenant stats (derived from the org's customers + org record)
+ * ─────────────────────────────────────────────────────────────────── */
+
+type DashStats = {
+  total: number;
+  totalLtv: number;
+  avgLtv: number;
+  avgHealth: number;
+  champions: number;
+  loyal: number;
+  newC: number;
+  dormant: number;
+  atRisk: number;
+  healthScore: number;
+  segments: { label: string; value: number }[];
+};
+
+function pct(n: number, total: number) {
+  return total ? Math.round((n / total) * 100) : 0;
+}
+
+function computeStats(customers: DbCustomer[], healthScore: number): DashStats {
+  const total = customers.length;
+  const countTier = (t: string) => customers.filter((c) => c.tier === t).length;
+  const totalLtv = customers.reduce((a, c) => a + Number(c.ltv), 0);
+  const atRisk = customers.filter((c) => c.tier === "At risk" || c.health < 50).length;
+  return {
+    total,
+    totalLtv,
+    avgLtv: total ? Math.round(totalLtv / total) : 0,
+    avgHealth: total ? Math.round(customers.reduce((a, c) => a + c.health, 0) / total) : 0,
+    champions: countTier("Champion"),
+    loyal: countTier("Loyal"),
+    newC: countTier("New"),
+    dormant: countTier("Dormant"),
+    atRisk,
+    healthScore,
+    segments: [
+      { label: "Champions", value: pct(countTier("Champion"), total) },
+      { label: "Loyal", value: pct(countTier("Loyal"), total) },
+      { label: "New", value: pct(countTier("New"), total) },
+      { label: "At risk", value: pct(atRisk, total) },
+    ],
+  };
+}
+
+const EMPTY_STATS = computeStats([], 0);
+const DashCtx = createContext<DashStats>(EMPTY_STATS);
+function useDash() {
+  return useContext(DashCtx);
+}
+
+function DashboardProvider({ children }: { children: React.ReactNode }) {
+  const { org } = useOrg();
+  const [customers, setCustomers] = useState<DbCustomer[]>([]);
+  useEffect(() => {
+    let alive = true;
+    if (org?.id) listCustomers(org.id).then((cs) => alive && setCustomers(cs)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [org?.id]);
+  const stats = useMemo(() => computeStats(customers, org?.health_score ?? 0), [customers, org?.health_score]);
+  return <DashCtx.Provider value={stats}>{children}</DashCtx.Provider>;
+}
+
+function KpiRow() {
+  const s = useDash();
+  const spark = (i: number) => kpis[i]?.spark ?? [];
+  const live: Kpi[] = [
+    { label: "Total customers", value: s.total, delta: s.newC ? `${s.newC} new` : "", positive: true, spark: spark(3) },
+    { label: "Total lifetime value", value: s.totalLtv, prefix: "$", delta: "", positive: true, spark: spark(0) },
+    { label: "Avg lifetime value", value: s.avgLtv, prefix: "$", delta: "", positive: true, spark: spark(1) },
+    { label: "Avg health score", value: s.avgHealth, delta: "", positive: true, spark: spark(2) },
+  ];
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {live.map((k, i) => (
+        <KpiCard key={k.label} kpi={k} index={i} />
+      ))}
+    </div>
+  );
+}
+
 export function ExecutiveDashboard({ company }: { company: string }) {
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => setNow(new Date()), []);
@@ -770,6 +860,7 @@ export function ExecutiveDashboard({ company }: { company: string }) {
     : "";
 
   return (
+    <DashboardProvider>
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
       <Sidebar />
 
@@ -778,11 +869,7 @@ export function ExecutiveDashboard({ company }: { company: string }) {
 
         <AiBriefing company={company} />
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {kpis.map((k, i) => (
-            <KpiCard key={k.label} kpi={k} index={i} />
-          ))}
-        </div>
+        <KpiRow />
 
         <RevenueCard />
 
@@ -807,5 +894,6 @@ export function ExecutiveDashboard({ company }: { company: string }) {
         <CopilotPanel />
       </aside>
     </div>
+    </DashboardProvider>
   );
 }

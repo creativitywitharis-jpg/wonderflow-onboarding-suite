@@ -35,6 +35,7 @@ import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { createCustomer, insertCustomers, listCustomers, type DbCustomer, type NewCustomer } from "@/lib/customers";
+import { addInteraction, listInteractions, type DbInteraction, type InteractionChannel } from "@/lib/interactions";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -205,33 +206,26 @@ function deriveSegments(customers: Customer[]): Segment[] {
   });
 }
 
-const journey = [
-  { stage: "Awareness", count: 12480, conv: 42 },
-  { stage: "Consideration", count: 5240, conv: 61 },
-  { stage: "Purchase", count: 3196, conv: 89 },
-  { stage: "Onboarding", count: 2845, conv: 96 },
-  { stage: "Retention", count: 2731, conv: 74 },
-  { stage: "Advocacy", count: 2021, conv: null as number | null },
-];
+// Lifecycle stages in order — counts are derived from the org's real customers.
+const LIFECYCLE_STAGES = ["New", "Potential", "Loyal", "Champion"] as const;
 
-type Thread = {
-  id: string;
-  name: string;
-  channel: "email" | "chat" | "sms";
-  snippet: string;
-  time: string;
-  unread: boolean;
+const channelIcon: Record<InteractionChannel, LucideIcon> = {
+  note: MessageSquare,
+  email: Mail,
+  call: Phone,
+  meeting: Users,
+  chat: MessageSquare,
 };
 
-const threads: Thread[] = [
-  { id: "t1", name: "Ava Chen", channel: "email", snippet: "Re: Q3 renewal — the new pricing looks great, let's proceed.", time: "8m", unread: true },
-  { id: "t2", name: "Leo Park", channel: "chat", snippet: "Can I upgrade to the Growth plan mid-cycle?", time: "24m", unread: true },
-  { id: "t3", name: "Sam Idris", channel: "sms", snippet: "Still waiting on that support ticket…", time: "1h", unread: false },
-  { id: "t4", name: "Ivy Zhou", channel: "email", snippet: "Sharing WonderFlow with two other founders 🙌", time: "3h", unread: false },
-  { id: "t5", name: "Priya Nair", channel: "chat", snippet: "How do I connect my Shopify store?", time: "5h", unread: false },
-];
-
-const channelIcon: Record<Thread["channel"], LucideIcon> = { email: Mail, chat: MessageSquare, sms: Phone };
+function timeAgo(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
 
 const loyaltyTiers = [
   { tier: "Platinum", members: 128, min: "10,000 pts", color: "oklch(0.9 0.05 250)" },
@@ -844,38 +838,55 @@ function SegmentsView({ onExplore }: { onExplore: () => void }) {
 }
 
 function JourneyView() {
-  const maxCount = journey[0].count;
+  const { customers } = useCustomersData();
+  const countFor = (tier: string) => customers.filter((c) => c.tier === tier).length;
+  const stages = LIFECYCLE_STAGES.map((stage, i) => {
+    const count = countFor(stage);
+    const nextCount = i < LIFECYCLE_STAGES.length - 1 ? countFor(LIFECYCLE_STAGES[i + 1]) : null;
+    const conv = nextCount !== null && count > 0 ? Math.round((nextCount / count) * 100) : null;
+    return { stage, count, conv };
+  });
+  const maxCount = Math.max(1, ...stages.map((s) => s.count));
+  const total = customers.length;
+  const advocacy = total ? Math.round((countFor("Champion") / total) * 100) : 0;
+  const atRisk = countFor("At risk");
+  const dormant = countFor("Dormant");
+
   return (
     <div className="space-y-5">
       <Reveal>
         <GlassCard className="p-6">
           <div className="flex items-center justify-between">
-            <SectionLabel icon={Target}>Customer journey</SectionLabel>
-            <span className="text-xs text-muted-foreground">Awareness → Advocacy</span>
+            <SectionLabel icon={Target}>Customer lifecycle</SectionLabel>
+            <span className="text-xs text-muted-foreground">New → Champion</span>
           </div>
-          <div className="mt-6 space-y-3">
-            {journey.map((s, i) => {
-              const width = 30 + (s.count / maxCount) * 70;
-              return (
-                <JourneyStage key={s.stage} stage={s.stage} count={s.count} conv={s.conv} width={width} index={i} />
-              );
-            })}
-          </div>
+          {total === 0 ? (
+            <p className="mt-6 text-sm text-muted-foreground">Add customers and their lifecycle stages will map out here.</p>
+          ) : (
+            <div className="mt-6 space-y-3">
+              {stages.map((s, i) => {
+                const width = 30 + (s.count / maxCount) * 70;
+                return (
+                  <JourneyStage key={s.stage} stage={s.stage} count={s.count} conv={s.conv} width={width} index={i} />
+                );
+              })}
+            </div>
+          )}
         </GlassCard>
       </Reveal>
 
       <div className="grid gap-4 sm:grid-cols-3">
         {[
-          { icon: Target, k: "Overall conversion", v: "16.2%", d: "visitor → customer" },
-          { icon: Heart, k: "Avg time to advocacy", v: "4.1 mo", d: "from first purchase" },
-          { icon: TrendingUp, k: "Retention at stage 5", v: "74%", d: "12-month cohort" },
+          { icon: TrendingUp, k: "Advocacy rate", v: `${advocacy}%`, d: "customers who are champions" },
+          { icon: Heart, k: "At-risk customers", v: String(atRisk), d: "need intervention" },
+          { icon: Target, k: "Dormant customers", v: String(dormant), d: "win-back candidates" },
         ].map((m, i) => (
           <Reveal key={m.k} delay={i * 70} className="h-full">
             <GlassCard className="h-full p-5">
               <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass">
                 <m.icon className="size-4 text-gold" />
               </span>
-              <p className="mt-4 text-2xl font-semibold tracking-tight">{m.v}</p>
+              <p className="mt-4 text-2xl font-semibold tracking-tight tabular-nums">{m.v}</p>
               <p className="mt-1 text-sm text-foreground/80">{m.k}</p>
               <p className="text-xs text-muted-foreground">{m.d}</p>
             </GlassCard>
@@ -921,21 +932,75 @@ function JourneyStage({
   );
 }
 
+const CHANNELS: InteractionChannel[] = ["note", "call", "email", "meeting", "chat"];
+
 function CommsView() {
-  const [activeId, setActiveId] = useState(threads[0].id);
-  const active = threads.find((t) => t.id === activeId) ?? threads[0];
+  const { org } = useOrg();
+  const { customers } = useCustomersData();
+  const [items, setItems] = useState<DbInteraction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [form, setForm] = useState<{ customerId: string; channel: InteractionChannel; body: string }>({
+    customerId: "",
+    channel: "note",
+    body: "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!org) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      setItems(await listInteractions(org.id));
+    } catch {
+      setItems([]);
+    }
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const active = items.find((i) => i.id === activeId) ?? items[0] ?? null;
+
+  const submit = async () => {
+    if (!org || !form.body.trim() || busy) return;
+    setBusy(true);
+    await addInteraction(org.id, {
+      customer_id: form.customerId || null,
+      channel: form.channel,
+      body: form.body.trim(),
+    });
+    setBusy(false);
+    setForm({ customerId: "", channel: "note", body: "" });
+    await load();
+  };
+
+  const nameOf = (i: DbInteraction) => i.customer?.name ?? "General";
+
   return (
     <Reveal>
       <div className="grid gap-4 lg:grid-cols-[20rem_1fr]">
         <GlassCard className="flex flex-col p-2">
           <div className="flex items-center justify-between px-3 py-3">
-            <SectionLabel icon={MessageSquare}>Inbox</SectionLabel>
+            <SectionLabel icon={MessageSquare}>Activity log</SectionLabel>
             <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[0.65rem] font-medium text-gold">
-              {threads.filter((t) => t.unread).length} new
+              {items.length}
             </span>
           </div>
-          <div className="space-y-1">
-            {threads.map((t) => {
+          <div className="max-h-[24rem] space-y-1 overflow-y-auto">
+            {loading && <p className="px-3 py-8 text-center text-xs text-muted-foreground">Loading…</p>}
+            {!loading && items.length === 0 && (
+              <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+                No interactions yet. Log your first one on the right.
+              </p>
+            )}
+            {items.map((t) => {
               const Icon = channelIcon[t.channel];
               return (
                 <button
@@ -943,21 +1008,20 @@ function CommsView() {
                   onClick={() => setActiveId(t.id)}
                   className={cn(
                     "flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left transition-colors",
-                    t.id === active.id ? "bg-glass" : "hover:bg-glass",
+                    active && t.id === active.id ? "bg-glass" : "hover:bg-glass",
                   )}
                 >
-                  <Avatar name={t.name} />
+                  <Avatar name={nameOf(t)} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-medium text-foreground">{t.name}</span>
-                      <span className="shrink-0 text-[0.65rem] text-muted-foreground">{t.time}</span>
+                      <span className="truncate text-sm font-medium text-foreground">{nameOf(t)}</span>
+                      <span className="shrink-0 text-[0.65rem] text-muted-foreground">{timeAgo(t.created_at)}</span>
                     </div>
                     <p className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
                       <Icon className="size-3 shrink-0" />
-                      {t.snippet}
+                      {t.body}
                     </p>
                   </div>
-                  {t.unread && <span className="mt-1 size-2 shrink-0 rounded-full bg-gold" />}
                 </button>
               );
             })}
@@ -965,35 +1029,70 @@ function CommsView() {
         </GlassCard>
 
         <GlassCard className="flex min-h-[26rem] flex-col p-6">
-          <div className="flex items-center gap-3 border-b border-border pb-4">
-            <Avatar name={active.name} />
-            <div>
-              <p className="text-sm font-semibold text-foreground">{active.name}</p>
-              <p className="text-xs capitalize text-muted-foreground">{active.channel}</p>
+          {active ? (
+            <>
+              <div className="flex items-center gap-3 border-b border-border pb-4">
+                <Avatar name={nameOf(active)} />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">{nameOf(active)}</p>
+                  <p className="text-xs capitalize text-muted-foreground">
+                    {active.channel} · {timeAgo(active.created_at)} ago
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 py-5">
+                <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-border bg-background/40 px-4 py-3 text-sm leading-relaxed text-foreground/85">
+                  {active.body}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+              Log an interaction to start your activity history.
             </div>
-          </div>
-          <div className="flex-1 space-y-3 py-5">
-            <div className="max-w-[80%] rounded-2xl rounded-bl-sm border border-border bg-background/40 px-4 py-3 text-sm text-foreground/85">
-              {active.snippet}
-            </div>
-          </div>
+          )}
+
+          {/* Composer — logs a real interaction */}
           <div className="rounded-2xl border border-gold/25 bg-glass p-4">
             <p className="flex items-center gap-2 text-xs font-medium text-gold">
-              <Sparkles className="size-3.5" /> AI suggested reply
+              <Plus className="size-3.5" /> Log an interaction
             </p>
-            <p className="mt-2 text-sm leading-relaxed text-foreground/80">
-              “Thanks {active.name.split(" ")[0]} — happy to help. I've applied the change to your account
-              and sent a confirmation. Anything else I can take care of?”
-            </p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <select
+                value={form.customerId}
+                onChange={(e) => setForm((f) => ({ ...f, customerId: e.target.value }))}
+                className={CRM_INPUT}
+              >
+                <option value="">General (no customer)</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <select
+                value={form.channel}
+                onChange={(e) => setForm((f) => ({ ...f, channel: e.target.value as InteractionChannel }))}
+                className={CRM_INPUT}
+              >
+                {CHANNELS.map((ch) => (
+                  <option key={ch} value={ch}>{ch[0].toUpperCase() + ch.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+            <textarea
+              value={form.body}
+              onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
+              placeholder="What happened? e.g. Called about renewal — wants a Q3 demo."
+              rows={2}
+              className={`${CRM_INPUT} mt-2 resize-none`}
+            />
             <div className="mt-3 flex items-center gap-2">
               <button
-                className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]"
+                onClick={submit}
+                disabled={!form.body.trim() || busy}
+                className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
                 style={{ background: "var(--gradient-gold)" }}
               >
-                <Send className="size-3.5" /> Send reply
-              </button>
-              <button className="rounded-full border border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground">
-                Edit
+                <Send className="size-3.5" /> {busy ? "Saving…" : "Log interaction"}
               </button>
             </div>
           </div>
@@ -1082,7 +1181,7 @@ const viewMeta: Record<ViewKey, { title: string; sub: string }> = {
   profiles: { title: "AI customer profiles", sub: "A 360° view powered by your data" },
   segments: { title: "Segmentation engine", sub: "Grouped by tier and lifetime value" },
   journey: { title: "Customer journey", sub: "From first touch to advocacy" },
-  comms: { title: "Communication center", sub: "One inbox across every channel" },
+  comms: { title: "Communication center", sub: "Log calls, notes and emails per customer" },
   loyalty: { title: "Loyalty system", sub: "Tiers, points and rewards" },
 };
 

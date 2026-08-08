@@ -500,10 +500,23 @@ function BillingView() {
   useEffect(() => {
     if (!org) return;
     let alive = true;
+    let tries = 0;
+    const justPaid = new URLSearchParams(window.location.search).get("billing") === "success";
+    async function load() {
+      const s = await getSubscription(org!.id);
+      if (!alive) return;
+      setSub(s);
+      setLoading(false);
+      // After a payment the webhook lands a moment later — poll until the
+      // active plan appears (up to ~15s) so the page updates on its own.
+      const active = s && (s.status === "active" || s.status === "trialing");
+      if (justPaid && !active && tries < 6) {
+        tries += 1;
+        setTimeout(load, 2500);
+      }
+    }
     setLoading(true);
-    getSubscription(org.id)
-      .then((s) => alive && setSub(s))
-      .finally(() => alive && setLoading(false));
+    void load();
     return () => {
       alive = false;
     };

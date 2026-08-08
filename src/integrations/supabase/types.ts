@@ -14,6 +14,35 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_usage: {
+        Row: {
+          count: number
+          org_id: string
+          period: string
+          updated_at: string
+        }
+        Insert: {
+          count?: number
+          org_id: string
+          period: string
+          updated_at?: string
+        }
+        Update: {
+          count?: number
+          org_id?: string
+          period?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_usage_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customers: {
         Row: {
           company: string | null
@@ -190,6 +219,10 @@ export type Database = {
       has_org_role: {
         Args: { _org_id: string; _roles: string[]; _user_id: string }
         Returns: boolean
+      }
+      increment_ai_usage: {
+        Args: { p_org: string; p_period: string }
+        Returns: number
       }
       is_org_member: {
         Args: { _org_id: string; _user_id: string }

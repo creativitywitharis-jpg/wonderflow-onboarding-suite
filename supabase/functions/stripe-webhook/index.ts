@@ -25,7 +25,10 @@ const admin = createClient(
 
 // Map a Stripe subscription to our billing row and persist it.
 async function upsertFromSubscription(sub: Stripe.Subscription, plan: string, orgId: string) {
-  if (!orgId) return;
+  if (!orgId) {
+    console.error("[stripe-webhook] no org_id in metadata — cannot link subscription", sub.id);
+    throw new Error("Missing org_id in subscription/session metadata.");
+  }
   const status = sub.status; // active | trialing | past_due | canceled | incomplete | ...
   // `current_period_end` lives on the subscription in older API versions and on
   // the subscription item in newer ones (2025-03-31.basil+). Read either.
@@ -36,7 +39,7 @@ async function upsertFromSubscription(sub: Stripe.Subscription, plan: string, or
   const periodEndUnix = s.current_period_end ?? s.items?.data?.[0]?.current_period_end ?? null;
   const periodEnd = periodEndUnix ? new Date(periodEndUnix * 1000).toISOString() : null;
 
-  await admin.from("subscriptions").upsert(
+  const { error: subErr } = await admin.from("subscriptions").upsert(
     {
       org_id: orgId,
       stripe_customer_id: typeof sub.customer === "string" ? sub.customer : sub.customer?.id ?? null,
@@ -47,10 +50,19 @@ async function upsertFromSubscription(sub: Stripe.Subscription, plan: string, or
     },
     { onConflict: "org_id" },
   );
+  if (subErr) {
+    console.error("[stripe-webhook] subscriptions upsert failed:", subErr.message);
+    throw new Error(`subscriptions upsert failed: ${subErr.message}`);
+  }
 
   // Mirror the effective plan onto the org for quick reads / gating.
   const effectivePlan = status === "active" || status === "trialing" ? plan : "trial";
-  await admin.from("organizations").update({ plan: effectivePlan }).eq("id", orgId);
+  const { error: orgErr } = await admin.from("organizations").update({ plan: effectivePlan }).eq("id", orgId);
+  if (orgErr) {
+    console.error("[stripe-webhook] organizations update failed:", orgErr.message);
+    throw new Error(`organizations update failed: ${orgErr.message}`);
+  }
+  console.log(`[stripe-webhook] org ${orgId} → plan '${effectivePlan}' (${status})`);
 }
 
 Deno.serve(async (req: Request) => {
@@ -76,6 +88,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  console.log(`[stripe-webhook] received: ${event.type}`);
   try {
     switch (event.type) {
       case "checkout.session.completed": {

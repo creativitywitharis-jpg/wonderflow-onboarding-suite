@@ -30,7 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
-import { Avatar, Bar, Delta, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
+import { Avatar, Bar, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
@@ -181,14 +181,29 @@ function CustomersProvider({ children }: { children: ReactNode }) {
   return <CustomersCtx.Provider value={{ customers, loading, addCustomer, seed }}>{children}</CustomersCtx.Provider>;
 }
 
-const segments = [
-  { label: "Champions", count: 486, share: 34, trend: 8, color: GOLD, desc: "Buy often, spend the most, and advocate for you." },
-  { label: "Loyal", count: 642, share: 28, trend: 5, color: "oklch(0.7 0.11 60)", desc: "Consistent repeat buyers with strong retention." },
-  { label: "Potential", count: 398, share: 16, trend: 12, color: "oklch(0.66 0.09 200)", desc: "Recent buyers trending toward loyalty." },
-  { label: "New", count: 512, share: 12, trend: 22, color: "oklch(0.75 0.13 150)", desc: "First purchase in the last 30 days." },
-  { label: "At risk", count: 214, share: 7, trend: -6, color: "oklch(0.68 0.16 25)", desc: "Declining engagement — needs intervention." },
-  { label: "Dormant", count: 589, share: 3, trend: -3, color: "oklch(0.62 0.02 260)", desc: "No activity in 60+ days. Win-back candidates." },
+// Segment metadata — real counts and revenue share are derived from the org's
+// own customers (see deriveSegments), not hard-coded.
+const SEGMENT_META: { label: string; tier: Customer["tier"]; color: string; desc: string }[] = [
+  { label: "Champions", tier: "Champion", color: GOLD, desc: "Buy often, spend the most, and advocate for you." },
+  { label: "Loyal", tier: "Loyal", color: "oklch(0.7 0.11 60)", desc: "Consistent repeat buyers with strong retention." },
+  { label: "Potential", tier: "Potential", color: "oklch(0.66 0.09 200)", desc: "Recent buyers trending toward loyalty." },
+  { label: "New", tier: "New", color: "oklch(0.75 0.13 150)", desc: "First purchase in the last 30 days." },
+  { label: "At risk", tier: "At risk", color: "oklch(0.68 0.16 25)", desc: "Declining engagement — needs intervention." },
+  { label: "Dormant", tier: "Dormant", color: "oklch(0.62 0.02 260)", desc: "No activity in 60+ days. Win-back candidates." },
 ];
+
+type Segment = { label: string; tier: Customer["tier"]; color: string; desc: string; count: number; share: number; ltv: number };
+
+// Group the org's real customers into segments by tier, with each segment's
+// share of total lifetime value.
+function deriveSegments(customers: Customer[]): Segment[] {
+  const totalLtv = customers.reduce((a, c) => a + c.ltv, 0) || 1;
+  return SEGMENT_META.map((m) => {
+    const inTier = customers.filter((c) => c.tier === m.tier);
+    const ltv = inTier.reduce((a, c) => a + c.ltv, 0);
+    return { ...m, count: inTier.length, ltv, share: Math.round((ltv / totalLtv) * 100) };
+  });
+}
 
 const journey = [
   { stage: "Awareness", count: 12480, conv: 42 },
@@ -303,14 +318,24 @@ function SentimentDot({ sentiment }: { sentiment: Customer["sentiment"] }) {
 function OverviewView() {
   const { customers } = useCustomersData();
   const total = customers.length;
-  const avgLtv = customers.length ? Math.round(customers.reduce((a, c) => a + c.ltv, 0) / customers.length) : 0;
+  const totalLtv = customers.reduce((a, c) => a + c.ltv, 0);
+  const avgLtv = total ? Math.round(totalLtv / total) : 0;
+  const avgHealth = total ? Math.round(customers.reduce((a, c) => a + c.health, 0) / total) : 0;
+  const atRisk = customers.filter((c) => c.tier === "At risk" || c.health < 50);
+  const champions = customers.filter((c) => c.tier === "Champion");
+  const upsell = customers.filter((c) => c.health >= 80);
+  const atRiskLtv = atRisk.reduce((a, c) => a + c.ltv, 0);
+  const upsellLtv = upsell.reduce((a, c) => a + c.ltv, 0);
+  const championShare = totalLtv ? Math.round((champions.reduce((a, c) => a + c.ltv, 0) / totalLtv) * 100) : 0;
+  const segs = deriveSegments(customers);
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Total customers" value={total} icon={Users} />
         <StatTile label="Avg lifetime value" value={avgLtv} prefix="$" icon={TrendingUp} />
-        <StatTile label="Retention rate" value={92} suffix="%" delta="2.1 pts" icon={Heart} />
-        <StatTile label="Net promoter score" value={72} delta="6" icon={Star} />
+        <StatTile label="Total lifetime value" value={totalLtv} prefix="$" icon={Crown} />
+        <StatTile label="Avg health score" value={avgHealth} icon={Heart} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
@@ -319,7 +344,7 @@ function OverviewView() {
             <SectionLabel icon={Layers}>Revenue by segment</SectionLabel>
             <div className="mt-4 flex items-center gap-6">
               <Donut
-                data={segments}
+                data={segs}
                 center={
                   <div>
                     <div className="text-2xl font-semibold tabular-nums gold-text">{formatNum(total)}</div>
@@ -330,11 +355,11 @@ function OverviewView() {
                 }
               />
               <ul className="min-w-0 flex-1 space-y-2">
-                {segments.map((s) => (
+                {segs.map((s) => (
                   <li key={s.label} className="flex items-center gap-2 text-sm">
                     <span className="size-2.5 shrink-0 rounded-full" style={{ background: s.color }} />
                     <span className="flex-1 truncate text-foreground/85">{s.label}</span>
-                    <span className="tabular-nums text-muted-foreground">{s.share}%</span>
+                    <span className="tabular-nums text-muted-foreground">{s.count} · {s.share}%</span>
                   </li>
                 ))}
               </ul>
@@ -347,28 +372,36 @@ function OverviewView() {
             <div className="veil pointer-events-none absolute inset-0 opacity-60" />
             <div className="relative">
               <SectionLabel icon={Sparkles}>Customer intelligence</SectionLabel>
-              <p className="mt-4 text-[0.95rem] leading-relaxed text-foreground/90">
-                The business understands every customer. This week I detected{" "}
-                <span className="text-gold">27 accounts</span> drifting toward churn and{" "}
-                <span className="text-gold">84 primed to upsell</span>. Champions now drive{" "}
-                <span className="text-gold">61%</span> of revenue.
-              </p>
+              {total === 0 ? (
+                <p className="mt-4 text-[0.95rem] leading-relaxed text-foreground/90">
+                  Add your customers and I'll surface who's at risk, who's ready to upsell, and where your
+                  revenue concentrates.
+                </p>
+              ) : (
+                <p className="mt-4 text-[0.95rem] leading-relaxed text-foreground/90">
+                  Across your <span className="text-gold">{total}</span> customer{total === 1 ? "" : "s"},{" "}
+                  <span className="text-gold">{atRisk.length}</span> {atRisk.length === 1 ? "is" : "are"} at
+                  risk and <span className="text-gold">{champions.length}</span>{" "}
+                  {champions.length === 1 ? "is a champion" : "are champions"} driving{" "}
+                  <span className="text-gold">{championShare}%</span> of lifetime value.
+                </p>
+              )}
               <div className="mt-5 space-y-3">
                 {[
-                  { icon: Zap, t: "84 accounts ready for an upsell", d: "+$52k potential" },
-                  { icon: Heart, t: "Re-engage 27 at-risk customers", d: "$41k retained" },
-                  { icon: Star, t: "12 advocates could give referrals", d: "avg 2.3 leads each" },
+                  { icon: Zap, t: `${upsell.length} account${upsell.length === 1 ? "" : "s"} ready for an upsell`, d: `$${formatNum(upsellLtv)} in play` },
+                  { icon: Heart, t: `Re-engage ${atRisk.length} at-risk customer${atRisk.length === 1 ? "" : "s"}`, d: `$${formatNum(atRiskLtv)} at stake` },
+                  { icon: Star, t: `${champions.length} advocate${champions.length === 1 ? "" : "s"} could give referrals`, d: `${championShare}% of LTV` },
                 ].map((r) => (
-                  <button
+                  <div
                     key={r.t}
-                    className="lift flex w-full items-center gap-3 rounded-2xl border border-border bg-background/30 p-3 text-left hover:border-gold/40"
+                    className="flex w-full items-center gap-3 rounded-2xl border border-border bg-background/30 p-3 text-left"
                   >
                     <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-border bg-glass">
                       <r.icon className="size-4 text-gold" />
                     </span>
                     <span className="flex-1 text-sm text-foreground/85">{r.t}</span>
                     <span className="shrink-0 text-xs text-gold">{r.d}</span>
-                  </button>
+                  </div>
                 ))}
               </div>
             </div>
@@ -753,6 +786,9 @@ function ProfilesView({
 }
 
 function SegmentsView({ onExplore }: { onExplore: () => void }) {
+  const { customers } = useCustomersData();
+  const segs = deriveSegments(customers);
+  const total = customers.length;
   return (
     <div className="space-y-5">
       <Reveal>
@@ -765,8 +801,8 @@ function SegmentsView({ onExplore }: { onExplore: () => void }) {
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Segmentation engine</p>
               <p className="mt-1 text-sm text-foreground/85">
-                AI clustered <span className="text-gold">2,841 customers</span> into 6 living segments by
-                behavior, value and momentum — recalculated every night.
+                Your <span className="text-gold">{formatNum(total)}</span> customer{total === 1 ? "" : "s"}, grouped
+                into 6 segments by tier and share of lifetime value.
               </p>
             </div>
             <button
@@ -774,14 +810,14 @@ function SegmentsView({ onExplore }: { onExplore: () => void }) {
               className="flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]"
               style={{ background: "var(--gradient-gold)" }}
             >
-              Build a segment <ArrowRight className="size-3.5" />
+              View customers <ArrowRight className="size-3.5" />
             </button>
           </div>
         </GlassCard>
       </Reveal>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {segments.map((s, i) => (
+        {segs.map((s, i) => (
           <Reveal key={s.label} delay={i * 60} className="h-full">
             <GlassCard className="lift flex h-full flex-col p-6 hover:border-gold/40">
               <div className="flex items-center justify-between">
@@ -789,15 +825,15 @@ function SegmentsView({ onExplore }: { onExplore: () => void }) {
                   <span className="size-2.5 rounded-full" style={{ background: s.color }} />
                   {s.label}
                 </span>
-                <Delta value={`${Math.abs(s.trend)}%`} positive={s.trend >= 0} />
+                <span className="text-xs tabular-nums text-gold">${formatNum(s.ltv)}</span>
               </div>
               <div className="mt-4 flex items-baseline gap-2">
                 <span className="text-3xl font-semibold tabular-nums">{formatNum(s.count)}</span>
-                <span className="text-xs text-muted-foreground">customers · {s.share}% of revenue</span>
+                <span className="text-xs text-muted-foreground">customer{s.count === 1 ? "" : "s"} · {s.share}% of value</span>
               </div>
               <p className="mt-3 flex-1 text-sm leading-relaxed text-muted-foreground">{s.desc}</p>
               <div className="mt-4">
-                <Bar value={s.share * 2.4} tone={s.trend >= 0 ? "gold" : "muted"} />
+                <Bar value={Math.min(100, s.share)} tone="gold" />
               </div>
             </GlassCard>
           </Reveal>
@@ -1044,7 +1080,7 @@ const viewMeta: Record<ViewKey, { title: string; sub: string }> = {
   overview: { title: "Customer intelligence", sub: "The business understands every customer" },
   customers: { title: "Customer database", sub: "Every relationship, scored and searchable" },
   profiles: { title: "AI customer profiles", sub: "A 360° view powered by your data" },
-  segments: { title: "Segmentation engine", sub: "Living segments, recalculated nightly" },
+  segments: { title: "Segmentation engine", sub: "Grouped by tier and lifetime value" },
   journey: { title: "Customer journey", sub: "From first touch to advocacy" },
   comms: { title: "Communication center", sub: "One inbox across every channel" },
   loyalty: { title: "Loyalty system", sub: "Tiers, points and rewards" },

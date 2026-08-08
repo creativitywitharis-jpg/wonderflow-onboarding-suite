@@ -174,7 +174,7 @@ export function Donut({
   const { ref, inView } = useInView();
   const r = 70;
   const circ = 2 * Math.PI * r;
-  const total = data.reduce((a, s) => a + s.share, 0);
+  const total = data.reduce((a, s) => a + s.share, 0) || 1; // avoid 0/0 → NaN when empty
   let acc = 0;
   return (
     <div ref={ref} className="relative grid place-items-center" style={{ width: size, height: size }}>

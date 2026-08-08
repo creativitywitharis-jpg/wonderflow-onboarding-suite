@@ -1,10 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
-import { AlertTriangle, ArrowRight, Check, Lock, Mail, User } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, ArrowRight, Check, Lock, Mail, User, Users } from "lucide-react";
 import { Backdrop } from "@/components/wf/Backdrop";
 import { Brand } from "@/components/wf/Brand";
 import { Field, GhostButton, GlassCard, GoldButton, inputClass } from "@/components/wf/ui";
 import { supabase } from "@/lib/supabase";
+import { acceptInvitation } from "@/lib/team";
 import { lovable } from "@/integrations/lovable/index";
 
 export const Route = createFileRoute("/auth")({
@@ -41,7 +42,28 @@ function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
+  const [hasInvite, setHasInvite] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    setHasInvite(new URLSearchParams(window.location.search).has("invite"));
+  }, []);
+
+  // If the user arrived via a team invite link, redeem it after auth and send
+  // them straight to the workspace (they're joining an existing org).
+  async function finishAuth(fallback: "/onboarding" | "/dashboard") {
+    const token = new URLSearchParams(window.location.search).get("invite");
+    if (token) {
+      try {
+        await acceptInvitation(token);
+        navigate({ to: "/dashboard" });
+        return;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Couldn't accept the invitation.");
+      }
+    }
+    navigate({ to: fallback });
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,7 +79,7 @@ function AuthScreen() {
         });
         if (error) throw error;
         if (data.session) {
-          navigate({ to: "/onboarding" });
+          await finishAuth("/onboarding");
         } else {
           setConfirmEmail(email);
           setNotice(`We sent a confirmation link to ${email}. Open it, then sign in.`);
@@ -66,7 +88,7 @@ function AuthScreen() {
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        navigate({ to: "/dashboard" });
+        await finishAuth("/dashboard");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
@@ -93,7 +115,7 @@ function AuthScreen() {
       return;
     }
     if (result.redirected) return;
-    navigate({ to: "/onboarding" });
+    await finishAuth("/onboarding");
   }
 
   return (
@@ -128,6 +150,11 @@ function AuthScreen() {
         </div>
 
         <GlassCard className="rise p-7" style={{ animationDelay: "100ms" }}>
+          {hasInvite && (
+            <div className="mb-5 flex items-center gap-2 rounded-xl border border-gold/30 bg-glass px-3 py-2.5 text-xs text-foreground/85">
+              <Users className="size-3.5 shrink-0 text-gold" /> You've been invited to a team — sign in or create your account with the invited email to join.
+            </div>
+          )}
           <div className="flex rounded-full border border-border p-1 text-sm">
             {(["signup", "signin"] as const).map((m) => (
               <button

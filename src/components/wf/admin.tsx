@@ -213,6 +213,7 @@ function UsersView() {
   const [inviteRole, setInviteRole] = useState("member");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!org) return;
@@ -240,15 +241,22 @@ function UsersView() {
   async function submitInvite() {
     if (!org || !inviteEmail.trim() || busy) return;
     setError(null);
+    setNotice(null);
     if (atCapacity) {
       setError(`You've used all ${seats} seat${seats === 1 ? "" : "s"} on the ${planLimits(org.plan).label} plan. Upgrade for more.`);
       return;
     }
     setBusy(true);
-    const { error: err } = await inviteMember(org.id, inviteEmail, inviteRole);
+    const invited = inviteEmail.trim();
+    const { error: err, sent, emailError } = await inviteMember(org.id, invited, inviteRole);
     setBusy(false);
     if (err) { setError(err.message); return; }
     setInviteEmail("");
+    setNotice(
+      sent
+        ? `Invitation emailed to ${invited}.`
+        : `${invited} was invited and a seat reserved, but the email couldn't be sent${emailError ? ` (${emailError})` : ""}.`,
+    );
     await reload();
   }
 
@@ -285,6 +293,11 @@ function UsersView() {
       {error && (
         <div className="flex items-center gap-2 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
           <AlertTriangle className="size-4" /> {error}
+        </div>
+      )}
+      {notice && (
+        <div className="flex items-center gap-2 rounded-2xl border border-gold/30 bg-glass px-4 py-3 text-sm text-foreground/85">
+          <Check className="size-4 text-gold" /> {notice}
         </div>
       )}
 
@@ -344,7 +357,7 @@ function UsersView() {
                   </div>
                 ))}
               </div>
-              <p className="mt-3 text-xs text-muted-foreground">Invites are recorded and count toward your seats. Email delivery + join links activate once you enable email sending.</p>
+              <p className="mt-3 text-xs text-muted-foreground">Invites are emailed a join link (once <code>RESEND_API_KEY</code> is set) and count toward your seats until accepted.</p>
             </div>
           )}
         </GlassCard>

@@ -59,16 +59,46 @@ export async function listInvitations(orgId: string): Promise<Invitation[]> {
   }));
 }
 
-/** Record a pending invitation (owner/admin only, per RLS). */
+/**
+ * Record a pending invitation (owner/admin only, per RLS) and email the join
+ * link (best-effort). `sent` is false when email isn't configured yet.
+ */
 export async function inviteMember(orgId: string, email: string, role: string) {
   const { data: userData } = await supabase.auth.getUser();
-  const { error } = await supabase.from("invitations").insert({
-    org_id: orgId,
-    email: email.trim().toLowerCase(),
-    role,
-    invited_by: userData.user?.id ?? null,
-  });
-  return { error: error ? new Error(error.message) : null };
+  const { data, error } = await supabase
+    .from("invitations")
+    .insert({
+      org_id: orgId,
+      email: email.trim().toLowerCase(),
+      role,
+      invited_by: userData.user?.id ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) return { error: new Error(error.message), sent: false, emailError: null as string | null };
+
+  // Best-effort: send the invitation email. A failure here doesn't undo the
+  // recorded invitation — it just means we couldn't deliver the link yet.
+  let sent = false;
+  let emailError: string | null = null;
+  try {
+    const { data: res, error: fnErr } = await supabase.functions.invoke("send-invite", {
+      body: { inviteId: (data as { id: string }).id, origin: window.location.origin },
+    });
+    if (fnErr) emailError = fnErr.message;
+    else if (res?.error) emailError = res.error as string;
+    sent = res?.sent === true;
+  } catch (e) {
+    emailError = e instanceof Error ? e.message : "Could not send the email.";
+  }
+  return { error: null, sent, emailError };
+}
+
+/** Redeem an invitation token → join the org. Returns the org id on success. */
+export async function acceptInvitation(token: string): Promise<string> {
+  const { data, error } = await supabase.rpc("accept_invitation", { p_token: token });
+  if (error) throw new Error(error.message);
+  return data as string;
 }
 
 export async function cancelInvitation(id: string) {

@@ -1,0 +1,1 @@
+revoke execute on function public.increment_ai_usage(uuid, text) from anon, authenticated;

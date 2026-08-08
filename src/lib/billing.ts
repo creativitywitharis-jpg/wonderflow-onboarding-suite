@@ -115,3 +115,15 @@ export async function startCheckout(plan: PlanId, orgId: string): Promise<void> 
   if (!url) throw new Error("Stripe did not return a checkout URL.");
   window.location.href = url;
 }
+
+/** Open Stripe's hosted billing portal (manage payment, invoices, cancel). */
+export async function openBillingPortal(orgId: string): Promise<void> {
+  const { data, error } = await supabase.functions.invoke("customer-portal", {
+    body: { orgId, origin: window.location.origin },
+  });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error as string);
+  const url = data?.url as string | undefined;
+  if (!url) throw new Error("Stripe did not return a portal URL.");
+  window.location.href = url;
+}

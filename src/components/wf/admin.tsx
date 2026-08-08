@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
@@ -33,7 +33,8 @@ import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
-import { PLANS, getSubscription, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
+import { PLANS, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
+import { cancelInvitation, inviteMember, listInvitations, listMembers, setMemberStatus, type Invitation, type Member } from "@/lib/team";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Primitives
@@ -93,13 +94,6 @@ const views: { key: ViewKey; label: string; icon: LucideIcon }[] = [
   { key: "monitoring", label: "System monitoring", icon: Activity },
 ];
 
-const seedUsers = [
-  { name: "Aisha Imran", email: "aisha@wonderglow.co", role: "Owner", status: "Active", last: "now" },
-  { name: "Marcus Reid", email: "marcus@wonderglow.co", role: "Admin", status: "Active", last: "12m ago" },
-  { name: "Priya Nair", email: "priya@wonderglow.co", role: "Manager", status: "Active", last: "3h ago" },
-  { name: "Leo Park", email: "leo@wonderglow.co", role: "Analyst", status: "Active", last: "1d ago" },
-  { name: "Sam Idris", email: "sam@contractor.io", role: "Viewer", status: "Invited", last: "—" },
-];
 
 const roles = [
   { name: "Owner", members: 1, desc: "Full control, billing and data. Cannot be restricted.", perms: "All", locked: true },
@@ -203,37 +197,159 @@ function SettingsView() {
   );
 }
 
+const INVITE_ROLES = ["member", "manager", "analyst", "admin"];
+const memberStatusColor: Record<string, string> = { active: "oklch(0.72 0.14 155)", invited: "oklch(0.84 0.14 84)", disabled: "oklch(0.7 0.02 250)" };
+
 function UsersView() {
-  const [users, setUsers] = useState(seedUsers);
+  const { org, role } = useOrg();
+  const canManage = role === "owner" || role === "admin";
+  const seats = planLimits(org?.plan).seats;
+
+  const [members, setMembers] = useState<Member[]>([]);
+  const [invites, setInvites] = useState<Invitation[]>([]);
+  const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
-  const filtered = users.filter((u) => u.name.toLowerCase().includes(q.toLowerCase()) || u.email.toLowerCase().includes(q.toLowerCase()));
-  const statusColor: Record<string, string> = { Active: "oklch(0.72 0.14 155)", Invited: "oklch(0.84 0.14 84)", Disabled: "oklch(0.7 0.02 250)" };
-  const toggleStatus = (email: string) => setUsers((us) => us.map((u) => (u.email === email && u.role !== "Owner" ? { ...u, status: u.status === "Disabled" ? "Active" : "Disabled" } : u)));
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("member");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!org) return;
+    setLoading(true);
+    try {
+      const [m, i] = await Promise.all([listMembers(org.id), listInvitations(org.id)]);
+      setMembers(m);
+      setInvites(i);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load the team.");
+    }
+    setLoading(false);
+  }, [org?.id]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const activeCount = members.filter((m) => m.status !== "disabled").length;
+  const usedSeats = activeCount + invites.length;
+  const atCapacity = usedSeats >= seats;
+
+  const filtered = members.filter((m) => m.name.toLowerCase().includes(q.toLowerCase()) || m.email.toLowerCase().includes(q.toLowerCase()));
+
+  async function submitInvite() {
+    if (!org || !inviteEmail.trim() || busy) return;
+    setError(null);
+    if (atCapacity) {
+      setError(`You've used all ${seats} seat${seats === 1 ? "" : "s"} on the ${planLimits(org.plan).label} plan. Upgrade for more.`);
+      return;
+    }
+    setBusy(true);
+    const { error: err } = await inviteMember(org.id, inviteEmail, inviteRole);
+    setBusy(false);
+    if (err) { setError(err.message); return; }
+    setInviteEmail("");
+    await reload();
+  }
+
+  async function toggleStatus(m: Member) {
+    if (m.role === "owner") return;
+    await setMemberStatus(m.id, m.status === "disabled" ? "active" : "disabled");
+    await reload();
+  }
+
+  async function removeInvite(id: string) {
+    await cancelInvitation(id);
+    await reload();
+  }
+
   return (
-    <Reveal>
-      <GlassCard className="p-5 sm:p-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex flex-1 items-center gap-2 rounded-full border border-border bg-background/40 px-4 py-2.5 focus-within:border-gold/50">
-            <Search className="size-4 text-muted-foreground" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search team…" className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70" />
-          </label>
-          <button className="flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}><UserPlus className="size-4" /> Invite</button>
-        </div>
-        <div className="mt-5 space-y-1">
-          {filtered.map((u) => (
-            <div key={u.email} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.8fr_0.8fr_auto]">
-              <div className="flex items-center gap-3">
-                <Avatar name={u.name} />
-                <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{u.name}</p><p className="truncate text-xs text-muted-foreground">{u.email}</p></div>
-              </div>
-              <span className="hidden text-sm text-muted-foreground sm:block">{u.role}</span>
-              <span className="hidden items-center gap-1.5 text-xs sm:flex" style={{ color: statusColor[u.status] }}><span className="size-1.5 rounded-full" style={{ background: statusColor[u.status] }} />{u.status}</span>
-              <button onClick={() => toggleStatus(u.email)} disabled={u.role === "Owner"} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40 disabled:opacity-40">{u.status === "Disabled" ? "Enable" : "Disable"}</button>
+    <div className="space-y-4">
+      <Reveal>
+        <GlassCard className="flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">
+          <div className="flex items-center gap-3">
+            <span className="grid size-11 place-items-center rounded-2xl border border-gold/25 bg-glass"><Users className="size-5 text-gold" /></span>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Seats used</p>
+              <p className="mt-0.5 text-xl text-foreground" style={{ fontFamily: "var(--font-display)" }}>
+                <span className={atCapacity ? "text-rose-300" : "gold-text"}>{usedSeats}</span> <span className="text-muted-foreground text-base">/ {seats}</span>
+              </p>
             </div>
-          ))}
+          </div>
+          {atCapacity && (
+            <Link to="/admin" className="text-xs text-gold hover:underline">Need more seats? Upgrade your plan →</Link>
+          )}
+        </GlassCard>
+      </Reveal>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          <AlertTriangle className="size-4" /> {error}
         </div>
-      </GlassCard>
-    </Reveal>
+      )}
+
+      <Reveal>
+        <GlassCard className="p-5 sm:p-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex flex-1 items-center gap-2 rounded-full border border-border bg-background/40 px-4 py-2.5 focus-within:border-gold/50">
+              <Search className="size-4 text-muted-foreground" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search team…" className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70" />
+            </label>
+          </div>
+
+          {canManage && (
+            <div className="mt-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-[1fr_auto_auto]">
+              <div className="relative">
+                <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} type="email" placeholder="teammate@company.com" className={cn(inputCls, "pl-9")} />
+              </div>
+              <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} className={inputCls}>
+                {INVITE_ROLES.map((r) => <option key={r} value={r} className="capitalize">{r}</option>)}
+              </select>
+              <button onClick={submitInvite} disabled={!inviteEmail.trim() || busy || atCapacity} className="flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>
+                <UserPlus className="size-4" /> {busy ? "Inviting…" : "Invite"}
+              </button>
+            </div>
+          )}
+
+          <div className="mt-5 space-y-1">
+            {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading team…</p>}
+            {!loading && filtered.map((m) => (
+              <div key={m.id} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.8fr_0.8fr_auto]">
+                <div className="flex items-center gap-3">
+                  <Avatar name={m.name} />
+                  <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{m.name}</p><p className="truncate text-xs text-muted-foreground">{m.email}</p></div>
+                </div>
+                <span className="hidden text-sm capitalize text-muted-foreground sm:block">{m.role}</span>
+                <span className="hidden items-center gap-1.5 text-xs capitalize sm:flex" style={{ color: memberStatusColor[m.status] ?? memberStatusColor.active }}><span className="size-1.5 rounded-full" style={{ background: memberStatusColor[m.status] ?? memberStatusColor.active }} />{m.status}</span>
+                {canManage && m.role !== "owner" ? (
+                  <button onClick={() => toggleStatus(m)} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40">{m.status === "disabled" ? "Enable" : "Disable"}</button>
+                ) : <span />}
+              </div>
+            ))}
+            {!loading && filtered.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No team members match.</p>}
+          </div>
+
+          {invites.length > 0 && (
+            <div className="mt-6 border-t border-border pt-4">
+              <p className="mb-2 text-[0.7rem] uppercase tracking-wide text-muted-foreground">Pending invitations</p>
+              <div className="space-y-1">
+                {invites.map((i) => (
+                  <div key={i.id} className="flex items-center gap-3 rounded-xl px-3 py-2.5">
+                    <span className="grid size-8 place-items-center rounded-full border border-gold/30 bg-glass"><Mail className="size-3.5 text-gold" /></span>
+                    <div className="min-w-0 flex-1"><p className="truncate text-sm text-foreground/85">{i.email}</p><p className="text-xs capitalize text-muted-foreground">{i.role} · invited</p></div>
+                    {canManage && (
+                      <button onClick={() => removeInvite(i.id)} className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300"><Trash2 className="size-3.5" /></button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">Invites are recorded and count toward your seats. Email delivery + join links activate once you enable email sending.</p>
+            </div>
+          )}
+        </GlassCard>
+      </Reveal>
+    </div>
   );
 }
 
@@ -537,6 +653,19 @@ function BillingView() {
     }
   }
 
+  const [portalBusy, setPortalBusy] = useState(false);
+  async function manageBilling() {
+    if (!org) return;
+    setError(null);
+    setPortalBusy(true);
+    try {
+      await openBillingPortal(org.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not open the billing portal.");
+      setPortalBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
       {notice && (
@@ -569,14 +698,26 @@ function BillingView() {
               )}
             </div>
           </div>
-          <div className="text-right text-xs text-muted-foreground">
-            {activePlan ? (
-              <>
-                <p className="flex items-center justify-end gap-1.5 text-emerald-300"><span className="size-1.5 rounded-full bg-emerald-400" /> {sub?.status}</p>
-                {renews && <p className="mt-1">Renews {renews}</p>}
-              </>
-            ) : (
-              <p>Choose a plan below to unlock your full workspace.</p>
+          <div className="flex items-center gap-5">
+            <div className="text-right text-xs text-muted-foreground">
+              {activePlan ? (
+                <>
+                  <p className="flex items-center justify-end gap-1.5 text-emerald-300"><span className="size-1.5 rounded-full bg-emerald-400" /> {sub?.status}</p>
+                  {renews && <p className="mt-1">Renews {renews}</p>}
+                </>
+              ) : (
+                <p>Choose a plan below to unlock your full workspace.</p>
+              )}
+            </div>
+            {activePlan && canManage && (
+              <button
+                onClick={manageBilling}
+                disabled={portalBusy}
+                className="flex items-center gap-2 rounded-full border border-border bg-glass px-4 py-2 text-xs font-medium text-foreground/85 transition-colors hover:border-gold/40 disabled:opacity-50"
+              >
+                {portalBusy ? <Loader2 className="size-3.5 animate-spin" /> : <CreditCard className="size-3.5" />}
+                Manage billing
+              </button>
             )}
           </div>
         </GlassCard>

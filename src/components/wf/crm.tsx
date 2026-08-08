@@ -227,19 +227,17 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-const loyaltyTiers = [
-  { tier: "Platinum", members: 128, min: "10,000 pts", color: "oklch(0.9 0.05 250)" },
-  { tier: "Gold", members: 486, min: "5,000 pts", color: GOLD },
-  { tier: "Silver", members: 742, min: "2,000 pts", color: "oklch(0.8 0.02 250)" },
-  { tier: "Bronze", members: 1103, min: "0 pts", color: "oklch(0.62 0.08 55)" },
+// Loyalty tiers by lifetime value — real member counts are derived from the
+// org's customers (ordered high→low so the first threshold met wins).
+const LOYALTY_TIERS = [
+  { tier: "Platinum", min: 15000, color: "oklch(0.9 0.05 250)" },
+  { tier: "Gold", min: 8000, color: GOLD },
+  { tier: "Silver", min: 3000, color: "oklch(0.8 0.02 250)" },
+  { tier: "Bronze", min: 0, color: "oklch(0.62 0.08 55)" },
 ];
-
-const topMembers = [
-  { name: "Noah Reed", pts: 24850, tier: "Platinum" },
-  { name: "Ava Chen", pts: 19420, tier: "Platinum" },
-  { name: "Leo Park", pts: 11200, tier: "Platinum" },
-  { name: "Ivy Zhou", pts: 8640, tier: "Gold" },
-];
+function loyaltyTierOf(ltv: number): string {
+  return (LOYALTY_TIERS.find((t) => ltv >= t.min) ?? LOYALTY_TIERS[LOYALTY_TIERS.length - 1]).tier;
+}
 
 const rewards = [
   { label: "$50 account credit", pts: "5,000 pts", icon: Gift },
@@ -1103,23 +1101,30 @@ function CommsView() {
 }
 
 function LoyaltyView() {
+  const { customers } = useCustomersData();
+  const tierCounts = LOYALTY_TIERS.map((t) => ({
+    ...t,
+    members: customers.filter((c) => loyaltyTierOf(c.ltv) === t.tier).length,
+  }));
+  const top = [...customers].sort((a, b) => b.ltv - a.ltv).slice(0, 4);
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {loyaltyTiers.map((t, i) => (
+        {tierCounts.map((t, i) => (
           <Reveal key={t.tier} delay={i * 60} className="h-full">
             <GlassCard className="lift h-full p-5 hover:border-gold/40">
               <div className="flex items-center justify-between">
                 <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass">
                   <Crown className="size-4" style={{ color: t.color }} />
                 </span>
-                <span className="text-xs text-muted-foreground">{t.min}</span>
+                <span className="text-xs text-muted-foreground">${formatNum(t.min)}+ LTV</span>
               </div>
               <p className="mt-4 text-sm font-semibold" style={{ color: t.color }}>
                 {t.tier}
               </p>
               <p className="mt-1 text-2xl font-semibold tabular-nums">{formatNum(t.members)}</p>
-              <p className="text-xs text-muted-foreground">members</p>
+              <p className="text-xs text-muted-foreground">member{t.members === 1 ? "" : "s"}</p>
             </GlassCard>
           </Reveal>
         ))}
@@ -1130,16 +1135,17 @@ function LoyaltyView() {
           <GlassCard className="h-full p-6">
             <SectionLabel icon={Award}>Top members</SectionLabel>
             <div className="mt-4 space-y-1">
-              {topMembers.map((m, i) => (
-                <div key={m.name} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
+              {top.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">Add customers to rank your top members.</p>}
+              {top.map((m, i) => (
+                <div key={m.id} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
                   <span className="w-5 text-center text-sm font-semibold text-muted-foreground">{i + 1}</span>
                   <Avatar name={m.name} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-foreground">{m.name}</p>
-                    <p className="text-xs text-muted-foreground">{m.tier}</p>
+                    <p className="text-xs text-muted-foreground">{loyaltyTierOf(m.ltv)}</p>
                   </div>
                   <span className="text-sm font-semibold tabular-nums text-gold">
-                    {formatNum(m.pts)} pts
+                    ${formatNum(m.ltv)}
                   </span>
                 </div>
               ))}

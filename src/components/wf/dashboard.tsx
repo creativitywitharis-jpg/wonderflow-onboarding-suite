@@ -9,8 +9,6 @@ import {
   Boxes,
   CheckCircle2,
   ChevronRight,
-  CircleDollarSign,
-  Clock,
   Command,
   Factory,
   FileText,
@@ -40,6 +38,7 @@ import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { listCustomers, type DbCustomer } from "@/lib/customers";
+import { listMembers, type Member } from "@/lib/team";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Data
@@ -115,20 +114,6 @@ const inventory = {
     { name: "Golden Hour Balm", left: "9 days of stock", pct: 41 },
   ],
 };
-
-const recommendations = [
-  { title: "Renegotiate two supplier contracts", impact: "$14.2k / quarter", confidence: "High" },
-  { title: "Automate invoice reconciliation", impact: "9 hrs / week", confidence: "High" },
-  { title: "Launch a bundle for the Champions segment", impact: "+$22k / month", confidence: "Medium" },
-];
-
-const activity = [
-  { who: "Ava Chen", what: "closed Northwind Co — $12,000", when: "8m", icon: CircleDollarSign },
-  { who: "Copilot", what: "reconciled 42 invoices automatically", when: "22m", icon: Bot },
-  { who: "Marcus Reid", what: "updated the Q3 revenue forecast", when: "1h", icon: LineChart },
-  { who: "Automation", what: "shipped churn-watch v2 to production", when: "2h", icon: Workflow },
-  { who: "Priya Nair", what: "added 3 products to the catalog", when: "3h", icon: Package },
-];
 
 const quickActions: { icon: LucideIcon; label: string }[] = [
   { icon: FileText, label: "Create invoice" },
@@ -392,76 +377,90 @@ function InventoryHealth() {
 }
 
 function GrowthRecommendations() {
+  const s = useDash();
+  const recs: { title: string; impact: string; confidence: "High" | "Medium" }[] = [];
+  if (s.atRisk > 0) recs.push({ title: `Re-engage ${s.atRisk} at-risk customer${s.atRisk === 1 ? "" : "s"}`, impact: "Protect revenue", confidence: "High" });
+  if (s.champions > 0) recs.push({ title: `Ask ${s.champions} champion${s.champions === 1 ? "" : "s"} for a referral`, impact: `${s.champions} warm intro${s.champions === 1 ? "" : "s"}`, confidence: "High" });
+  if (s.newC > 0) recs.push({ title: `Finish onboarding ${s.newC} new customer${s.newC === 1 ? "" : "s"}`, impact: "Lift retention", confidence: "Medium" });
+  if (s.dormant > 0) recs.push({ title: `Win back ${s.dormant} dormant customer${s.dormant === 1 ? "" : "s"}`, impact: "Recover lost value", confidence: "Medium" });
+  const top = recs.slice(0, 3);
   return (
     <Reveal className="h-full">
       <GlassCard className="flex h-full flex-col p-6">
         <div className="flex items-center justify-between">
           <SectionLabel icon={Zap}>Growth recommendations</SectionLabel>
-          <span className="text-xs text-muted-foreground">AI-generated</span>
+          <span className="text-xs text-muted-foreground">From your customers</span>
         </div>
-        <ul className="mt-4 space-y-3">
-          {recommendations.map((r) => (
-            <li
-              key={r.title}
-              className="lift rounded-2xl border border-border bg-background/30 p-4 hover:border-gold/40"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <p className="text-sm font-medium text-foreground/90">{r.title}</p>
-                <span
-                  className={cn(
-                    "shrink-0 rounded-full px-2 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide",
-                    r.confidence === "High" ? "text-emerald-300" : "text-gold",
-                  )}
-                  style={{
-                    background:
-                      r.confidence === "High"
-                        ? "oklch(0.72 0.14 155 / 12%)"
-                        : "oklch(0.84 0.14 84 / 12%)",
-                  }}
-                >
-                  {r.confidence}
-                </span>
-              </div>
-              <div className="mt-3 flex items-center justify-between">
-                <span className="text-sm font-semibold text-gold">{r.impact}</span>
-                <div className="flex items-center gap-2">
-                  <button className="rounded-full px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
-                    Dismiss
-                  </button>
-                  <button
+        {top.length === 0 ? (
+          <p className="mt-6 flex-1 text-sm text-muted-foreground">
+            Add customers and I'll surface where to focus — churn risks, upsells and referrals.
+          </p>
+        ) : (
+          <ul className="mt-4 space-y-3">
+            {top.map((r) => (
+              <li key={r.title} className="rounded-2xl border border-border bg-background/30 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-sm font-medium text-foreground/90">{r.title}</p>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-full px-2 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide",
+                      r.confidence === "High" ? "text-emerald-300" : "text-gold",
+                    )}
+                    style={{
+                      background:
+                        r.confidence === "High" ? "oklch(0.72 0.14 155 / 12%)" : "oklch(0.84 0.14 84 / 12%)",
+                    }}
+                  >
+                    {r.confidence}
+                  </span>
+                </div>
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-gold">{r.impact}</span>
+                  <Link
+                    to="/crm"
                     className="rounded-full px-4 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]"
                     style={{ background: "var(--gradient-gold)" }}
                   >
-                    Apply
-                  </button>
+                    Open CRM
+                  </Link>
                 </div>
-              </div>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        )}
       </GlassCard>
     </Reveal>
   );
 }
 
 function TeamActivity() {
+  const { org } = useOrg();
+  const [members, setMembers] = useState<Member[]>([]);
+  useEffect(() => {
+    let alive = true;
+    if (org?.id) listMembers(org.id).then((m) => alive && setMembers(m)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [org?.id]);
   return (
     <Reveal className="h-full">
       <GlassCard className="flex h-full flex-col p-6">
-        <SectionLabel icon={Activity}>Team activity</SectionLabel>
-        <ul className="mt-5 space-y-4">
-          {activity.map((a) => (
-            <li key={a.what} className="flex items-center gap-3">
-              <Avatar name={a.who} />
+        <div className="flex items-center justify-between">
+          <SectionLabel icon={Users}>Your team</SectionLabel>
+          <Link to="/admin" className="text-xs text-gold hover:underline">Manage →</Link>
+        </div>
+        <ul className="mt-5 space-y-3">
+          {members.length === 0 && (
+            <li className="text-sm text-muted-foreground">Just you so far — invite teammates from Administration → Users.</li>
+          )}
+          {members.map((m) => (
+            <li key={m.id} className="flex items-center gap-3">
+              <Avatar name={m.name} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm text-foreground/85">
-                  <span className="font-medium text-foreground">{a.who}</span> {a.what}
-                </p>
+                <p className="truncate text-sm font-medium text-foreground">{m.name}</p>
+                <p className="truncate text-xs capitalize text-muted-foreground">{m.role}{m.status === "disabled" ? " · disabled" : ""}</p>
               </div>
-              <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                <Clock className="size-3" />
-                {a.when}
-              </span>
             </li>
           ))}
         </ul>

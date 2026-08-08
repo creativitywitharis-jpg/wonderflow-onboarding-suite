@@ -29,7 +29,22 @@ export const Route = createFileRoute("/onboarding")({
 
 const steps = ["Company", "Ambition", "Systems", "AI setup"] as const;
 
-const industries = ["E-commerce", "Professional services", "SaaS", "Manufacturing", "Hospitality", "Healthcare"];
+const industries = [
+  "E-commerce",
+  "Retail",
+  "Professional services",
+  "SaaS / Software",
+  "Finance & banking",
+  "Healthcare",
+  "Manufacturing",
+  "Hospitality",
+  "Real estate",
+  "Education",
+  "Logistics & transport",
+  "Media & marketing",
+  "Nonprofit",
+  "Construction",
+];
 const sizes = ["1–9", "10–49", "50–199", "200+"];
 const revenues = ["< $500k", "$500k–$5M", "$5M–$50M", "$50M+"];
 const goalOptions = [
@@ -78,6 +93,7 @@ function Chip({
 function Onboarding() {
   const [step, setStep] = useState(0);
   const [data, setData] = useState<OnboardingData>(emptyOnboarding);
+  const [otherIndustry, setOtherIndustry] = useState(false);
   const navigate = useNavigate();
   const { session, loading } = useAuth();
 
@@ -155,11 +171,36 @@ function Onboarding() {
               <Field label="Industry">
                 <div className="flex flex-wrap gap-2">
                   {industries.map((i) => (
-                    <Chip key={i} active={data.industry === i} onClick={() => set("industry", i)}>
+                    <Chip
+                      key={i}
+                      active={!otherIndustry && data.industry === i}
+                      onClick={() => {
+                        setOtherIndustry(false);
+                        set("industry", i);
+                      }}
+                    >
                       {i}
                     </Chip>
                   ))}
+                  <Chip
+                    active={otherIndustry}
+                    onClick={() => {
+                      setOtherIndustry(true);
+                      set("industry", "");
+                    }}
+                  >
+                    Other…
+                  </Chip>
                 </div>
+                {otherIndustry && (
+                  <input
+                    autoFocus
+                    className={`${inputClass} mt-3`}
+                    value={data.industry}
+                    onChange={(e) => set("industry", e.target.value)}
+                    placeholder="Your industry — e.g. Banking, Legal, Agriculture, Government"
+                  />
+                )}
               </Field>
               <Field label="Team size">
                 <div className="flex flex-wrap gap-2">

@@ -96,7 +96,6 @@ Deno.serve(async (req: Request) => {
       .select("id")
       .eq("org_id", orgId)
       .eq("user_id", user.id)
-      .eq("status", "active")
       .maybeSingle();
     if (!membership) return json({ error: "You don't have access to this workspace." }, 403);
 

@@ -17,6 +17,7 @@ import {
   HelpCircle,
   Home,
   LayoutGrid,
+  Lock,
   Megaphone,
   MessageSquare,
   Plug,
@@ -41,6 +42,7 @@ import { Ring } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
 import { signOut } from "@/lib/use-auth";
 import { askAI } from "@/lib/ai";
+import { getAiUsage, planLimits } from "@/lib/billing";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Navigation model
@@ -226,6 +228,15 @@ function AiPanel({ onClose }: { onClose: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, thinking]);
 
+  const limit = planLimits(org?.plan).aiMonthly;
+  const [usage, setUsage] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (org?.id && limit !== null) getAiUsage(org.id).then((u) => alive && setUsage(u)).catch(() => {});
+    return () => { alive = false; };
+  }, [org?.id, limit]);
+  const remaining = limit === null ? null : Math.max(0, limit - (usage ?? 0));
+
   async function send(text: string) {
     const q = text.trim();
     if (!q || thinking) return;
@@ -236,13 +247,14 @@ function AiPanel({ onClose }: { onClose: () => void }) {
     try {
       const reply = await askAI(
         next.map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }) as const),
-        { name: org?.name, industry: org?.industry },
+        { id: org?.id, name: org?.name, industry: org?.industry },
       );
       setMessages((m) => [...m, { role: "ai", text: reply || "I don't have an answer for that yet." }]);
-    } catch {
+      if (org?.id && limit !== null) getAiUsage(org.id).then(setUsage).catch(() => {});
+    } catch (e) {
       setMessages((m) => [
         ...m,
-        { role: "ai", text: "I couldn't reach the AI service. Make sure the ai-chat function is deployed and the ANTHROPIC_API_KEY secret is set." },
+        { role: "ai", text: e instanceof Error ? e.message : "I couldn't reach the AI service. Please try again." },
       ]);
     } finally {
       setThinking(false);
@@ -254,7 +266,7 @@ function AiPanel({ onClose }: { onClose: () => void }) {
       <div className="flex items-center justify-between border-b border-border pb-4">
         <div className="flex items-center gap-3">
           <span className="orb grid size-9 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Sparkles className="size-4" stroke="oklch(0.2 0.02 70)" /></span>
-          <div><p className="text-sm font-semibold tracking-tight">WonderFlow AI</p><p className="text-xs text-muted-foreground">Your business partner</p></div>
+          <div><p className="text-sm font-semibold tracking-tight">WonderFlow AI</p><p className="text-xs text-muted-foreground">{remaining === null ? "Your business partner" : `${remaining} of ${limit} messages left this month`}</p></div>
         </div>
         <button onClick={onClose} aria-label="Close AI panel" className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:text-foreground"><ChevronRight className="size-4" /></button>
       </div>
@@ -301,13 +313,22 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
   const [switcherOpen, setSwitcherOpen] = useState(false);
 
   const enabled = org?.enabled_modules ?? ALL_MODULES;
+  const planMods = planLimits(org?.plan).modules;
   const groups = navGroups
     .map((g) => ({
       ...g,
-      items: g.items.filter((it) => {
-        const m = ROUTE_MODULE[it.to];
-        return !m || m === "admin" || enabled.includes(m);
-      }),
+      items: g.items
+        // Keep destinations relevant to the org's industry.
+        .filter((it) => {
+          const m = ROUTE_MODULE[it.to];
+          return !m || m === "admin" || enabled.includes(m);
+        })
+        // Flag those the industry enables but the current plan doesn't include.
+        .map((it) => {
+          const m = ROUTE_MODULE[it.to];
+          const locked = !!m && m !== "admin" && !planMods.includes(m);
+          return { ...it, locked };
+        }),
     }))
     .filter((g) => g.items.length > 0);
 
@@ -395,18 +416,31 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
           <div key={g.label}>
             {!collapsed && <p className="px-3 pb-1 text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">{g.label}</p>}
             <div className="space-y-0.5">
-              {g.items.map((it) => (
-                <Link
-                  key={it.label + it.to}
-                  to={it.to}
-                  title={collapsed ? it.label : undefined}
-                  className={cn("group flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}
-                  activeProps={{ style: { background: "oklch(0.84 0.14 84 / 12%)", color: "var(--color-foreground)" } }}
-                >
-                  <it.icon className="size-4 shrink-0 group-hover:text-gold" />
-                  {!collapsed && <span className="truncate">{it.label}</span>}
-                </Link>
-              ))}
+              {g.items.map((it) =>
+                it.locked ? (
+                  <Link
+                    key={it.label + it.to}
+                    to="/admin"
+                    title={collapsed ? `${it.label} — upgrade to unlock` : undefined}
+                    className={cn("group flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground/45 transition-colors hover:bg-glass hover:text-foreground/70", collapsed && "justify-center px-0")}
+                  >
+                    <it.icon className="size-4 shrink-0" />
+                    {!collapsed && <span className="flex-1 truncate">{it.label}</span>}
+                    {!collapsed && <Lock className="size-3 shrink-0 text-muted-foreground/60 group-hover:text-gold" />}
+                  </Link>
+                ) : (
+                  <Link
+                    key={it.label + it.to}
+                    to={it.to}
+                    title={collapsed ? it.label : undefined}
+                    className={cn("group flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}
+                    activeProps={{ style: { background: "oklch(0.84 0.14 84 / 12%)", color: "var(--color-foreground)" } }}
+                  >
+                    <it.icon className="size-4 shrink-0 group-hover:text-gold" />
+                    {!collapsed && <span className="truncate">{it.label}</span>}
+                  </Link>
+                ),
+              )}
             </div>
           </div>
         ))}

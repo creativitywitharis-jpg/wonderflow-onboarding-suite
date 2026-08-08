@@ -41,6 +41,51 @@ export function planById(id: string | null | undefined): Plan | undefined {
   return PLANS.find((p) => p.id === id);
 }
 
+// ── Plan limits (single source of truth for gating) ──────────────────────
+// `admin` is always allowed so users can always reach Billing to upgrade.
+const PLAN_CORE_MODULES = ["dashboard", "crm", "team", "analytics", "advisor", "automation", "admin"];
+const PLAN_COMMERCE_MODULES = ["orders", "inventory", "suppliers", "growth"];
+
+export type PlanLimits = {
+  label: string;
+  modules: string[];
+  seats: number;
+  aiMonthly: number | null; // null = unlimited
+};
+
+export const PLAN_LIMITS: Record<string, PlanLimits> = {
+  trial: { label: "Trial", modules: PLAN_CORE_MODULES, seats: 1, aiMonthly: 25 },
+  starter: { label: "Starter", modules: PLAN_CORE_MODULES, seats: 1, aiMonthly: 100 },
+  growth: { label: "Growth", modules: [...PLAN_CORE_MODULES, ...PLAN_COMMERCE_MODULES], seats: 5, aiMonthly: null },
+  scale: { label: "Scale", modules: [...PLAN_CORE_MODULES, ...PLAN_COMMERCE_MODULES], seats: 20, aiMonthly: null },
+};
+
+/** The limits for a plan id, falling back to the trial tier. */
+export function planLimits(plan: string | null | undefined): PlanLimits {
+  return PLAN_LIMITS[plan ?? "trial"] ?? PLAN_LIMITS.trial;
+}
+
+/** Is a module included in this plan? */
+export function moduleInPlan(plan: string | null | undefined, module: string): boolean {
+  return planLimits(plan).modules.includes(module);
+}
+
+/** Current YYYY-MM period key (UTC) used for monthly AI metering. */
+export function usagePeriod(d = new Date()): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/** This org's AI messages used in the current month (RLS-scoped to members). */
+export async function getAiUsage(orgId: string): Promise<number> {
+  const { data } = await supabase
+    .from("ai_usage")
+    .select("count")
+    .eq("org_id", orgId)
+    .eq("period", usagePeriod())
+    .maybeSingle();
+  return (data as { count?: number } | null)?.count ?? 0;
+}
+
 export type SubscriptionRow = {
   org_id: string;
   plan: string;

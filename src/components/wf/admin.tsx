@@ -33,6 +33,7 @@ import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
+import { updateOrganization } from "@/lib/org";
 import { PLANS, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
 import { cancelInvitation, inviteMember, listInvitations, listMembers, setMemberStatus, type Invitation, type Member } from "@/lib/team";
 
@@ -164,21 +165,48 @@ const services = [
  * ─────────────────────────────────────────────────────────────────── */
 
 function SettingsView() {
+  const { org, refresh } = useOrg();
   const [statusPage, setStatusPage] = useState(true);
   const [maintenance, setMaintenance] = useState(false);
+  const [name, setName] = useState("");
+  const [industry, setIndustry] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    if (org) {
+      setName(org.name ?? "");
+      setIndustry(org.industry ?? "");
+    }
+  }, [org?.id]);
+
+  const save = async () => {
+    if (!org || busy) return;
+    setBusy(true);
+    setSaved(false);
+    const { error } = await updateOrganization(org.id, { name: name.trim() || org.name, industry: industry.trim() || null });
+    setBusy(false);
+    if (!error) {
+      setSaved(true);
+      await refresh();
+    }
+  };
+
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Reveal className="h-full">
-        <GlassCard className="h-full p-6">
+        <GlassCard className="flex h-full flex-col p-6">
           <SectionLabel icon={Building2}>Business profile</SectionLabel>
           <div className="mt-4 space-y-4">
-            <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Company name</span><input defaultValue="WonderGlow Studio" className={inputCls} /></label>
-            <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Legal entity</span><input defaultValue="WonderGlow Studio LLC" className={inputCls} /></label>
+            <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Company name</span><input value={name} onChange={(e) => { setName(e.target.value); setSaved(false); }} className={inputCls} /></label>
+            <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Industry</span><input value={industry} onChange={(e) => { setIndustry(e.target.value); setSaved(false); }} placeholder="e.g. Retail, Finance & banking" className={inputCls} /></label>
             <div className="grid grid-cols-2 gap-3">
               <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Timezone</span><select className={inputCls}><option>America/Chicago</option><option>America/New_York</option><option>UTC</option></select></label>
               <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Currency</span><select className={inputCls}><option>USD $</option><option>EUR €</option><option>GBP £</option></select></label>
             </div>
           </div>
+          <button onClick={save} disabled={busy || !name.trim()} className="mt-5 flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
+            <Check className="size-4" /> {busy ? "Saving…" : saved ? "Saved ✓" : "Save profile"}
+          </button>
         </GlassCard>
       </Reveal>
 

@@ -69,6 +69,15 @@ export async function createOrganization(input: {
   return { data: org, error: null };
 }
 
+/** Update an organization (owner/admin only, enforced by RLS). */
+export async function updateOrganization(
+  orgId: string,
+  patch: Partial<Pick<OrgRow, "name" | "industry" | "health_score">>,
+): Promise<{ error: Error | null }> {
+  const { error } = await supabase.from("organizations").update(patch).eq("id", orgId);
+  return { error: error ? new Error(error.message) : null };
+}
+
 /** Every organization the current user is a member of (RLS-scoped). */
 export async function getMyOrgs(): Promise<OrgRow[]> {
   const { data } = await supabase

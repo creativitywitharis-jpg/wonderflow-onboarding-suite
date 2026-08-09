@@ -36,6 +36,7 @@ import { Avatar, Bar, Reveal, SectionLabel, StatTile, formatNum } from "@/compon
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { listCustomers, type DbCustomer } from "@/lib/customers";
+import { listProducts, type DbProduct } from "@/lib/products";
 import {
   createOrder,
   insertOrders,
@@ -137,6 +138,7 @@ function toUi(o: DbOrder): UiOrder {
 type OrdersState = {
   orders: UiOrder[];
   customers: DbCustomer[];
+  products: DbProduct[];
   loading: boolean;
   addOrder: (o: NewOrder) => Promise<void>;
   advance: (id: string, status: OrderStatus) => Promise<void>;
@@ -153,20 +155,23 @@ function OrdersProvider({ children }: { children: ReactNode }) {
   const { org } = useOrg();
   const [orders, setOrders] = useState<UiOrder[]>([]);
   const [customers, setCustomers] = useState<DbCustomer[]>([]);
+  const [products, setProducts] = useState<DbProduct[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!org) {
       setOrders([]);
       setCustomers([]);
+      setProducts([]);
       setLoading(false);
       return;
     }
     setLoading(true);
     try {
-      const [os, cs] = await Promise.all([listOrders(org.id), listCustomers(org.id)]);
+      const [os, cs, ps] = await Promise.all([listOrders(org.id), listCustomers(org.id), listProducts(org.id)]);
       setOrders(os.map(toUi));
       setCustomers(cs);
+      setProducts(ps);
     } catch {
       setOrders([]);
     }
@@ -204,7 +209,7 @@ function OrdersProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <OrdersCtx.Provider value={{ orders, customers, loading, addOrder, advance, seed }}>
+    <OrdersCtx.Provider value={{ orders, customers, products, loading, addOrder, advance, seed }}>
       {children}
     </OrdersCtx.Provider>
   );
@@ -246,20 +251,7 @@ const products = [
   { id: "p6", name: "Dew Mist", price: 28, tag: "" },
 ];
 
-const channels = [
-  { label: "Online store", share: 58, color: GOLD, icon: Globe },
-  { label: "POS", share: 22, color: "oklch(0.7 0.11 60)", icon: Store },
-  { label: "Marketplace", share: 14, color: "oklch(0.66 0.09 200)", icon: LayoutGrid },
-  { label: "Social", share: 6, color: "oklch(0.75 0.13 150)", icon: Users },
-];
-
 const revenueSeries = [42, 48, 45, 58, 54, 66, 72, 68, 81, 77, 89, 96];
-const topProducts = [
-  { name: "Aurora Serum", sold: 342, revenue: 23256 },
-  { name: "Midnight Oil", sold: 288, revenue: 15552 },
-  { name: "Golden Hour Balm", sold: 214, revenue: 8988 },
-  { name: "Radiance Mask", sold: 176, revenue: 8448 },
-];
 
 /* ──────────────────────────────────────────────────────────────────────
  * Viz primitives (orders-specific)
@@ -680,7 +672,10 @@ function DetailsView({ orderId }: { orderId: string }) {
 }
 
 function CreateView() {
-  const { customers, addOrder } = useOrdersData();
+  const { customers, addOrder, products: dbProducts } = useOrdersData();
+  const catalog = dbProducts.length
+    ? dbProducts.map((p) => ({ id: p.id, name: p.name, price: Number(p.price), tag: "" }))
+    : products;
   const [cart, setCart] = useState<Record<string, number>>({});
   const [customer, setCustomer] = useState("");
   const [busy, setBusy] = useState(false);
@@ -695,8 +690,8 @@ function CreateView() {
       return next;
     });
   const total = useMemo(
-    () => Object.entries(cart).reduce((a, [id, q]) => a + (products.find((p) => p.id === id)?.price ?? 0) * q, 0),
-    [cart],
+    () => Object.entries(cart).reduce((a, [id, q]) => a + (catalog.find((p) => p.id === id)?.price ?? 0) * q, 0),
+    [cart, catalog],
   );
   const count = Object.values(cart).reduce((a, q) => a + q, 0);
 
@@ -704,7 +699,7 @@ function CreateView() {
     if (count === 0 || busy) return;
     setBusy(true);
     const items: OrderItem[] = Object.entries(cart).map(([id, q]) => {
-      const p = products.find((x) => x.id === id)!;
+      const p = catalog.find((x) => x.id === id)!;
       return { name: p.name, qty: q, price: p.price };
     });
     const matched = customers.find((c) => c.name.toLowerCase() === customer.trim().toLowerCase());
@@ -736,22 +731,19 @@ function CreateView() {
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">AI order assistant</p>
                 <p className="mt-2 text-sm leading-relaxed text-foreground/90">
-                  Building an order for <span className="text-gold">{customer}</span>. Based on their history I'd
-                  suggest the Aurora Serum and Dew Mist — tap to add.
+                  Building an order{customer ? <> for <span className="text-gold">{customer}</span></> : ""}. Add
+                  items from your catalog — top sellers are one tap away.
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {["p6", "p5", "p2"].map((id) => {
-                    const p = products.find((x) => x.id === id)!;
-                    return (
-                      <button
-                        key={id}
-                        onClick={() => add(id)}
-                        className="flex items-center gap-1.5 rounded-full border border-gold/30 bg-glass px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-gold/60"
-                      >
-                        <Plus className="size-3 text-gold" /> {p.name} · ${p.price}
-                      </button>
-                    );
-                  })}
+                  {catalog.slice(0, 3).map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => add(p.id)}
+                      className="flex items-center gap-1.5 rounded-full border border-gold/30 bg-glass px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-gold/60"
+                    >
+                      <Plus className="size-3 text-gold" /> {p.name} · ${p.price}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
@@ -762,7 +754,7 @@ function CreateView() {
           <GlassCard className="p-6">
             <SectionLabel icon={Package}>Product catalog</SectionLabel>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {products.map((p) => (
+              {catalog.map((p) => (
                 <div key={p.id} className="flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-3">
                   <span className="grid size-10 place-items-center rounded-xl border border-border bg-glass">
                     <Package className="size-4 text-gold" />
@@ -812,7 +804,7 @@ function CreateView() {
               <p className="py-6 text-center text-sm text-muted-foreground">No items yet — add from the catalog.</p>
             )}
             {Object.entries(cart).map(([id, q]) => {
-              const p = products.find((x) => x.id === id)!;
+              const p = catalog.find((x) => x.id === id)!;
               return (
                 <div key={id} className="flex items-center gap-2 rounded-xl border border-border bg-background/30 p-2.5">
                   <div className="min-w-0 flex-1">
@@ -945,13 +937,46 @@ function DeliveryView() {
 }
 
 function AnalyticsView() {
+  const { orders } = useOrdersData();
+  const revenue = orders.reduce((a, o) => a + o.total, 0);
+  const totalOrders = orders.length;
+  const aov = totalOrders ? Math.round(revenue / totalOrders) : 0;
+  const delivered = orders.filter((o) => o.stage === "Delivered").length;
+  const fulfillRate = totalOrders ? Math.round((delivered / totalOrders) * 100) : 0;
+
+  const chanMeta: Record<string, { color: string; icon: LucideIcon }> = {
+    "Online store": { color: GOLD, icon: Globe },
+    POS: { color: "oklch(0.7 0.11 60)", icon: Store },
+    Marketplace: { color: "oklch(0.66 0.09 200)", icon: LayoutGrid },
+    Social: { color: "oklch(0.75 0.13 150)", icon: Users },
+  };
+  const chanCount: Record<string, number> = {};
+  for (const o of orders) chanCount[o.channel] = (chanCount[o.channel] ?? 0) + 1;
+  const channelRows = Object.entries(chanCount)
+    .map(([label, n]) => ({ label, share: totalOrders ? Math.round((n / totalOrders) * 100) : 0, ...(chanMeta[label] ?? { color: GOLD, icon: Globe }) }))
+    .sort((a, b) => b.share - a.share);
+
+  const prodAgg: Record<string, { sold: number; revenue: number }> = {};
+  for (const o of orders) {
+    for (const it of o.lineItems) {
+      const k = it.name;
+      if (!prodAgg[k]) prodAgg[k] = { sold: 0, revenue: 0 };
+      prodAgg[k].sold += it.qty;
+      prodAgg[k].revenue += it.qty * it.price;
+    }
+  }
+  const topProds = Object.entries(prodAgg)
+    .map(([name, v]) => ({ name, ...v }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 5);
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Revenue (30d)" value={412908} prefix="$" delta="12.4%" icon={CreditCard} />
-        <StatTile label="Orders (30d)" value={3284} delta="8.1%" icon={Package} />
-        <StatTile label="Avg fulfillment" value={1.4} suffix=" days" decimals={1} delta="0.3 days" positive icon={Clock} />
-        <StatTile label="Return rate" value={2.1} suffix="%" delta="0.4 pts" positive={false} icon={ArrowLeft} />
+        <StatTile label="Total revenue" value={revenue} prefix="$" icon={CreditCard} />
+        <StatTile label="Total orders" value={totalOrders} icon={Package} />
+        <StatTile label="Avg order value" value={aov} prefix="$" icon={Receipt} />
+        <StatTile label="Fulfillment rate" value={fulfillRate} suffix="%" icon={Clock} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
@@ -959,7 +984,7 @@ function AnalyticsView() {
           <GlassCard className="flex h-full flex-col p-6">
             <div className="flex items-baseline justify-between">
               <SectionLabel icon={BarChart3}>Revenue trend</SectionLabel>
-              <span className="text-xs text-muted-foreground">Last 12 weeks</span>
+              <span className="text-xs text-muted-foreground">Illustrative</span>
             </div>
             <div className="mt-6">
               <BarChart data={revenueSeries} />
@@ -971,7 +996,8 @@ function AnalyticsView() {
           <GlassCard className="flex h-full flex-col p-6">
             <SectionLabel icon={Globe}>Orders by channel</SectionLabel>
             <div className="mt-5 space-y-4">
-              {channels.map((c) => (
+              {channelRows.length === 0 && <p className="text-sm text-muted-foreground">No orders yet.</p>}
+              {channelRows.map((c) => (
                 <div key={c.label}>
                   <div className="flex items-baseline justify-between text-sm">
                     <span className="flex items-center gap-2 text-foreground/85">
@@ -993,7 +1019,8 @@ function AnalyticsView() {
         <GlassCard className="p-6">
           <SectionLabel icon={BarChart3}>Top products</SectionLabel>
           <div className="mt-4 space-y-1">
-            {topProducts.map((p, i) => (
+            {topProds.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">No product sales yet.</p>}
+            {topProds.map((p, i) => (
               <div key={p.name} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
                 <span className="w-5 text-center text-sm font-semibold text-muted-foreground">{i + 1}</span>
                 <span className="grid size-9 place-items-center rounded-lg border border-border bg-glass"><Package className="size-4 text-gold" /></span>

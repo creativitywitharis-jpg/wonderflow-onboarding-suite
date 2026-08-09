@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
@@ -36,6 +36,8 @@ import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Bar, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
+import { useOrg } from "@/lib/org-context";
+import { createAutomation, insertAutomations, listAutomations, setAutomationEnabled, type DbAutomation } from "@/lib/automations";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -75,13 +77,6 @@ const palette: { kind: BlockKind; label: string; icon: LucideIcon }[] = [
   { kind: "action", label: "Wait", icon: Timer },
 ];
 
-const automations = [
-  { name: "Low-stock auto-reorder", runs: 128, saved: "42h", status: "Active", last: "12m ago", success: 99 },
-  { name: "Abandoned cart recovery", runs: 340, saved: "on autopilot", status: "Active", last: "3m ago", success: 96 },
-  { name: "New customer welcome", runs: 142, saved: "18h", status: "Active", last: "22m ago", success: 100 },
-  { name: "Churn-risk alert", runs: 27, saved: "—", status: "Active", last: "1h ago", success: 94 },
-  { name: "Refund approval flow", runs: 54, saved: "9h", status: "Paused", last: "2d ago", success: 98 },
-];
 
 const templates = [
   { name: "Low-stock auto-reorder", cat: "Inventory", steps: 4, icon: Boxes, desc: "Reorder when stock dips below the point — with an AI demand check." },
@@ -165,14 +160,72 @@ function Node({ kind, icon: Icon, title, subtitle }: { kind: BlockKind; icon: Lu
  * Views
  * ─────────────────────────────────────────────────────────────────── */
 
+const AUTO_INPUT = "w-full rounded-xl border border-border bg-background/40 px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-gold/50";
+const SAMPLE_AUTOMATIONS = [
+  { name: "Low-stock auto-reorder", trigger: "Stock below reorder point", action: "Draft a purchase order", enabled: true },
+  { name: "New customer welcome", trigger: "New customer added", action: "Send a welcome email", enabled: true },
+  { name: "Churn-risk alert", trigger: "Customer health drops below 50", action: "Notify the team", enabled: true },
+  { name: "Big order approval", trigger: "Order total over $500", action: "Request owner approval", enabled: false },
+];
+
 function DashboardView() {
+  const { org } = useOrg();
+  const [rules, setRules] = useState<DbAutomation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ name: "", trigger: "", action: "" });
+
+  const load = useCallback(async () => {
+    if (!org) {
+      setRules([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      setRules(await listAutomations(org.id));
+    } catch {
+      setRules([]);
+    }
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const enabledCount = rules.filter((r) => r.enabled).length;
+  const totalRuns = rules.reduce((a, r) => a + r.runs, 0);
+
+  const toggle = async (r: DbAutomation) => {
+    await setAutomationEnabled(r.id, !r.enabled);
+    await load();
+  };
+  const submit = async () => {
+    if (!org || !form.name.trim() || busy) return;
+    setBusy(true);
+    await createAutomation(org.id, { name: form.name.trim(), trigger: form.trigger.trim() || null, action: form.action.trim() || null });
+    setBusy(false);
+    setForm({ name: "", trigger: "", action: "" });
+    setAdding(false);
+    await load();
+  };
+  const seed = async () => {
+    if (!org) return;
+    setBusy(true);
+    await insertAutomations(org.id, SAMPLE_AUTOMATIONS);
+    setBusy(false);
+    await load();
+  };
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Active automations" value={23} delta="4" icon={Workflow} />
-        <StatTile label="Runs today" value={382} delta="9%" icon={Zap} />
-        <StatTile label="Time saved (mo)" value={186} suffix=" hrs" delta="22 hrs" icon={Timer} />
-        <StatTile label="Success rate" value={98.2} suffix="%" decimals={1} delta="0.4 pts" icon={CheckCircle2} />
+        <StatTile label="Active automations" value={enabledCount} icon={Zap} />
+        <StatTile label="Total automations" value={rules.length} icon={Workflow} />
+        <StatTile label="Paused" value={rules.length - enabledCount} icon={Timer} />
+        <StatTile label="Total runs" value={totalRuns} icon={CheckCircle2} />
       </div>
 
       <Reveal>
@@ -182,7 +235,7 @@ function DashboardView() {
             <span className="orb grid size-11 shrink-0 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Brain className="size-5" stroke="oklch(0.2 0.02 70)" /></span>
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Nervous system</p>
-              <p className="mt-2 text-[0.95rem] leading-relaxed text-foreground/90">The business runs intelligently without constant manual work. Your automations handled <span className="text-gold">382 tasks</span> today and saved <span className="text-gold">186 hours</span> this month. <span className="text-gold">4 approvals</span> are waiting for your call.</p>
+              <p className="mt-2 text-[0.95rem] leading-relaxed text-foreground/90">{rules.length === 0 ? "Define automation rules so the business runs itself — trigger an action when something happens (a low stock level, a new customer, a big order)." : <>You have <span className="text-gold">{rules.length}</span> automation{rules.length === 1 ? "" : "s"} defined, <span className="text-gold">{enabledCount}</span> currently active. Toggle any rule on or off below.</>}</p>
             </div>
           </div>
         </GlassCard>
@@ -191,19 +244,40 @@ function DashboardView() {
       <Reveal>
         <GlassCard className="p-6">
           <div className="flex items-center justify-between">
-            <SectionLabel icon={Workflow}>Active automations</SectionLabel>
-            <span className="text-xs text-muted-foreground">live</span>
+            <SectionLabel icon={Workflow}>Automation rules</SectionLabel>
+            <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}><Plus className="size-3.5" /> New rule</button>
           </div>
+
+          {adding && (
+            <div className="mt-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
+              <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Rule name *" className={`${AUTO_INPUT} sm:col-span-2`} />
+              <input value={form.trigger} onChange={(e) => setForm((f) => ({ ...f, trigger: e.target.value }))} placeholder="When… (trigger)" className={AUTO_INPUT} />
+              <input value={form.action} onChange={(e) => setForm((f) => ({ ...f, action: e.target.value }))} placeholder="Do… (action)" className={AUTO_INPUT} />
+              <div className="flex gap-2 sm:col-span-2">
+                <button onClick={submit} disabled={busy || !form.name.trim()} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Create rule"}</button>
+                <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+              </div>
+            </div>
+          )}
+
           <div className="mt-4 space-y-1">
-            {automations.map((a) => (
-              <div key={a.name} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.8fr_0.8fr_auto]">
+            {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading automations…</p>}
+            {!loading && rules.length === 0 && !adding && (
+              <div className="py-8 text-center">
+                <p className="text-sm text-muted-foreground">No automations yet.</p>
+                <button onClick={seed} disabled={busy} className="mt-3 rounded-full border border-border bg-glass px-5 py-2 text-sm text-foreground/85 transition-colors hover:border-gold/40 disabled:opacity-60">{busy ? "Adding…" : "Add starter automations"}</button>
+              </div>
+            )}
+            {rules.map((r) => (
+              <div key={r.id} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.8fr_0.8fr_auto]">
                 <div className="flex items-center gap-3">
                   <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass"><Workflow className="size-4 text-gold" /></span>
-                  <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{a.name}</p><p className="truncate text-xs text-muted-foreground">{formatNum(a.runs)} runs · saved {a.saved}</p></div>
+                  <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{r.name}</p><p className="truncate text-xs text-muted-foreground">{r.trigger ?? "—"}{r.action ? ` → ${r.action}` : ""}</p></div>
                 </div>
-                <span className="hidden text-xs text-muted-foreground sm:block">{a.last}</span>
-                <span className="hidden items-center gap-1.5 text-xs sm:flex" style={{ color: a.status === "Active" ? "oklch(0.72 0.14 155)" : "oklch(0.7 0.02 250)" }}><span className="size-1.5 rounded-full" style={{ background: a.status === "Active" ? "oklch(0.72 0.14 155)" : "oklch(0.7 0.02 250)" }} />{a.status}</span>
-                <span className="text-right text-sm font-semibold tabular-nums text-gold">{a.success}%</span>
+                <span className="hidden text-xs text-muted-foreground sm:block">{formatNum(r.runs)} runs</span>
+                <button onClick={() => toggle(r)} className={cn("relative h-6 w-11 shrink-0 rounded-full border transition-colors", r.enabled ? "border-transparent" : "border-border bg-background/40")} style={r.enabled ? { background: "var(--gradient-gold)" } : undefined} aria-pressed={r.enabled} title={r.enabled ? "Enabled — click to pause" : "Paused — click to enable"}>
+                  <span className="absolute top-0.5 size-5 rounded-full transition-all" style={{ left: r.enabled ? "1.375rem" : "0.125rem", background: r.enabled ? "oklch(0.2 0.02 70)" : "oklch(0.8 0.015 85)" }} />
+                </button>
               </div>
             ))}
           </div>

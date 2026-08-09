@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
@@ -31,6 +31,17 @@ import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Bar, Delta, Reveal, Ring, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
+import { useOrg } from "@/lib/org-context";
+import { listOrders } from "@/lib/orders";
+import {
+  adjustStock,
+  createProduct,
+  insertProducts,
+  listProducts,
+  stockStatus,
+  type DbProduct,
+  type NewProduct,
+} from "@/lib/products";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -66,7 +77,8 @@ const statusColor: Record<Status, string> = {
 };
 
 type Product = {
-  id: string;
+  id: string; // real db id
+  sku: string; // display SKU
   name: string;
   category: string;
   stock: number;
@@ -81,16 +93,136 @@ type Product = {
   forecast: number[];
 };
 
-const products: Product[] = [
-  { id: "SKU-1001", name: "Aurora Serum", category: "Serums", stock: 42, reorder: 60, incoming: 0, sold30: 210, daysLeft: 6, status: "Low", velocity: "High", price: 68, history: [48, 52, 46, 58, 60, 64, 70, 66, 72], forecast: [78, 84, 90, 96, 102] },
-  { id: "SKU-1002", name: "Midnight Oil", category: "Oils", stock: 128, reorder: 80, incoming: 0, sold30: 168, daysLeft: 23, status: "Healthy", velocity: "High", price: 54, history: [40, 44, 46, 45, 50, 52, 55, 58, 60], forecast: [62, 63, 65, 66, 68] },
-  { id: "SKU-1003", name: "Golden Hour Balm", category: "Balms", stock: 14, reorder: 40, incoming: 60, sold30: 132, daysLeft: 3, status: "Critical", velocity: "High", price: 42, history: [30, 34, 33, 38, 42, 44, 48, 46, 50], forecast: [53, 57, 61, 66, 70] },
-  { id: "SKU-1004", name: "Silk Cleanser", category: "Cleansers", stock: 96, reorder: 50, incoming: 0, sold30: 88, daysLeft: 33, status: "Healthy", velocity: "Medium", price: 36, history: [26, 28, 27, 30, 29, 31, 33, 32, 34], forecast: [35, 36, 36, 37, 38] },
-  { id: "SKU-1005", name: "Radiance Mask", category: "Masks", stock: 312, reorder: 90, incoming: 0, sold30: 54, daysLeft: 170, status: "Overstock", velocity: "Low", price: 48, history: [22, 20, 19, 18, 17, 16, 16, 15, 15], forecast: [14, 14, 13, 13, 12] },
-  { id: "SKU-1006", name: "Dew Mist", category: "Mists", stock: 58, reorder: 55, incoming: 0, sold30: 121, daysLeft: 14, status: "Healthy", velocity: "Medium", price: 28, history: [30, 32, 34, 33, 36, 38, 40, 41, 43], forecast: [45, 47, 48, 50, 52] },
-  { id: "SKU-1007", name: "Velvet Lip Oil", category: "Oils", stock: 22, reorder: 45, incoming: 0, sold30: 98, daysLeft: 5, status: "Low", velocity: "High", price: 24, history: [28, 30, 32, 34, 36, 40, 42, 45, 48], forecast: [51, 55, 59, 63, 67] },
-  { id: "SKU-1008", name: "Clay Detox Bar", category: "Cleansers", stock: 240, reorder: 60, incoming: 0, sold30: 36, daysLeft: 200, status: "Overstock", velocity: "Low", price: 18, history: [18, 17, 16, 16, 15, 14, 14, 13, 12], forecast: [12, 11, 11, 10, 10] },
-];
+function velocityOf(sold30: number): "High" | "Medium" | "Low" {
+  if (sold30 >= 120) return "High";
+  if (sold30 >= 50) return "Medium";
+  return "Low";
+}
+
+// A simple weekly projection from real 30-day sales so the demand chart renders.
+function projSeries(sold30: number): { history: number[]; forecast: number[] } {
+  const weekly = Math.max(1, Math.round(sold30 / 4.33));
+  const hMul = [0.8, 0.85, 0.88, 0.92, 0.95, 0.98, 1, 1.03, 1.06];
+  const fMul = [1.08, 1.11, 1.14, 1.17, 1.2];
+  return { history: hMul.map((m) => Math.round(weekly * m)), forecast: fMul.map((m) => Math.round(weekly * m)) };
+}
+
+function toUi(p: DbProduct, soldByName: Record<string, number>): Product {
+  const stock = p.stock;
+  const reorder = p.reorder_point;
+  const sold30 = soldByName[p.name.trim().toLowerCase()] ?? 0;
+  const daysLeft = sold30 > 0 ? Math.round(stock / (sold30 / 30)) : 999;
+  const { history, forecast } = projSeries(sold30);
+  return {
+    id: p.id,
+    sku: p.sku ?? `SKU-${p.id.slice(0, 5)}`,
+    name: p.name,
+    category: p.category ?? "Uncategorized",
+    stock,
+    reorder,
+    incoming: p.incoming,
+    sold30,
+    daysLeft,
+    status: stockStatus(stock, reorder),
+    velocity: velocityOf(sold30),
+    price: Number(p.price),
+    history,
+    forecast,
+  };
+}
+
+type InvState = {
+  products: Product[];
+  loading: boolean;
+  addProduct: (p: NewProduct) => Promise<void>;
+  adjust: (id: string, delta: number) => Promise<void>;
+  seed: () => Promise<void>;
+};
+const InvCtx = createContext<InvState | null>(null);
+function useInv() {
+  const ctx = useContext(InvCtx);
+  if (!ctx) throw new Error("useInv must be used within InventoryProvider");
+  return ctx;
+}
+
+function InventoryProvider({ children }: { children: ReactNode }) {
+  const { org } = useOrg();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!org) {
+      setProducts([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [ps, orders] = await Promise.all([listProducts(org.id), listOrders(org.id)]);
+      // Units sold per product name over the last 30 days (from real orders).
+      const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+      const soldByName: Record<string, number> = {};
+      for (const o of orders) {
+        if (o.status === "Cancelled" || new Date(o.created_at).getTime() < cutoff) continue;
+        for (const it of o.items ?? []) {
+          const key = (it.name ?? "").trim().toLowerCase();
+          if (key) soldByName[key] = (soldByName[key] ?? 0) + (it.qty ?? 0);
+        }
+      }
+      setProducts(ps.map((p) => toUi(p, soldByName)));
+    } catch {
+      setProducts([]);
+    }
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const addProduct = useCallback(
+    async (p: NewProduct) => {
+      if (!org) return;
+      await createProduct(org.id, p);
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+
+  const adjust = useCallback(async (id: string, delta: number) => {
+    const s = await adjustStock(id, delta);
+    if (s !== null) {
+      setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, stock: s, status: stockStatus(s, p.reorder) } : p)));
+    }
+  }, []);
+
+  const seed = useCallback(
+    async () => {
+      if (!org) return;
+      await insertProducts(org.id, sampleProducts());
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+
+  return <InvCtx.Provider value={{ products, loading, addProduct, adjust, seed }}>{children}</InvCtx.Provider>;
+}
+
+function sampleProducts(): NewProduct[] {
+  return [
+    { name: "Aurora Serum", sku: "SKU-1001", category: "Serums", price: 68, cost: 22, stock: 42, reorder_point: 60 },
+    { name: "Midnight Oil", sku: "SKU-1002", category: "Oils", price: 54, cost: 18, stock: 128, reorder_point: 80 },
+    { name: "Golden Hour Balm", sku: "SKU-1003", category: "Balms", price: 42, cost: 14, stock: 14, reorder_point: 40 },
+    { name: "Silk Cleanser", sku: "SKU-1004", category: "Cleansers", price: 36, cost: 11, stock: 96, reorder_point: 50 },
+    { name: "Radiance Mask", sku: "SKU-1005", category: "Masks", price: 48, cost: 16, stock: 312, reorder_point: 90 },
+    { name: "Dew Mist", sku: "SKU-1006", category: "Mists", price: 28, cost: 8, stock: 58, reorder_point: 55 },
+    { name: "Velvet Lip Oil", sku: "SKU-1007", category: "Oils", price: 24, cost: 7, stock: 22, reorder_point: 45 },
+    { name: "Clay Detox Bar", sku: "SKU-1008", category: "Cleansers", price: 18, cost: 6, stock: 240, reorder_point: 60 },
+  ];
+}
 
 const healthPillars = [
   { label: "Stock coverage", value: 88 },
@@ -116,14 +248,6 @@ const movementTone: Record<string, { color: string; icon: LucideIcon }> = {
   Adjusted: { color: "oklch(0.7 0.02 250)", icon: Activity },
   Transfer: { color: "oklch(0.72 0.12 65)", icon: Truck },
 };
-
-const categories = [
-  { label: "Serums", share: 32, color: GOLD },
-  { label: "Oils", share: 24, color: "oklch(0.7 0.11 60)" },
-  { label: "Cleansers", share: 18, color: "oklch(0.66 0.09 200)" },
-  { label: "Balms", share: 14, color: "oklch(0.75 0.13 150)" },
-  { label: "Masks", share: 12, color: "oklch(0.62 0.12 300)" },
-];
 
 const valueSeries = [280, 292, 288, 305, 312, 320, 318, 332, 340, 352, 361, 374];
 
@@ -231,14 +355,47 @@ function CoverageBar({ p }: { p: Product }) {
  * ─────────────────────────────────────────────────────────────────── */
 
 function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
+  const { products, loading, seed } = useInv();
+  const [busy, setBusy] = useState(false);
   const atRisk = products.filter((p) => p.status === "Low" || p.status === "Critical");
+  const overstock = products.filter((p) => p.status === "Overstock");
+  const stockValue = products.reduce((a, p) => a + p.stock * p.price, 0);
+  const unitsInStock = products.reduce((a, p) => a + p.stock, 0);
+  const wellPct = products.length ? Math.round(((products.length - atRisk.length) / products.length) * 100) : 0;
+
+  if (!loading && products.length === 0) {
+    return (
+      <Reveal>
+        <GlassCard className="p-8 text-center sm:p-10">
+          <span className="orb mx-auto grid size-14 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+            <Boxes className="size-6" stroke="oklch(0.2 0.02 70)" />
+          </span>
+          <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>No products yet</h2>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+            Add your catalog, or drop in a sample set to explore stock levels, reorder suggestions and forecasts.
+          </p>
+          <div className="mt-6 flex justify-center">
+            <button
+              onClick={async () => { setBusy(true); await seed(); setBusy(false); }}
+              disabled={busy}
+              className="flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+              style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}
+            >
+              <Sparkles className="size-4" /> {busy ? "Adding…" : "Add sample products"}
+            </button>
+          </div>
+        </GlassCard>
+      </Reveal>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Active SKUs" value={912} delta="18" icon={Boxes} />
-        <StatTile label="Inventory value" value={374200} prefix="$" delta="3.6%" icon={Layers} />
-        <StatTile label="Low / critical" value={2} delta="1" positive={false} icon={AlertTriangle} />
-        <StatTile label="Turnover rate" value={5.4} suffix="x" decimals={1} delta="0.4x" icon={RefreshCw} />
+        <StatTile label="Active SKUs" value={products.length} icon={Boxes} />
+        <StatTile label="Inventory value" value={stockValue} prefix="$" icon={Layers} />
+        <StatTile label="Low / critical" value={atRisk.length} positive={atRisk.length === 0} icon={AlertTriangle} />
+        <StatTile label="Units in stock" value={unitsInStock} icon={RefreshCw} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
@@ -248,21 +405,21 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
             <SectionLabel icon={Gauge}>Inventory health</SectionLabel>
             <div className="mt-4 flex items-center gap-6">
               <Ring
-                value={82}
+                value={wellPct}
                 size={128}
                 label={
                   <div>
-                    <div className="text-3xl font-semibold tabular-nums gold-text">82</div>
+                    <div className="text-3xl font-semibold tabular-nums gold-text">{wellPct}</div>
                     <div className="text-[0.6rem] uppercase tracking-[0.2em] text-muted-foreground">/ 100</div>
                   </div>
                 }
               />
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <TrendingUp className="size-4 text-gold" /> Well-stocked
+                  <TrendingUp className="size-4 text-gold" /> {atRisk.length === 0 ? "Well-stocked" : `${atRisk.length} need reordering`}
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  Coverage is strong. Two SKUs need reordering this week to stay ahead of demand.
+                  {wellPct}% of your {products.length} SKU{products.length === 1 ? "" : "s"} are above their reorder point.
                 </p>
               </div>
             </div>
@@ -291,9 +448,13 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Predictive briefing</p>
                 <p className="mt-2 text-[0.95rem] leading-relaxed text-foreground/90">
-                  The business knows what it needs before it runs out. <span className="text-gold">Golden Hour Balm</span> will
-                  stock out in <span className="text-gold">3 days</span> — I've queued a reorder. Two SKUs are overstocked,
-                  tying up <span className="text-gold">$18k</span> you could redeploy.
+                  {atRisk.length > 0
+                    ? <>{atRisk.length} SKU{atRisk.length === 1 ? "" : "s"} at or below reorder point need restocking. </>
+                    : "Everything is above its reorder point. "}
+                  {overstock.length > 0 && (
+                    <>{overstock.length} {overstock.length === 1 ? "SKU is" : "SKUs are"} overstocked, tying up{" "}
+                    <span className="text-gold">${formatNum(overstock.reduce((a, p) => a + p.stock * p.price, 0))}</span> you could redeploy.</>
+                  )}
                 </p>
               </div>
             </div>
@@ -319,9 +480,10 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
 }
 
 function ProductsView({ selectedId, onSelect }: { selectedId: string | null; onSelect: (id: string | null) => void }) {
-  if (selectedId) {
-    const p = products.find((x) => x.id === selectedId) ?? products[0];
-    return <ProductDetail p={p} onBack={() => onSelect(null)} />;
+  const { products } = useInv();
+  const selected = selectedId ? products.find((x) => x.id === selectedId) : null;
+  if (selected) {
+    return <ProductDetail p={selected} onBack={() => onSelect(null)} />;
   }
   return (
     <Reveal>
@@ -344,7 +506,7 @@ function ProductsView({ selectedId, onSelect }: { selectedId: string | null; onS
                 <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-glass"><Package className="size-4 text-gold" /></span>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-foreground">{p.name}</p>
-                  <p className="truncate font-mono text-xs text-muted-foreground">{p.id}</p>
+                  <p className="truncate font-mono text-xs text-muted-foreground">{p.sku}</p>
                 </div>
               </div>
               <span className="hidden text-sm text-muted-foreground md:block">{p.category}</span>
@@ -360,7 +522,9 @@ function ProductsView({ selectedId, onSelect }: { selectedId: string | null; onS
 }
 
 function ProductDetail({ p, onBack }: { p: Product; onBack: () => void }) {
-  const cover = Math.round((p.stock / (p.sold30 / 30)) || 0);
+  const { adjust } = useInv();
+  const cover = p.daysLeft >= 999 ? "—" : `${p.daysLeft}d`;
+  const restockQty = Math.max(p.reorder * 2 - p.stock, p.reorder, 10);
   return (
     <div className="space-y-4">
       <button onClick={onBack} className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
@@ -376,7 +540,7 @@ function ProductDetail({ p, onBack }: { p: Product; onBack: () => void }) {
               </span>
               <div>
                 <h2 className="text-xl font-semibold tracking-tight" style={{ fontFamily: "var(--font-display)" }}>{p.name}</h2>
-                <p className="font-mono text-xs text-muted-foreground">{p.id} · {p.category}</p>
+                <p className="font-mono text-xs text-muted-foreground">{p.sku} · {p.category}</p>
               </div>
             </div>
             <StatusPill status={p.status} />
@@ -384,7 +548,7 @@ function ProductDetail({ p, onBack }: { p: Product; onBack: () => void }) {
           <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
             {[
               { k: "In stock", v: formatNum(p.stock) },
-              { k: "Days of cover", v: `${cover}d` },
+              { k: "Days of cover", v: cover },
               { k: "Sold (30d)", v: formatNum(p.sold30) },
               { k: "Velocity", v: p.velocity },
             ].map((s) => (
@@ -421,9 +585,13 @@ function ProductDetail({ p, onBack }: { p: Product; onBack: () => void }) {
                 <div className="flex justify-between text-muted-foreground"><span>Incoming</span><span className="tabular-nums">{p.incoming}</span></div>
                 <div className="flex justify-between text-muted-foreground"><span>Unit price</span><span className="tabular-nums">${p.price}</span></div>
               </div>
-              <button className="mt-5 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
-                <RefreshCw className="size-3.5" /> Reorder now
-              </button>
+              <div className="mt-5 flex items-center gap-2">
+                <button onClick={() => void adjust(p.id, -10)} className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-glass text-[0.65rem] font-semibold text-foreground/80 transition-colors hover:border-gold/50 hover:text-gold">−10</button>
+                <button onClick={() => void adjust(p.id, restockQty)} className="flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
+                  <RefreshCw className="size-3.5" /> Restock +{restockQty}
+                </button>
+                <button onClick={() => void adjust(p.id, 10)} className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-glass text-[0.65rem] font-semibold text-foreground/80 transition-colors hover:border-gold/50 hover:text-gold">+10</button>
+              </div>
             </div>
           </GlassCard>
         </Reveal>
@@ -433,8 +601,18 @@ function ProductDetail({ p, onBack }: { p: Product; onBack: () => void }) {
 }
 
 function ForecastView() {
-  const [id, setId] = useState(products[0].id);
+  const { products } = useInv();
+  const [id, setId] = useState<string | null>(null);
   const p = products.find((x) => x.id === id) ?? products[0];
+  if (!p) {
+    return (
+      <Reveal>
+        <GlassCard className="p-10 text-center text-sm text-muted-foreground">
+          Add products to see demand forecasts.
+        </GlassCard>
+      </Reveal>
+    );
+  }
   const predicted = p.forecast.reduce((a, v) => a + v, 0);
   return (
     <div className="space-y-4">
@@ -471,6 +649,9 @@ function ForecastView() {
 }
 
 function ReorderView() {
+  const { products, adjust } = useInv();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
   const suggestions = useMemo(
     () =>
       products
@@ -482,15 +663,23 @@ function ReorderView() {
           lead: p.velocity === "High" ? "3 days" : "6 days",
           supplier: p.category === "Oils" ? "Lumen Labs" : "Northwind Supply",
         })),
-    [],
+    [products],
   );
-  const [selected, setSelected] = useState<Record<string, boolean>>(
-    Object.fromEntries(suggestions.map((s) => [s.p.id, true])),
-  );
-  const toggle = (id: string) => setSelected((s) => ({ ...s, [id]: !s[id] }));
-  const totalCost = suggestions.filter((s) => selected[s.p.id]).reduce((a, s) => a + s.qty * s.p.price, 0);
-  const totalUnits = suggestions.filter((s) => selected[s.p.id]).reduce((a, s) => a + s.qty, 0);
-  const chosen = suggestions.filter((s) => selected[s.p.id]).length;
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const isOn = (id: string) => selected[id] !== false; // default on
+  const toggle = (id: string) => setSelected((s) => ({ ...s, [id]: s[id] === false }));
+  const chosenList = suggestions.filter((s) => isOn(s.p.id));
+  const totalCost = chosenList.reduce((a, s) => a + s.qty * s.p.price, 0);
+  const totalUnits = chosenList.reduce((a, s) => a + s.qty, 0);
+  const chosen = chosenList.length;
+
+  const approve = async () => {
+    if (chosen === 0 || busy) return;
+    setBusy(true);
+    for (const s of chosenList) await adjust(s.p.id, s.qty);
+    setBusy(false);
+    setDone(true);
+  };
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
@@ -506,12 +695,15 @@ function ReorderView() {
             </div>
           </div>
           <div className="mt-5 space-y-2">
+            {suggestions.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">Everything is above its reorder point — nothing to reorder.</p>
+            )}
             {suggestions.map((s) => (
               <label
                 key={s.p.id}
-                className={cn("flex cursor-pointer items-center gap-4 rounded-2xl border p-3 transition-colors", selected[s.p.id] ? "border-gold/40 bg-glass" : "border-border bg-background/30")}
+                className={cn("flex cursor-pointer items-center gap-4 rounded-2xl border p-3 transition-colors", isOn(s.p.id) ? "border-gold/40 bg-glass" : "border-border bg-background/30")}
               >
-                <input type="checkbox" checked={!!selected[s.p.id]} onChange={() => toggle(s.p.id)} className="size-4 accent-[oklch(0.84_0.14_84)]" />
+                <input type="checkbox" checked={isOn(s.p.id)} onChange={() => toggle(s.p.id)} className="size-4 accent-[oklch(0.84_0.14_84)]" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-foreground">{s.p.name}</p>
                   <p className="text-xs text-muted-foreground">{s.supplier} · lead {s.lead}</p>
@@ -536,10 +728,14 @@ function ReorderView() {
             <div className="flex justify-between text-muted-foreground"><span>Total units</span><span className="tabular-nums">{formatNum(totalUnits)}</span></div>
             <div className="flex justify-between border-t border-border pt-2 text-base font-semibold"><span>Total cost</span><span className="tabular-nums text-gold">${formatNum(totalCost)}</span></div>
           </div>
-          <button disabled={chosen === 0} className="mt-5 flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-40" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
-            <CheckCircle2 className="size-4" /> Approve {chosen} order{chosen === 1 ? "" : "s"}
+          <button onClick={approve} disabled={chosen === 0 || busy} className="mt-5 flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-40" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
+            <CheckCircle2 className="size-4" /> {busy ? "Restocking…" : `Restock ${chosen} SKU${chosen === 1 ? "" : "s"}`}
           </button>
-          <p className="mt-3 text-center text-xs text-muted-foreground">Restocks arrive in 3–6 days</p>
+          {done ? (
+            <p className="mt-3 text-center text-xs text-emerald-300">Stock updated — levels are live across the workspace.</p>
+          ) : (
+            <p className="mt-3 text-center text-xs text-muted-foreground">Approving adds the units to stock immediately.</p>
+          )}
         </GlassCard>
       </Reveal>
     </div>
@@ -670,13 +866,28 @@ function AssistantView() {
 }
 
 function AnalyticsView() {
+  const { products } = useInv();
+  const stockValue = products.reduce((a, p) => a + p.stock * p.price, 0);
+  const units = products.reduce((a, p) => a + p.stock, 0);
+  const overstockValue = products.filter((p) => p.status === "Overstock").reduce((a, p) => a + p.stock * p.price, 0);
+  const byCat = useMemo(() => {
+    const palette = [GOLD, "oklch(0.7 0.11 60)", "oklch(0.66 0.09 200)", "oklch(0.75 0.13 150)", "oklch(0.62 0.12 300)", "oklch(0.72 0.12 65)"];
+    const total = products.reduce((a, p) => a + p.stock * p.price, 0) || 1;
+    const m: Record<string, number> = {};
+    for (const p of products) m[p.category] = (m[p.category] ?? 0) + p.stock * p.price;
+    return Object.entries(m)
+      .map(([label, val]) => ({ label, share: Math.round((val / total) * 100) }))
+      .sort((a, b) => b.share - a.share)
+      .slice(0, 6)
+      .map((c, i) => ({ ...c, color: palette[i % palette.length] }));
+  }, [products]);
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Inventory value" value={374200} prefix="$" delta="3.6%" icon={Layers} />
-        <StatTile label="Turnover rate" value={5.4} suffix="x" decimals={1} delta="0.4x" icon={RefreshCw} />
-        <StatTile label="Sell-through" value={68} suffix="%" delta="2.2 pts" icon={TrendingUp} />
-        <StatTile label="Deadstock" value={4.1} suffix="%" decimals={1} delta="0.6 pts" positive icon={TrendingDown} />
+        <StatTile label="Inventory value" value={stockValue} prefix="$" icon={Layers} />
+        <StatTile label="Total SKUs" value={products.length} icon={Boxes} />
+        <StatTile label="Units in stock" value={units} icon={RefreshCw} />
+        <StatTile label="Overstock value" value={overstockValue} prefix="$" positive={false} icon={TrendingDown} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
@@ -692,15 +903,16 @@ function AnalyticsView() {
 
         <Reveal className="h-full" delay={80}>
           <GlassCard className="flex h-full flex-col p-6">
-            <SectionLabel icon={Globe}>Stock by category</SectionLabel>
+            <SectionLabel icon={Globe}>Stock value by category</SectionLabel>
             <div className="mt-5 space-y-4">
-              {categories.map((c) => (
+              {byCat.length === 0 && <p className="text-sm text-muted-foreground">No products yet.</p>}
+              {byCat.map((c) => (
                 <div key={c.label}>
                   <div className="flex items-baseline justify-between text-sm">
                     <span className="flex items-center gap-2 text-foreground/85"><span className="size-2.5 rounded-full" style={{ background: c.color }} /> {c.label}</span>
                     <span className="tabular-nums text-muted-foreground">{c.share}%</span>
                   </div>
-                  <div className="mt-1.5"><Bar value={c.share * 3} /></div>
+                  <div className="mt-1.5"><Bar value={c.share} /></div>
                 </div>
               ))}
             </div>
@@ -769,6 +981,7 @@ export function InventoryWorkspace() {
   };
 
   return (
+    <InventoryProvider>
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
       <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 !hidden">
         <Brand subtle />
@@ -829,5 +1042,6 @@ export function InventoryWorkspace() {
         </div>
       </section>
     </div>
+    </InventoryProvider>
   );
 }

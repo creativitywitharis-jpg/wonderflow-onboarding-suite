@@ -36,6 +36,8 @@ import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { createCustomer, insertCustomers, listCustomers, type DbCustomer, type NewCustomer } from "@/lib/customers";
 import { addInteraction, listCustomerInteractions, listInteractions, type DbInteraction, type InteractionChannel } from "@/lib/interactions";
+import { CsvImport } from "@/components/wf/CsvImport";
+import type { FieldSpec } from "@/lib/csv";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -125,6 +127,7 @@ type CustomersState = {
   customers: Customer[];
   loading: boolean;
   addCustomer: (c: NewCustomer) => Promise<void>;
+  importCustomers: (rows: NewCustomer[]) => Promise<{ error: Error | null }>;
   seed: () => Promise<void>;
 };
 const CustomersCtx = createContext<CustomersState | null>(null);
@@ -179,7 +182,18 @@ function CustomersProvider({ children }: { children: ReactNode }) {
     [org?.id, load],
   );
 
-  return <CustomersCtx.Provider value={{ customers, loading, addCustomer, seed }}>{children}</CustomersCtx.Provider>;
+  const importCustomers = useCallback(
+    async (rows: NewCustomer[]) => {
+      if (!org) return { error: new Error("No active workspace.") };
+      const { error } = await insertCustomers(org.id, rows);
+      await load();
+      return { error };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+
+  return <CustomersCtx.Provider value={{ customers, loading, addCustomer, importCustomers, seed }}>{children}</CustomersCtx.Provider>;
 }
 
 // Segment metadata — real counts and revenue share are derived from the org's
@@ -433,11 +447,25 @@ function OverviewView() {
 
 const CRM_INPUT = "w-full rounded-xl border border-border bg-background/40 px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-gold/50";
 
+const CUSTOMER_IMPORT_FIELDS: FieldSpec[] = [
+  { key: "name", label: "Name", required: true, aliases: ["full name", "customer", "client", "contact name", "contact"] },
+  { key: "company", label: "Company", aliases: ["organization", "organisation", "business", "account", "company name"] },
+  { key: "email", label: "Email", aliases: ["e-mail", "email address", "mail"] },
+  { key: "tier", label: "Tier", enum: ["Champion", "Loyal", "Potential", "New", "At risk", "Dormant"], aliases: ["segment", "status", "category"] },
+  { key: "ltv", label: "Lifetime value", type: "number", aliases: ["ltv", "lifetime value", "total spent", "revenue", "value", "total"] },
+  { key: "health", label: "Health", type: "number", aliases: ["health score", "score"] },
+  { key: "orders", label: "Orders", type: "number", aliases: ["order count", "orders count", "purchases"] },
+  { key: "since", label: "Since", aliases: ["customer since", "joined", "created", "start"] },
+  { key: "tags", label: "Tags", type: "tags", aliases: ["labels", "tag"] },
+];
+
 function CustomersView({ onOpen }: { onOpen: (id: string) => void }) {
-  const { customers, loading, addCustomer, seed } = useCustomersData();
+  const { org } = useOrg();
+  const { customers, loading, addCustomer, importCustomers, seed } = useCustomersData();
   const [q, setQ] = useState("");
   const [tier, setTier] = useState<string>("All");
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ name: "", company: "", email: "", tier: "New" });
   const tiers = ["All", "Champion", "Loyal", "Potential", "New", "At risk", "Dormant"];
@@ -480,6 +508,17 @@ function CustomersView({ onOpen }: { onOpen: (id: string) => void }) {
     </div>
   );
 
+  const importer =
+    importing && org ? (
+      <CsvImport
+        entityLabel="customers"
+        fields={CUSTOMER_IMPORT_FIELDS}
+        orgId={org.id}
+        onImport={(rows) => importCustomers(rows as NewCustomer[])}
+        onClose={() => setImporting(false)}
+      />
+    ) : null;
+
   // Empty state — no customers in this workspace yet.
   if (!loading && customers.length === 0) {
     return (
@@ -499,9 +538,13 @@ function CustomersView({ onOpen }: { onOpen: (id: string) => void }) {
             <button onClick={() => setAdding((a) => !a)} className="rounded-full border border-border bg-glass px-5 py-2.5 text-sm text-foreground/85 transition-colors hover:border-gold/40">
               Add manually
             </button>
+            <button onClick={() => setImporting(true)} className="rounded-full border border-border bg-glass px-5 py-2.5 text-sm text-foreground/85 transition-colors hover:border-gold/40">
+              Import CSV
+            </button>
           </div>
           {adding && <div className="mx-auto mt-6 max-w-lg">{addForm}</div>}
         </GlassCard>
+        {importer}
       </Reveal>
     );
   }
@@ -519,6 +562,9 @@ function CustomersView({ onOpen }: { onOpen: (id: string) => void }) {
               className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
             />
           </label>
+          <button onClick={() => setImporting(true)} className="rounded-full border border-border bg-glass px-4 py-2.5 text-sm text-foreground/85 transition-colors hover:border-gold/40">
+            Import CSV
+          </button>
           <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-1.5 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
             <Plus className="size-4" stroke="oklch(0.2 0.02 70)" /> New customer
           </button>
@@ -595,6 +641,7 @@ function CustomersView({ onOpen }: { onOpen: (id: string) => void }) {
           )}
         </div>
       </GlassCard>
+      {importer}
     </Reveal>
   );
 }

@@ -144,12 +144,61 @@ export type Database = {
           },
         ]
       }
+      invitations: {
+        Row: {
+          accepted_at: string | null
+          created_at: string
+          email: string
+          id: string
+          invited_by: string | null
+          org_id: string
+          role: string
+          token: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          created_at?: string
+          email: string
+          id?: string
+          invited_by?: string | null
+          org_id: string
+          role?: string
+          token?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          created_at?: string
+          email?: string
+          id?: string
+          invited_by?: string | null
+          org_id?: string
+          role?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invitations_invited_by_fkey"
+            columns: ["invited_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invitations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           created_at: string
           id: string
           org_id: string
           role: string
+          status: string
           user_id: string
         }
         Insert: {
@@ -157,6 +206,7 @@ export type Database = {
           id?: string
           org_id: string
           role?: string
+          status?: string
           user_id: string
         }
         Update: {
@@ -164,11 +214,94 @@ export type Database = {
           id?: string
           org_id?: string
           role?: string
+          status?: string
           user_id?: string
         }
         Relationships: [
           {
             foreignKeyName: "memberships_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      orders: {
+        Row: {
+          channel: string | null
+          city: string | null
+          created_at: string
+          created_by: string | null
+          customer_id: string | null
+          customer_name: string | null
+          eta: string | null
+          id: string
+          item_count: number
+          items: Json
+          notes: string | null
+          number: string | null
+          org_id: string
+          priority: string
+          status: string
+          total: number
+          updated_at: string
+        }
+        Insert: {
+          channel?: string | null
+          city?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          customer_name?: string | null
+          eta?: string | null
+          id?: string
+          item_count?: number
+          items?: Json
+          notes?: string | null
+          number?: string | null
+          org_id: string
+          priority?: string
+          status?: string
+          total?: number
+          updated_at?: string
+        }
+        Update: {
+          channel?: string | null
+          city?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          customer_name?: string | null
+          eta?: string | null
+          id?: string
+          item_count?: number
+          items?: Json
+          notes?: string | null
+          number?: string | null
+          org_id?: string
+          priority?: string
+          status?: string
+          total?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -209,6 +342,96 @@ export type Database = {
           name?: string
           plan?: string
           slug?: string | null
+        }
+        Relationships: []
+      }
+      products: {
+        Row: {
+          category: string | null
+          cost: number
+          created_at: string
+          created_by: string | null
+          id: string
+          incoming: number
+          name: string
+          org_id: string
+          price: number
+          reorder_point: number
+          sku: string | null
+          stock: number
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          cost?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          incoming?: number
+          name: string
+          org_id: string
+          price?: number
+          reorder_point?: number
+          sku?: string | null
+          stock?: number
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          cost?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          incoming?: number
+          name?: string
+          org_id?: string
+          price?: number
+          reorder_point?: number
+          sku?: string | null
+          stock?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "products_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "products_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          email: string | null
+          full_name: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          id?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -261,18 +484,22 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      has_org_role: {
-        Args: { _org_id: string; _roles: string[]; _user_id: string }
-        Returns: boolean
-      }
+      accept_invitation: { Args: { p_token: string }; Returns: string }
+      adjust_stock: { Args: { p_delta: number; p_id: string }; Returns: number }
+      has_org_role:
+        | {
+            Args: { _org_id: string; _roles: string[]; _user_id: string }
+            Returns: boolean
+          }
+        | { Args: { org: string; roles: string[] }; Returns: boolean }
       increment_ai_usage: {
         Args: { p_org: string; p_period: string }
         Returns: number
       }
-      is_org_member: {
-        Args: { _org_id: string; _user_id: string }
-        Returns: boolean
-      }
+      is_org_member:
+        | { Args: { _org_id: string; _user_id: string }; Returns: boolean }
+        | { Args: { org: string }; Returns: boolean }
+      shares_org: { Args: { other: string }; Returns: boolean }
     }
     Enums: {
       [_ in never]: never

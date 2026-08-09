@@ -49,6 +49,7 @@ import {
 } from "@/lib/orders";
 import { CsvImport } from "@/components/wf/CsvImport";
 import type { FieldSpec } from "@/lib/csv";
+import { fireAutomationEvent } from "@/lib/automations";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -189,8 +190,17 @@ function OrdersProvider({ children }: { children: ReactNode }) {
   const addOrder = useCallback(
     async (o: NewOrder) => {
       if (!org) return;
-      await createOrder(org.id, o);
+      const { data } = await createOrder(org.id, o);
       await load();
+      if (data) {
+        void fireAutomationEvent(org.id, "order.created", {
+          order_id: data.id,
+          number: data.number,
+          total: data.total,
+          customer_id: data.customer_id,
+          customer_name: data.customer_name,
+        });
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org?.id, load],

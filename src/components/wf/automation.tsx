@@ -37,7 +37,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Bar, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
-import { createAutomation, insertAutomations, listAutomations, setAutomationEnabled, type DbAutomation } from "@/lib/automations";
+import { createAutomation, insertAutomations, listAutomations, runAutomationNow, setAutomationEnabled, type ActionKey, type DbAutomation, type NewAutomation, type TriggerKey } from "@/lib/automations";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -161,11 +161,24 @@ function Node({ kind, icon: Icon, title, subtitle }: { kind: BlockKind; icon: Lu
  * ─────────────────────────────────────────────────────────────────── */
 
 const AUTO_INPUT = "w-full rounded-xl border border-border bg-background/40 px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-gold/50";
-const SAMPLE_AUTOMATIONS = [
-  { name: "Low-stock auto-reorder", trigger: "Stock below reorder point", action: "Draft a purchase order", enabled: true },
-  { name: "New customer welcome", trigger: "New customer added", action: "Send a welcome email", enabled: true },
-  { name: "Churn-risk alert", trigger: "Customer health drops below 50", action: "Notify the team", enabled: true },
-  { name: "Big order approval", trigger: "Order total over $500", action: "Request owner approval", enabled: false },
+
+const TRIGGER_OPTS: { key: TriggerKey; label: string }[] = [
+  { key: "order.created", label: "A new order is created" },
+  { key: "customer.created", label: "A new customer is added" },
+  { key: "manual", label: "Manually (run on demand)" },
+];
+const ACTION_OPTS: { key: ActionKey; label: string }[] = [
+  { key: "ai_draft_note", label: "Draft an AI note" },
+  { key: "email_owner", label: "Email the owner" },
+  { key: "webhook", label: "Call a webhook" },
+];
+const triggerLabel = (k: string) => TRIGGER_OPTS.find((t) => t.key === k)?.label ?? k;
+const actionLabel = (k: string) => ACTION_OPTS.find((a) => a.key === k)?.label ?? k;
+
+const SAMPLE_AUTOMATIONS: NewAutomation[] = [
+  { name: "Welcome new customers", trigger: triggerLabel("customer.created"), action: actionLabel("ai_draft_note"), trigger_key: "customer.created", action_key: "ai_draft_note", action_config: { prompt: "Write a warm, brief welcome note for this new customer." }, enabled: true },
+  { name: "New order → AI summary", trigger: triggerLabel("order.created"), action: actionLabel("ai_draft_note"), trigger_key: "order.created", action_key: "ai_draft_note", action_config: { prompt: "Summarize this new order in one line and suggest one relevant upsell." }, enabled: true },
+  { name: "New order → email owner", trigger: triggerLabel("order.created"), action: actionLabel("email_owner"), trigger_key: "order.created", action_key: "email_owner", action_config: { subject: "New order received" }, enabled: false },
 ];
 
 function DashboardView() {
@@ -174,7 +187,9 @@ function DashboardView() {
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ name: "", trigger: "", action: "" });
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: "", trigger_key: "order.created" as TriggerKey, action_key: "ai_draft_note" as ActionKey, prompt: "", webhook_url: "", subject: "" });
 
   const load = useCallback(async () => {
     if (!org) {
@@ -205,10 +220,31 @@ function DashboardView() {
   const submit = async () => {
     if (!org || !form.name.trim() || busy) return;
     setBusy(true);
-    await createAutomation(org.id, { name: form.name.trim(), trigger: form.trigger.trim() || null, action: form.action.trim() || null });
+    const action_config =
+      form.action_key === "webhook" ? { webhook_url: form.webhook_url.trim() }
+      : form.action_key === "email_owner" ? { subject: form.subject.trim() || `Automation: ${form.name.trim()}` }
+      : { prompt: form.prompt.trim() || "Draft a short, useful note for this event." };
+    await createAutomation(org.id, {
+      name: form.name.trim(),
+      trigger: triggerLabel(form.trigger_key),
+      action: actionLabel(form.action_key),
+      trigger_key: form.trigger_key,
+      action_key: form.action_key,
+      action_config,
+    });
     setBusy(false);
-    setForm({ name: "", trigger: "", action: "" });
+    setForm({ name: "", trigger_key: "order.created", action_key: "ai_draft_note", prompt: "", webhook_url: "", subject: "" });
     setAdding(false);
+    await load();
+  };
+
+  const runNow = async (r: DbAutomation) => {
+    if (!org || runningId) return;
+    setRunningId(r.id);
+    setToast(null);
+    const res = await runAutomationNow(org.id, r.id);
+    setRunningId(null);
+    setToast(res.ok ? `✓ "${r.name}" ran — ${res.detail ?? "done"}` : `"${r.name}" didn't run: ${res.detail ?? "error"}`);
     await load();
   };
   const seed = async () => {
@@ -251,14 +287,33 @@ function DashboardView() {
           {adding && (
             <div className="mt-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
               <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Rule name *" className={`${AUTO_INPUT} sm:col-span-2`} />
-              <input value={form.trigger} onChange={(e) => setForm((f) => ({ ...f, trigger: e.target.value }))} placeholder="When… (trigger)" className={AUTO_INPUT} />
-              <input value={form.action} onChange={(e) => setForm((f) => ({ ...f, action: e.target.value }))} placeholder="Do… (action)" className={AUTO_INPUT} />
+              <label className="block text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">When…</span>
+                <select value={form.trigger_key} onChange={(e) => setForm((f) => ({ ...f, trigger_key: e.target.value as TriggerKey }))} className={AUTO_INPUT}>
+                  {TRIGGER_OPTS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
+              </label>
+              <label className="block text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">Do…</span>
+                <select value={form.action_key} onChange={(e) => setForm((f) => ({ ...f, action_key: e.target.value as ActionKey }))} className={AUTO_INPUT}>
+                  {ACTION_OPTS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+                </select>
+              </label>
+              {form.action_key === "ai_draft_note" && (
+                <input value={form.prompt} onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))} placeholder="AI instruction (optional)" className={`${AUTO_INPUT} sm:col-span-2`} />
+              )}
+              {form.action_key === "webhook" && (
+                <input value={form.webhook_url} onChange={(e) => setForm((f) => ({ ...f, webhook_url: e.target.value }))} placeholder="Webhook URL (https://…)" className={`${AUTO_INPUT} sm:col-span-2`} />
+              )}
+              {form.action_key === "email_owner" && (
+                <input value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} placeholder="Email subject (optional)" className={`${AUTO_INPUT} sm:col-span-2`} />
+              )}
               <div className="flex gap-2 sm:col-span-2">
                 <button onClick={submit} disabled={busy || !form.name.trim()} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Create rule"}</button>
                 <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
               </div>
             </div>
           )}
+
+          {toast && <p className="mt-3 rounded-xl border border-gold/25 bg-glass px-3 py-2 text-xs text-foreground/85">{toast}</p>}
 
           <div className="mt-4 space-y-1">
             {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading automations…</p>}
@@ -269,12 +324,15 @@ function DashboardView() {
               </div>
             )}
             {rules.map((r) => (
-              <div key={r.id} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.8fr_0.8fr_auto]">
+              <div key={r.id} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.6fr_auto_auto]">
                 <div className="flex items-center gap-3">
                   <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass"><Workflow className="size-4 text-gold" /></span>
                   <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{r.name}</p><p className="truncate text-xs text-muted-foreground">{r.trigger ?? "—"}{r.action ? ` → ${r.action}` : ""}</p></div>
                 </div>
                 <span className="hidden text-xs text-muted-foreground sm:block">{formatNum(r.runs)} runs</span>
+                <button onClick={() => runNow(r)} disabled={runningId === r.id} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-gold/40 disabled:opacity-50">
+                  {runningId === r.id ? "Running…" : "Run"}
+                </button>
                 <button onClick={() => toggle(r)} className={cn("relative h-6 w-11 shrink-0 rounded-full border transition-colors", r.enabled ? "border-transparent" : "border-border bg-background/40")} style={r.enabled ? { background: "var(--gradient-gold)" } : undefined} aria-pressed={r.enabled} title={r.enabled ? "Enabled — click to pause" : "Paused — click to enable"}>
                   <span className="absolute top-0.5 size-5 rounded-full transition-all" style={{ left: r.enabled ? "1.375rem" : "0.125rem", background: r.enabled ? "oklch(0.2 0.02 70)" : "oklch(0.8 0.015 85)" }} />
                 </button>

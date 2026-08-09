@@ -1,20 +1,28 @@
 -- ─────────────────────────────────────────────────────────────────────────
 -- WonderFlow OS — Automations (per-tenant, RLS). Real automation rules that a
--- business defines (trigger → action) and enables/disables. Execution engine
--- is a future build; this stores and manages the rules.
+-- business defines (trigger → action), enables/disables, and that the
+-- run-automations edge function actually EXECUTES.
+--   trigger_key: 'order.created' | 'customer.created' | 'manual'
+--   action_key : 'ai_draft_note' | 'email_owner' | 'webhook'
+--   action_config: jsonb params (e.g. { prompt, webhook_url })
+-- `trigger`/`action` remain human-readable labels for display.
 -- ─────────────────────────────────────────────────────────────────────────
 
 create table if not exists public.automations (
-  id          uuid primary key default gen_random_uuid(),
-  org_id      uuid not null references public.organizations (id) on delete cascade,
-  name        text not null,
-  trigger     text,
-  action      text,
-  enabled     boolean not null default true,
-  runs        int not null default 0,
-  created_by  uuid default auth.uid() references public.profiles (id) on delete set null,
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
+  id            uuid primary key default gen_random_uuid(),
+  org_id        uuid not null references public.organizations (id) on delete cascade,
+  name          text not null,
+  trigger       text,
+  action        text,
+  trigger_key   text not null default 'manual',
+  action_key    text not null default 'ai_draft_note',
+  action_config jsonb not null default '{}',
+  enabled       boolean not null default true,
+  runs          int not null default 0,
+  last_run      timestamptz,
+  created_by    uuid default auth.uid() references public.profiles (id) on delete set null,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
 );
 create index if not exists automations_org_idx on public.automations (org_id);
 

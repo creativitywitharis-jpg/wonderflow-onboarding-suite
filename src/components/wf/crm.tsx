@@ -38,6 +38,7 @@ import { createCustomer, insertCustomers, listCustomers, type DbCustomer, type N
 import { addInteraction, listCustomerInteractions, listInteractions, type DbInteraction, type InteractionChannel } from "@/lib/interactions";
 import { CsvImport } from "@/components/wf/CsvImport";
 import type { FieldSpec } from "@/lib/csv";
+import { fireAutomationEvent } from "@/lib/automations";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -165,8 +166,11 @@ function CustomersProvider({ children }: { children: ReactNode }) {
   const addCustomer = useCallback(
     async (c: NewCustomer) => {
       if (!org) return;
-      await createCustomer(org.id, c);
+      const { data } = await createCustomer(org.id, c);
       await load();
+      if (data) {
+        void fireAutomationEvent(org.id, "customer.created", { customer_id: data.id, name: data.name, email: data.email });
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org?.id, load],

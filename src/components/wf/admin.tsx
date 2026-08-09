@@ -34,6 +34,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
 import { updateOrganization } from "@/lib/org";
+import { listConnections, syncStripe, type DbConnection } from "@/lib/connections";
 import { PLANS, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
 import { cancelInvitation, inviteMember, listInvitations, listMembers, setMemberStatus, type Invitation, type Member } from "@/lib/team";
 
@@ -127,13 +128,13 @@ const autonomyLevels = [
   { id: "auto", name: "Autopilot", desc: "AI executes low-risk actions on its own." },
 ];
 
-const seedIntegrations = [
-  { name: "Shopify", desc: "Sync orders, products & inventory", icon: Globe, connected: true },
-  { name: "Stripe", desc: "Payments & payouts", icon: Zap, connected: true },
-  { name: "Klaviyo", desc: "Email & SMS marketing", icon: Mail, connected: true },
-  { name: "Slack", desc: "Alerts & AI briefings", icon: Activity, connected: false },
-  { name: "QuickBooks", desc: "Accounting & finance sync", icon: Database, connected: false },
-  { name: "Google Analytics", desc: "Web & marketing analytics", icon: Globe, connected: true },
+const PROVIDERS: { id: string; name: string; desc: string; icon: LucideIcon; kind: "sync" | "soon" }[] = [
+  { id: "stripe", name: "Stripe", desc: "Import your customers & revenue into the CRM", icon: Zap, kind: "sync" },
+  { id: "shopify", name: "Shopify", desc: "Sync orders, products & inventory", icon: Globe, kind: "soon" },
+  { id: "quickbooks", name: "QuickBooks", desc: "Accounting & finance sync", icon: Database, kind: "soon" },
+  { id: "klaviyo", name: "Klaviyo", desc: "Email & SMS marketing", icon: Mail, kind: "soon" },
+  { id: "slack", name: "Slack", desc: "Alerts & AI briefings", icon: Activity, kind: "soon" },
+  { id: "google_analytics", name: "Google Analytics", desc: "Web & marketing analytics", icon: Globe, kind: "soon" },
 ];
 
 const sessions = [
@@ -504,25 +505,70 @@ function AiConfigView() {
 }
 
 function IntegrationsView() {
-  const [items, setItems] = useState(seedIntegrations);
-  const toggle = (name: string) => setItems((its) => its.map((i) => (i.name === name ? { ...i, connected: !i.connected } : i)));
+  const { org } = useOrg();
+  const [conns, setConns] = useState<DbConnection[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const load = async () => {
+    if (!org) return;
+    try {
+      setConns(await listConnections(org.id));
+    } catch {
+      /* connections table not applied yet — show all as available */
+    }
+  };
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+
+  const statusOf = (id: string) => conns.find((c) => c.provider === id);
+
+  const doSyncStripe = async () => {
+    if (!org || busy) return;
+    setBusy("stripe");
+    setMsg(null);
+    const { synced, error } = await syncStripe(org.id);
+    setBusy(null);
+    setMsg(error ? `Stripe sync failed: ${error.message}` : `✓ Synced ${synced} customer${synced === 1 ? "" : "s"} from Stripe into your CRM.`);
+    await load();
+  };
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {items.map((it, i) => (
-        <Reveal key={it.name} delay={i * 50} className="h-full">
-          <GlassCard className="flex h-full flex-col p-6">
-            <div className="flex items-center justify-between">
-              <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><it.icon className="size-5 text-gold" /></span>
-              {it.connected && <span className="flex items-center gap-1.5 text-xs text-emerald-300"><StatusDot tone="ok" /> Connected</span>}
-            </div>
-            <p className="mt-4 text-sm font-semibold text-foreground">{it.name}</p>
-            <p className="mt-1 flex-1 text-xs text-muted-foreground">{it.desc}</p>
-            <button onClick={() => toggle(it.name)} className={cn("mt-4 rounded-full px-4 py-2 text-xs font-semibold transition-all active:scale-[0.98]", it.connected ? "border border-border bg-glass text-foreground/80 hover:border-gold/40" : "text-primary-foreground hover:brightness-110")} style={!it.connected ? { background: "var(--gradient-gold)" } : undefined}>
-              {it.connected ? "Disconnect" : "Connect"}
-            </button>
-          </GlassCard>
-        </Reveal>
-      ))}
+    <div className="space-y-4">
+      {msg && <p className="rounded-2xl border border-gold/25 bg-glass px-4 py-3 text-sm text-foreground/85">{msg}</p>}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {PROVIDERS.map((p, i) => {
+          const conn = statusOf(p.id);
+          const connected = conn?.status === "connected";
+          const lastSync = (conn?.config as { last_sync?: string } | undefined)?.last_sync;
+          return (
+            <Reveal key={p.id} delay={i * 50} className="h-full">
+              <GlassCard className="flex h-full flex-col p-6">
+                <div className="flex items-center justify-between">
+                  <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><p.icon className="size-5 text-gold" /></span>
+                  {connected && <span className="flex items-center gap-1.5 text-xs text-emerald-300"><StatusDot tone="ok" /> Connected</span>}
+                  {p.kind === "soon" && !connected && <span className="rounded-full border border-border px-2 py-0.5 text-[0.65rem] text-muted-foreground">Setup required</span>}
+                </div>
+                <p className="mt-4 text-sm font-semibold text-foreground">{p.name}</p>
+                <p className="mt-1 flex-1 text-xs text-muted-foreground">{p.desc}</p>
+                {lastSync && <p className="mt-1 text-[0.65rem] text-muted-foreground">Last sync {new Date(lastSync).toLocaleString()}</p>}
+                {p.kind === "sync" ? (
+                  <button onClick={doSyncStripe} disabled={busy === p.id} className="mt-4 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)" }}>
+                    {busy === p.id ? "Syncing…" : connected ? "Sync now" : "Connect & sync"}
+                  </button>
+                ) : (
+                  <button disabled title="Needs a developer app — coming soon" className="mt-4 cursor-not-allowed rounded-full border border-border bg-glass px-4 py-2 text-xs text-muted-foreground/70">
+                    Available soon
+                  </button>
+                )}
+              </GlassCard>
+            </Reveal>
+          );
+        })}
+      </div>
+      <p className="text-xs text-muted-foreground">Stripe reuses your existing key — no setup needed. OAuth connectors (Shopify, QuickBooks…) are on the roadmap.</p>
     </div>
   );
 }

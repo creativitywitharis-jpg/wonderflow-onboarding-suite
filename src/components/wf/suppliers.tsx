@@ -35,6 +35,7 @@ import { useOrg } from "@/lib/org-context";
 import { listProducts } from "@/lib/products";
 import { createSupplier, insertSuppliers, listSuppliers, updateSupplier, type NewSupplier } from "@/lib/suppliers";
 import { createPurchaseOrder, listPurchaseOrders, updatePurchaseOrderStatus, type DbPurchaseOrder, type PoStatus } from "@/lib/purchase-orders";
+import { askAI } from "@/lib/ai";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -923,8 +924,10 @@ type ChatMsg = { role: "ai" | "user"; text: string };
 const suggestedPrompts = ["Who's my most reliable supplier?", "Where can I cut costs?", "Any supplier risks this month?", "Draft a PO for glass bottles"];
 
 function AssistantView() {
+  const { org } = useOrg();
+  const { suppliers } = useSuppliersData();
   const [messages, setMessages] = useState<ChatMsg[]>([
-    { role: "ai", text: "I monitor 48 suppliers — pricing, reliability, lead times and risk. Ask me who to buy from, where to save, or what to watch." },
+    { role: "ai", text: "I monitor your suppliers — pricing, reliability, lead times and risk. Ask me who to buy from, where to save, or what to watch." },
   ]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -934,25 +937,36 @@ function AssistantView() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, thinking]);
 
-  const answerFor = (q: string) => {
-    const s = q.toLowerCase();
-    if (s.includes("reliable")) return "Northwind Supply leads at 94% reliability and 97% on-time — your most dependable partner, and a preferred vendor.";
-    if (s.includes("cut cost") || s.includes("save")) return "Shift glass volume to Tidewater Caps (14% below market) and lock Jojoba Oil before Q4. Combined, that's ~$42k/yr.";
-    if (s.includes("risk")) return "Solstice Freight is trending high-risk — on-time fell to 71%. I'd dual-source logistics before the next cycle.";
-    if (s.includes("draft") || s.includes("po")) return "Drafted PO-2044 to Northwind Supply for amber glass bottles — 5,000 units at $0.82, total $4,100. Ready for your approval.";
-    return "Across your portfolio, spend is concentrated in Packaging (38%). Diversifying one glass supplier would cut geographic risk meaningfully.";
-  };
+  const snapshot = suppliers.length
+    ? suppliers
+        .slice(0, 30)
+        .map((s) => `${s.name} (${s.category}, ${s.country}): rating ${s.rating}, lead ${s.leadTime}d, ${s.risk} risk, $${s.spend} spend`)
+        .join("; ")
+    : "No suppliers added yet.";
 
-  function send(text: string) {
+  async function send(text: string) {
     const q = text.trim();
     if (!q || thinking) return;
-    setMessages((m) => [...m, { role: "user", text: q }]);
+    const next: ChatMsg[] = [...messages, { role: "user", text: q }];
+    setMessages(next);
     setInput("");
     setThinking(true);
-    window.setTimeout(() => {
+    try {
+      const convo = next
+        .filter((m) => m.text.trim())
+        .map((m) => ({ role: m.role === "user" ? ("user" as const) : ("assistant" as const), content: m.text }));
+      const start = convo.findIndex((m) => m.role === "user");
+      const trimmed = start >= 0 ? convo.slice(start) : convo;
+      if (trimmed.length) {
+        trimmed[0] = { ...trimmed[0], content: `You are the Suppliers/procurement assistant inside WonderFlow OS — advise on sourcing, cost savings, lead times and supplier risk. Current suppliers: ${snapshot}.\n\n${trimmed[0].content}` };
+      }
+      const reply = await askAI(trimmed, { id: org?.id, name: org?.name, industry: org?.industry });
+      setMessages((m) => [...m, { role: "ai", text: reply || "I don't have an answer for that yet." }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "ai", text: e instanceof Error ? e.message : "I couldn't reach the AI service. Please try again." }]);
+    } finally {
       setThinking(false);
-      setMessages((m) => [...m, { role: "ai", text: answerFor(q) }]);
-    }, 1200);
+    }
   }
 
   return (

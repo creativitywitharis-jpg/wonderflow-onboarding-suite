@@ -30,6 +30,8 @@ import { cn } from "@/lib/utils";
 import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Bar, Reveal, Ring, SectionLabel, Sparkline, StatTile, formatNum } from "@/components/wf/primitives";
+import { useOrg } from "@/lib/org-context";
+import { askAI } from "@/lib/ai";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -195,25 +197,36 @@ const consultantPrompts = ["Should I raise prices?", "Where should I focus next 
 const threadHistory = ["Q4 pricing strategy", "Hiring plan review", "Cash runway scenarios", "Wholesale expansion"];
 
 function ChatView() {
+  const { org } = useOrg();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, thinking]);
 
-  const answerFor = (q: string) => {
-    const s = q.toLowerCase();
-    if (s.includes("price")) return "Yes — cautiously. Your Champions are price-insensitive and margins are healthy. I'd raise hero SKUs 8%, grandfather existing subscribers for 60 days, and A/B test. Projected: +$96k/yr with <2% churn risk.";
-    if (s.includes("focus")) return "Next quarter, focus on referral and retention. Retention is strong (88) so referral compounds it — model shows +9% MRR. Hold off on wholesale until cash runway clears 16 months.";
-    if (s.includes("hire")) return "You're close. Runway is 14.2 months and fulfillment is your bottleneck. I'd hire one ops lead now (part-to-full time), and delay a growth hire until MRR clears $95k.";
-    if (s.includes("margin")) return "Three levers: shift glass to Tidewater (-14% cost), raise hero prices 8%, and clear $18k of overstock. Combined, that moves gross margin from 68% toward your 72% goal.";
-    if (s.includes("risk")) return "Your top risk is Solstice Freight — on-time fell to 71%. Dual-source logistics before the next cycle. Second is rising paid-social CAC; shift budget to referral.";
-    return "Here's my read: the business is healthy and growing, cash is solid, and your fastest ROI is the referral engine plus a measured price increase. Want me to draft a 90-day plan?";
-  };
-  function send(text: string) {
-    const q = text.trim(); if (!q || thinking) return;
-    setMessages((m) => [...m, { role: "user", text: q }]); setInput(""); setThinking(true);
-    window.setTimeout(() => { setThinking(false); setMessages((m) => [...m, { role: "ai", text: answerFor(q) }]); }, 1300);
+  async function send(text: string) {
+    const q = text.trim();
+    if (!q || thinking) return;
+    const next: ChatMsg[] = [...messages, { role: "user", text: q }];
+    setMessages(next);
+    setInput("");
+    setThinking(true);
+    try {
+      const convo = next
+        .filter((m) => m.text.trim())
+        .map((m) => ({ role: m.role === "user" ? ("user" as const) : ("assistant" as const), content: m.text }));
+      const start = convo.findIndex((m) => m.role === "user");
+      const trimmed = start >= 0 ? convo.slice(start) : convo;
+      if (trimmed.length) {
+        trimmed[0] = { ...trimmed[0], content: `You are the strategic Business Advisor inside WonderFlow OS — a sharp COO/consultant. Give specific, prioritized advice on strategy, pricing, hiring, margins, cash and risk.\n\n${trimmed[0].content}` };
+      }
+      const reply = await askAI(trimmed, { id: org?.id, name: org?.name, industry: org?.industry });
+      setMessages((m) => [...m, { role: "ai", text: reply || "I don't have an answer for that yet." }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "ai", text: e instanceof Error ? e.message : "I couldn't reach the AI service. Please try again." }]);
+    } finally {
+      setThinking(false);
+    }
   }
 
   return (

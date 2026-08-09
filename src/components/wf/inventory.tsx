@@ -32,6 +32,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Bar, Delta, Reveal, Ring, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
+import { askAI } from "@/lib/ai";
 import { listOrders } from "@/lib/orders";
 import {
   adjustStock,
@@ -785,8 +786,10 @@ type ChatMsg = { role: "ai" | "user"; text: string };
 const suggestedPrompts = ["What will I run out of?", "What's overstocked?", "Optimize reorders for next month", "Which SKUs are slowing down?"];
 
 function AssistantView() {
+  const { org } = useOrg();
+  const { products } = useInv();
   const [messages, setMessages] = useState<ChatMsg[]>([
-    { role: "ai", text: "I track every SKU and predict demand nightly. Ask me what to reorder, what's overstocked, or what's trending." },
+    { role: "ai", text: "I track every SKU. Ask me what to reorder, what's overstocked, or what's trending." },
   ]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -796,26 +799,37 @@ function AssistantView() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, thinking]);
 
-  const answerFor = (q: string) => {
-    const s = q.toLowerCase();
-    if (s.includes("run out") || s.includes("stock out"))
-      return "Golden Hour Balm stocks out in 3 days and Velvet Lip Oil in 5. I've drafted reorders for both in Smart reorder.";
-    if (s.includes("overstock"))
-      return "Radiance Mask (170 days cover) and Clay Detox Bar (200 days) are overstocked — about $18k tied up. I'd run a clearance promo.";
-    if (s.includes("slow")) return "Radiance Mask and Clay Detox Bar are decelerating — velocity down 20%+ month over month.";
-    return "Based on tonight's forecast, reorder Golden Hour Balm, Aurora Serum and Velvet Lip Oil — total 220 units, ~$9.8k, arriving in 3–6 days.";
-  };
+  // A compact snapshot of the real catalog so answers are grounded in real data.
+  const snapshot = products.length
+    ? products
+        .slice(0, 40)
+        .map((p) => `${p.name}: ${p.stock} in stock, reorder at ${p.reorder}, ${p.sold30}/mo sold`)
+        .join("; ")
+    : "No products in the catalog yet.";
 
-  function send(text: string) {
+  async function send(text: string) {
     const q = text.trim();
     if (!q || thinking) return;
-    setMessages((m) => [...m, { role: "user", text: q }]);
+    const next: ChatMsg[] = [...messages, { role: "user", text: q }];
+    setMessages(next);
     setInput("");
     setThinking(true);
-    window.setTimeout(() => {
+    try {
+      const convo = next
+        .filter((m) => m.text.trim())
+        .map((m) => ({ role: m.role === "user" ? ("user" as const) : ("assistant" as const), content: m.text }));
+      const start = convo.findIndex((m) => m.role === "user");
+      const trimmed = start >= 0 ? convo.slice(start) : convo;
+      if (trimmed.length) {
+        trimmed[0] = { ...trimmed[0], content: `You are the Inventory assistant inside WonderFlow OS — advise on stock, reorders, demand and product decisions. Current inventory: ${snapshot}.\n\n${trimmed[0].content}` };
+      }
+      const reply = await askAI(trimmed, { id: org?.id, name: org?.name, industry: org?.industry });
+      setMessages((m) => [...m, { role: "ai", text: reply || "I don't have an answer for that yet." }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "ai", text: e instanceof Error ? e.message : "I couldn't reach the AI service. Please try again." }]);
+    } finally {
       setThinking(false);
-      setMessages((m) => [...m, { role: "ai", text: answerFor(q) }]);
-    }, 1200);
+    }
   }
 
   return (

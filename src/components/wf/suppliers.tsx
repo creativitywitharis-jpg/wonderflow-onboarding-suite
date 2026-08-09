@@ -34,6 +34,7 @@ import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { listProducts } from "@/lib/products";
 import { createSupplier, insertSuppliers, listSuppliers, updateSupplier, type NewSupplier } from "@/lib/suppliers";
+import { createPurchaseOrder, listPurchaseOrders, updatePurchaseOrderStatus, type DbPurchaseOrder, type PoStatus } from "@/lib/purchase-orders";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -225,15 +226,6 @@ function SuppliersProvider({ children }: { children: ReactNode }) {
   );
 }
 
-type PO = { id: string; supplier: string; items: number; total: number; status: string; placed: string; eta: string };
-const purchaseOrders: PO[] = [
-  { id: "PO-2043", supplier: "Northwind Supply", items: 6, total: 24800, status: "Confirmed", placed: "2d ago", eta: "Aug 8" },
-  { id: "PO-2042", supplier: "Lumen Labs", items: 4, total: 18600, status: "In transit", placed: "3d ago", eta: "Aug 6" },
-  { id: "PO-2041", supplier: "Meridian Botanicals", items: 8, total: 12400, status: "Sent", placed: "4d ago", eta: "Aug 12" },
-  { id: "PO-2040", supplier: "Halcyon Glass", items: 3, total: 9200, status: "Draft", placed: "5d ago", eta: "—" },
-  { id: "PO-2039", supplier: "Cobalt Print", items: 2, total: 4100, status: "Received", placed: "6d ago", eta: "Delivered" },
-  { id: "PO-2038", supplier: "Fjord Materials", items: 5, total: 15800, status: "In transit", placed: "6d ago", eta: "Aug 7" },
-];
 const poStatusColor: Record<string, string> = {
   Draft: "oklch(0.7 0.02 250)",
   Sent: "oklch(0.66 0.09 200)",
@@ -550,12 +542,22 @@ function DatabaseView({ selectedId, onSelect }: { selectedId: string | null; onS
 }
 
 function SupplierProfile({ s, onBack }: { s: Supplier; onBack: () => void }) {
+  const { org } = useOrg();
+  const [poBusy, setPoBusy] = useState(false);
+  const [poDone, setPoDone] = useState(false);
   const metrics = [
     { k: "Reliability", v: s.reliability },
     { k: "On-time", v: s.onTime },
     { k: "Quality", v: Math.round((s.rating / 5) * 100) },
     { k: "Price vs market", v: Math.max(0, Math.min(100, 50 - s.priceIndex * 3)) },
   ];
+  const raisePO = async () => {
+    if (!org || poBusy) return;
+    setPoBusy(true);
+    const { error } = await createPurchaseOrder(org.id, { supplier_id: s.id, supplier_name: s.name, status: "Draft", items: 0, total: 0 });
+    setPoBusy(false);
+    if (!error) setPoDone(true);
+  };
   return (
     <div className="space-y-4">
       <button onClick={onBack} className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
@@ -576,9 +578,10 @@ function SupplierProfile({ s, onBack }: { s: Supplier; onBack: () => void }) {
               <div><p className="text-lg font-semibold tabular-nums">{s.products}</p><p className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">Products</p></div>
               <div><p className="text-lg font-semibold tabular-nums">{s.since}</p><p className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">Since</p></div>
             </div>
-            <button className="mt-5 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
-              <FileText className="size-3.5" /> New purchase order
+            <button onClick={raisePO} disabled={poBusy || poDone} className="mt-5 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)" }}>
+              <FileText className="size-3.5" /> {poDone ? "Draft PO created ✓" : poBusy ? "Creating…" : "New purchase order"}
             </button>
+            {poDone && <p className="mt-2 text-center text-[0.7rem] text-muted-foreground">Find it in the Orders tab to add items & send.</p>}
           </GlassCard>
         </Reveal>
 
@@ -716,33 +719,107 @@ function CompareView() {
   );
 }
 
+const PO_STATUSES: PoStatus[] = ["Draft", "Sent", "Confirmed", "In transit", "Received", "Cancelled"];
+
 function OrdersView() {
+  const { org } = useOrg();
+  const { suppliers } = useSuppliersData();
+  const [pos, setPos] = useState<DbPurchaseOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ supplierId: "", items: "1", total: "0", eta: "" });
+
+  const load = useCallback(async () => {
+    if (!org) {
+      setPos([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      setPos(await listPurchaseOrders(org.id));
+    } catch {
+      setPos([]);
+    }
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const openCount = pos.filter((p) => p.status !== "Received" && p.status !== "Cancelled").length;
+  const inTransit = pos.filter((p) => p.status === "In transit").reduce((a, p) => a + Number(p.total), 0);
+  const totalValue = pos.reduce((a, p) => a + Number(p.total), 0);
+
+  const submit = async () => {
+    if (!org || busy) return;
+    setBusy(true);
+    const sup = suppliers.find((s) => s.id === form.supplierId);
+    await createPurchaseOrder(org.id, {
+      supplier_id: form.supplierId || null,
+      supplier_name: sup?.name ?? "Supplier",
+      items: Number(form.items) || 0,
+      total: Number(form.total) || 0,
+      eta: form.eta.trim() || null,
+      status: "Draft",
+    });
+    setBusy(false);
+    setForm({ supplierId: "", items: "1", total: "0", eta: "" });
+    setAdding(false);
+    await load();
+  };
+  const changeStatus = async (id: string, status: PoStatus) => {
+    await updatePurchaseOrderStatus(id, status);
+    await load();
+  };
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile label="Open POs" value={18} icon={FileText} />
-        <StatTile label="In transit value" value={64200} prefix="$" icon={Truck} />
-        <StatTile label="Avg approval time" value={4.2} suffix=" hrs" decimals={1} delta="1.1 hrs" icon={Clock} />
+        <StatTile label="Open POs" value={openCount} icon={FileText} />
+        <StatTile label="In-transit value" value={inTransit} prefix="$" icon={Truck} />
+        <StatTile label="Total PO value" value={totalValue} prefix="$" icon={DollarSign} />
       </div>
       <Reveal>
         <GlassCard className="p-6">
           <div className="flex items-center justify-between">
             <SectionLabel icon={FileText}>Purchase orders</SectionLabel>
-            <button className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>New PO</button>
+            <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>New PO</button>
           </div>
+          {adding && (
+            <div className="mt-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
+              <select value={form.supplierId} onChange={(e) => setForm((f) => ({ ...f, supplierId: e.target.value }))} className={SUP_INPUT}>
+                <option value="">Select supplier…</option>
+                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <input value={form.eta} onChange={(e) => setForm((f) => ({ ...f, eta: e.target.value }))} placeholder="ETA (e.g. Aug 20)" className={SUP_INPUT} />
+              <input type="number" value={form.items} onChange={(e) => setForm((f) => ({ ...f, items: e.target.value }))} placeholder="Items" className={SUP_INPUT} />
+              <input type="number" value={form.total} onChange={(e) => setForm((f) => ({ ...f, total: e.target.value }))} placeholder="Total $" className={SUP_INPUT} />
+              <div className="flex gap-2 sm:col-span-2">
+                <button onClick={submit} disabled={busy} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Create PO"}</button>
+                <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+              </div>
+            </div>
+          )}
           <div className="mt-4 space-y-1">
-            {purchaseOrders.map((o) => {
-              const color = poStatusColor[o.status];
+            {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading purchase orders…</p>}
+            {!loading && pos.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No purchase orders yet — create one, or raise a PO from a supplier's profile.</p>}
+            {pos.map((o) => {
+              const color = poStatusColor[o.status] ?? GOLD;
               return (
                 <div key={o.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-gold/20 hover:bg-glass sm:grid-cols-[auto_1.4fr_1fr_0.8fr_auto]">
-                  <span className="font-mono text-xs text-muted-foreground">{o.id}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{o.number}</span>
                   <div className="flex items-center gap-3">
-                    <Avatar name={o.supplier} />
-                    <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{o.supplier}</p><p className="text-xs text-muted-foreground">{o.items} items · {o.placed}</p></div>
+                    <Avatar name={o.supplier_name ?? "Supplier"} />
+                    <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{o.supplier_name ?? "Supplier"}</p><p className="text-xs text-muted-foreground">{o.items} items</p></div>
                   </div>
-                  <span className="hidden items-center gap-1.5 text-xs sm:flex" style={{ color }}><span className="size-1.5 rounded-full" style={{ background: color }} />{o.status}</span>
-                  <span className="hidden text-xs text-muted-foreground sm:block">ETA {o.eta}</span>
-                  <span className="text-right text-sm font-semibold tabular-nums text-gold">${formatNum(o.total)}</span>
+                  <select value={o.status} onChange={(e) => changeStatus(o.id, e.target.value as PoStatus)} className="hidden rounded-lg border border-border bg-background/40 px-2 py-1 text-xs outline-none focus:border-gold/50 sm:block" style={{ color }}>
+                    {PO_STATUSES.map((s) => <option key={s} value={s} className="text-foreground">{s}</option>)}
+                  </select>
+                  <span className="hidden text-xs text-muted-foreground sm:block">{o.eta ? `ETA ${o.eta}` : "—"}</span>
+                  <span className="text-right text-sm font-semibold tabular-nums text-gold">${formatNum(Number(o.total))}</span>
                 </div>
               );
             })}

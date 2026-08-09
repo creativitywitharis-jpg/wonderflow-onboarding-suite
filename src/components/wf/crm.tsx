@@ -35,7 +35,7 @@ import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { createCustomer, insertCustomers, listCustomers, type DbCustomer, type NewCustomer } from "@/lib/customers";
-import { addInteraction, listInteractions, type DbInteraction, type InteractionChannel } from "@/lib/interactions";
+import { addInteraction, listCustomerInteractions, listInteractions, type DbInteraction, type InteractionChannel } from "@/lib/interactions";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -599,6 +599,10 @@ function CustomersView({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
+function channelIconFor(ch: InteractionChannel): LucideIcon {
+  return ch === "email" ? Mail : ch === "call" ? Phone : ch === "meeting" ? Users : MessageSquare;
+}
+
 function ProfilesView({
   selectedId,
   onSelect,
@@ -608,6 +612,21 @@ function ProfilesView({
 }) {
   const { customers } = useCustomersData();
   const c = customers.find((x) => x.id === selectedId) ?? customers[0];
+  const [timeline, setTimeline] = useState<{ icon: LucideIcon; t: string; d: string }[]>([]);
+  useEffect(() => {
+    let alive = true;
+    if (c?.id) {
+      listCustomerInteractions(c.id)
+        .then((rows) => alive && setTimeline(rows.map((r) => ({ icon: channelIconFor(r.channel), t: r.body, d: timeAgo(r.created_at) }))))
+        .catch(() => alive && setTimeline([]));
+    } else {
+      setTimeline([]);
+    }
+    return () => {
+      alive = false;
+    };
+  }, [c?.id]);
+
   if (!c) {
     return (
       <Reveal>
@@ -617,12 +636,6 @@ function ProfilesView({
       </Reveal>
     );
   }
-  const timeline = [
-    { icon: Star, t: "Left a 5-star review", d: "2 days ago" },
-    { icon: TrendingUp, t: "Upgraded to Growth plan", d: "3 weeks ago" },
-    { icon: Mail, t: "Opened renewal email · clicked pricing", d: "1 month ago" },
-    { icon: Award, t: `Became a ${c.tier}`, d: "4 months ago" },
-  ];
 
   return (
     <div className="space-y-4">
@@ -734,19 +747,23 @@ function ProfilesView({
             <Reveal className="h-full">
               <GlassCard className="h-full p-6">
                 <SectionLabel icon={Activity}>Activity timeline</SectionLabel>
-                <ul className="mt-4 space-y-4">
-                  {timeline.map((e) => (
-                    <li key={e.t} className="flex items-start gap-3">
-                      <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full border border-border bg-glass">
-                        <e.icon className="size-3.5 text-gold" />
-                      </span>
-                      <div>
-                        <p className="text-sm text-foreground/85">{e.t}</p>
-                        <p className="text-xs text-muted-foreground">{e.d}</p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                {timeline.length === 0 ? (
+                  <p className="mt-4 text-sm text-muted-foreground">No activity logged yet. Log a note, call or email from the Communication tab and it'll appear here.</p>
+                ) : (
+                  <ul className="mt-4 space-y-4">
+                    {timeline.map((e, i) => (
+                      <li key={i} className="flex items-start gap-3">
+                        <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full border border-border bg-glass">
+                          <e.icon className="size-3.5 text-gold" />
+                        </span>
+                        <div>
+                          <p className="text-sm text-foreground/85">{e.t}</p>
+                          <p className="text-xs text-muted-foreground">{e.d}</p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </GlassCard>
             </Reveal>
 

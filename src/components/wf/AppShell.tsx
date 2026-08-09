@@ -594,6 +594,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [aiOpen, setAiOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileAiOpen, setMobileAiOpen] = useState(false);
   const { signedIn, authLoading, loading, orgs } = useOrg();
   const navigate = useNavigate();
 
@@ -619,7 +620,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <MobileNav open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar onSearch={() => setPaletteOpen(true)} onToggleAi={() => setAiOpen((o) => !o)} onQuickCreate={() => setPaletteOpen(true)} onMenu={() => setMobileNavOpen(true)} />
+        <TopBar onSearch={() => setPaletteOpen(true)} onToggleAi={() => { setAiOpen((o) => !o); setMobileAiOpen(true); }} onQuickCreate={() => setPaletteOpen(true)} onMenu={() => setMobileNavOpen(true)} />
         <div className="flex min-h-0 flex-1">
           <main className="min-w-0 flex-1 overflow-x-hidden">{children}</main>
           {aiOpen && (
@@ -629,6 +630,16 @@ export function AppShell({ children }: { children: ReactNode }) {
           )}
         </div>
       </div>
+
+      {/* mobile AI drawer (phones / tablets — the docked panel is xl+ only) */}
+      {mobileAiOpen && (
+        <div className="fixed inset-0 z-50 xl:hidden">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileAiOpen(false)} />
+          <aside className="glass absolute inset-y-0 right-0 w-[22rem] max-w-[92vw] overflow-hidden">
+            <AiPanel onClose={() => setMobileAiOpen(false)} />
+          </aside>
+        </div>
+      )}
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onAsk={() => setAiOpen(true)} />
 

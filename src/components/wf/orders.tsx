@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
@@ -32,8 +32,20 @@ import {
 import { cn } from "@/lib/utils";
 import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
-import { Avatar, Bar, Delta, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
+import { Avatar, Bar, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
+import { useOrg } from "@/lib/org-context";
+import { listCustomers, type DbCustomer } from "@/lib/customers";
+import {
+  createOrder,
+  insertOrders,
+  listOrders,
+  updateOrderStatus,
+  type DbOrder,
+  type NewOrder,
+  type OrderItem,
+  type OrderStatus,
+} from "@/lib/orders";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -63,40 +75,167 @@ const GOLD = "oklch(0.84 0.14 84)";
 const STAGES = ["New", "Paid", "Processing", "Packed", "Shipped", "Delivered"] as const;
 type Stage = (typeof STAGES)[number];
 
-const stageColor: Record<Stage, string> = {
+const stageColor: Record<string, string> = {
   New: "oklch(0.7 0.02 250)",
   Paid: "oklch(0.66 0.09 200)",
   Processing: "oklch(0.75 0.13 90)",
   Packed: "oklch(0.72 0.12 65)",
   Shipped: "oklch(0.7 0.11 150)",
   Delivered: "oklch(0.72 0.14 155)",
+  Cancelled: "oklch(0.6 0.02 20)",
 };
 
-type Order = {
-  id: string;
+/** The next fulfillment stage, or null at the end / for cancelled orders. */
+function nextStage(stage: OrderStatus): OrderStatus | null {
+  const i = (STAGES as readonly string[]).indexOf(stage);
+  if (i < 0 || i >= STAGES.length - 1) return null;
+  return STAGES[i + 1];
+}
+
+type UiOrder = {
+  id: string; // real db id — key, lookup, mutations
+  number: string; // display order number
   customer: string;
   items: number;
   total: number;
-  stage: Stage;
-  channel: "Online store" | "POS" | "Marketplace" | "Social";
+  stage: OrderStatus;
+  channel: string;
   placed: string;
   priority: "High" | "Normal";
   city: string;
   eta: string;
+  lineItems: OrderItem[];
 };
 
-const orders: Order[] = [
-  { id: "#10428", customer: "Ava Chen", items: 3, total: 248, stage: "Processing", channel: "Online store", placed: "12m ago", priority: "High", city: "Austin, TX", eta: "Aug 6" },
-  { id: "#10427", customer: "Leo Park", items: 1, total: 89, stage: "New", channel: "Social", placed: "18m ago", priority: "Normal", city: "Denver, CO", eta: "Aug 7" },
-  { id: "#10426", customer: "Noah Reed", items: 5, total: 512, stage: "Packed", channel: "Online store", placed: "42m ago", priority: "High", city: "Seattle, WA", eta: "Aug 5" },
-  { id: "#10425", customer: "Mara Silva", items: 2, total: 164, stage: "Paid", channel: "Marketplace", placed: "1h ago", priority: "Normal", city: "Miami, FL", eta: "Aug 8" },
-  { id: "#10424", customer: "Ivy Zhou", items: 4, total: 327, stage: "Shipped", channel: "Online store", placed: "2h ago", priority: "Normal", city: "Chicago, IL", eta: "Aug 5" },
-  { id: "#10423", customer: "Priya Nair", items: 1, total: 58, stage: "Processing", channel: "POS", placed: "3h ago", priority: "Normal", city: "Austin, TX", eta: "Aug 7" },
-  { id: "#10422", customer: "Sam Idris", items: 2, total: 142, stage: "Delivered", channel: "Online store", placed: "5h ago", priority: "Normal", city: "Boston, MA", eta: "Delivered" },
-  { id: "#10421", customer: "Dane Ford", items: 6, total: 689, stage: "Shipped", channel: "Marketplace", placed: "6h ago", priority: "High", city: "Portland, OR", eta: "Aug 5" },
-  { id: "#10420", customer: "Ruth Vale", items: 2, total: 118, stage: "Packed", channel: "Online store", placed: "8h ago", priority: "Normal", city: "Reno, NV", eta: "Aug 6" },
-  { id: "#10419", customer: "Omar Diaz", items: 3, total: 274, stage: "Paid", channel: "POS", placed: "9h ago", priority: "Normal", city: "Tucson, AZ", eta: "Aug 8" },
-];
+function timeAgo(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function toUi(o: DbOrder): UiOrder {
+  return {
+    id: o.id,
+    number: o.number ?? `#${o.id.slice(0, 5)}`,
+    customer: o.customer_name ?? "Guest",
+    items: o.item_count,
+    total: Number(o.total),
+    stage: o.status,
+    channel: o.channel ?? "Online store",
+    placed: timeAgo(o.created_at),
+    priority: o.priority,
+    city: o.city ?? "—",
+    eta: o.eta ?? "—",
+    lineItems: Array.isArray(o.items) ? o.items : [],
+  };
+}
+
+type OrdersState = {
+  orders: UiOrder[];
+  customers: DbCustomer[];
+  loading: boolean;
+  addOrder: (o: NewOrder) => Promise<void>;
+  advance: (id: string, status: OrderStatus) => Promise<void>;
+  seed: () => Promise<void>;
+};
+const OrdersCtx = createContext<OrdersState | null>(null);
+function useOrdersData() {
+  const ctx = useContext(OrdersCtx);
+  if (!ctx) throw new Error("useOrdersData must be used within OrdersProvider");
+  return ctx;
+}
+
+function OrdersProvider({ children }: { children: ReactNode }) {
+  const { org } = useOrg();
+  const [orders, setOrders] = useState<UiOrder[]>([]);
+  const [customers, setCustomers] = useState<DbCustomer[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!org) {
+      setOrders([]);
+      setCustomers([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [os, cs] = await Promise.all([listOrders(org.id), listCustomers(org.id)]);
+      setOrders(os.map(toUi));
+      setCustomers(cs);
+    } catch {
+      setOrders([]);
+    }
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const addOrder = useCallback(
+    async (o: NewOrder) => {
+      if (!org) return;
+      await createOrder(org.id, o);
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+
+  const advance = useCallback(async (id: string, status: OrderStatus) => {
+    await updateOrderStatus(id, status);
+    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, stage: status } : o)));
+  }, []);
+
+  const seed = useCallback(
+    async () => {
+      if (!org) return;
+      await insertOrders(org.id, sampleOrders(customers));
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, customers, load],
+  );
+
+  return (
+    <OrdersCtx.Provider value={{ orders, customers, loading, addOrder, advance, seed }}>
+      {children}
+    </OrdersCtx.Provider>
+  );
+}
+
+// Sample orders for the empty-state seed — link to real customers when present.
+function sampleOrders(customers: DbCustomer[]): NewOrder[] {
+  const link = (i: number, fallback: string) =>
+    customers.length
+      ? { customer_id: customers[i % customers.length].id, customer_name: customers[i % customers.length].name }
+      : { customer_name: fallback };
+  const rows: { stage: OrderStatus; total: number; items: number; channel: string; city: string; priority: "High" | "Normal"; fb: string; li: OrderItem[] }[] = [
+    { stage: "Processing", total: 248, items: 3, channel: "Online store", city: "Austin, TX", priority: "High", fb: "Ava Chen", li: [{ name: "Aurora Serum", qty: 2, price: 68 }, { name: "Dew Mist", qty: 1, price: 28 }] },
+    { stage: "New", total: 89, items: 1, channel: "Social", city: "Denver, CO", priority: "Normal", fb: "Leo Park", li: [{ name: "Midnight Oil", qty: 1, price: 54 }] },
+    { stage: "Packed", total: 512, items: 5, channel: "Online store", city: "Seattle, WA", priority: "High", fb: "Noah Reed", li: [{ name: "Golden Hour Balm", qty: 3, price: 42 }] },
+    { stage: "Paid", total: 164, items: 2, channel: "Marketplace", city: "Miami, FL", priority: "Normal", fb: "Mara Silva", li: [{ name: "Silk Cleanser", qty: 2, price: 36 }] },
+    { stage: "Shipped", total: 327, items: 4, channel: "Online store", city: "Chicago, IL", priority: "Normal", fb: "Ivy Zhou", li: [{ name: "Radiance Mask", qty: 4, price: 48 }] },
+    { stage: "Delivered", total: 142, items: 2, channel: "POS", city: "Boston, MA", priority: "Normal", fb: "Sam Idris", li: [{ name: "Dew Mist", qty: 2, price: 28 }] },
+  ];
+  return rows.map((r, i) => ({
+    ...link(i, r.fb),
+    status: r.stage,
+    total: r.total,
+    item_count: r.items,
+    channel: r.channel,
+    city: r.city,
+    priority: r.priority,
+    items: r.li,
+    eta: "—",
+  }));
+}
 
 const products = [
   { id: "p1", name: "Aurora Serum", price: 68, tag: "Bestseller" },
@@ -126,8 +265,8 @@ const topProducts = [
  * Viz primitives (orders-specific)
  * ─────────────────────────────────────────────────────────────────── */
 
-function StagePill({ stage }: { stage: Stage }) {
-  const color = stageColor[stage];
+function StagePill({ stage }: { stage: OrderStatus }) {
+  const color = stageColor[stage] ?? GOLD;
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[0.7rem] font-medium"
@@ -202,13 +341,50 @@ function StatusTracker({ steps, active }: { steps: string[]; active: number }) {
  * ─────────────────────────────────────────────────────────────────── */
 
 function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
+  const { orders, loading, seed } = useOrdersData();
+  const [busy, setBusy] = useState(false);
+  const total = orders.length;
+  const revenue = orders.reduce((a, o) => a + o.total, 0);
+  const aov = total ? Math.round(revenue / total) : 0;
+  const delivered = orders.filter((o) => o.stage === "Delivered").length;
+  const fulfillRate = total ? Math.round((delivered / total) * 100) : 0;
+  const attention = orders
+    .filter((o) => o.priority === "High" && o.stage !== "Delivered" && o.stage !== "Cancelled")
+    .slice(0, 3);
+
+  if (!loading && total === 0) {
+    return (
+      <Reveal>
+        <GlassCard className="p-8 text-center sm:p-10">
+          <span className="orb mx-auto grid size-14 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+            <Package className="size-6" stroke="oklch(0.2 0.02 70)" />
+          </span>
+          <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>No orders yet</h2>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+            Create your first order, or drop in a sample set to explore the pipeline, fulfillment and analytics.
+          </p>
+          <div className="mt-6 flex justify-center">
+            <button
+              onClick={async () => { setBusy(true); await seed(); setBusy(false); }}
+              disabled={busy}
+              className="flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+              style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}
+            >
+              <Sparkles className="size-4" /> {busy ? "Adding…" : "Add sample orders"}
+            </button>
+          </div>
+        </GlassCard>
+      </Reveal>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Orders today" value={148} delta="9%" icon={Package} />
-        <StatTile label="Revenue today" value={18420} prefix="$" delta="12.4%" icon={CreditCard} />
-        <StatTile label="Avg order value" value={124} prefix="$" decimals={0} delta="3.1%" icon={Receipt} />
-        <StatTile label="Fulfillment rate" value={97} suffix="%" delta="1.2 pts" icon={PackageCheck} />
+        <StatTile label="Total orders" value={total} icon={Package} />
+        <StatTile label="Total revenue" value={revenue} prefix="$" icon={CreditCard} />
+        <StatTile label="Avg order value" value={aov} prefix="$" decimals={0} icon={Receipt} />
+        <StatTile label="Fulfillment rate" value={fulfillRate} suffix="%" icon={PackageCheck} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
@@ -222,26 +398,30 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Operations briefing</p>
                 <p className="mt-2 text-[0.95rem] leading-relaxed text-foreground/90">
-                  148 orders today, pacing <span className="text-gold">12% ahead</span> of yesterday.
-                  <span className="text-gold"> 3 orders</span> need attention: 2 are past their pack SLA
-                  and 1 flagged for address review. I've drafted fixes for each.
+                  {total} order{total === 1 ? "" : "s"} worth <span className="text-gold">${formatNum(revenue)}</span>.{" "}
+                  {attention.length > 0
+                    ? `${attention.length} high-priority order${attention.length === 1 ? "" : "s"} still need fulfilling.`
+                    : "No high-priority orders are waiting — you're on top of it."}
                 </p>
               </div>
             </div>
             <div className="relative mt-5 space-y-2">
-              {[
-                { icon: AlertTriangle, t: "Order #10426 past pack SLA by 22m", d: "Expedite" },
-                { icon: MapPin, t: "Order #10427 has an unverified address", d: "Review" },
-                { icon: Truck, t: "Carrier delay may affect 4 shipments", d: "Reroute" },
-              ].map((a) => (
-                <button key={a.t} className="lift flex w-full items-center gap-3 rounded-2xl border border-border bg-background/30 p-3 text-left hover:border-gold/40">
+              {attention.map((o) => (
+                <button
+                  key={o.id}
+                  onClick={() => onOpen(o.id)}
+                  className="lift flex w-full items-center gap-3 rounded-2xl border border-border bg-background/30 p-3 text-left hover:border-gold/40"
+                >
                   <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-border bg-glass">
-                    <a.icon className="size-4 text-gold" />
+                    <AlertTriangle className="size-4 text-gold" />
                   </span>
-                  <span className="flex-1 text-sm text-foreground/85">{a.t}</span>
-                  <span className="shrink-0 text-xs text-gold">{a.d}</span>
+                  <span className="flex-1 text-sm text-foreground/85">{o.number} · {o.customer} — {o.stage}</span>
+                  <span className="shrink-0 text-xs text-gold">${formatNum(o.total)}</span>
                 </button>
               ))}
+              {attention.length === 0 && (
+                <p className="text-sm text-muted-foreground">Nothing needs attention right now.</p>
+              )}
             </div>
           </GlassCard>
         </Reveal>
@@ -252,7 +432,7 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
             <div className="mt-5 space-y-4">
               {STAGES.map((s) => {
                 const count = orders.filter((o) => o.stage === s).length;
-                const pct = (count / orders.length) * 100;
+                const pct = orders.length ? (count / orders.length) * 100 : 0;
                 return (
                   <div key={s}>
                     <div className="flex items-baseline justify-between text-sm">
@@ -286,7 +466,7 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
                 onClick={() => onOpen(o.id)}
                 className="lift grid w-full grid-cols-[auto_1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 text-left hover:border-gold/30 hover:bg-glass sm:grid-cols-[auto_1.4fr_1fr_0.8fr_auto]"
               >
-                <span className="font-mono text-xs text-muted-foreground">{o.id}</span>
+                <span className="font-mono text-xs text-muted-foreground">{o.number}</span>
                 <div className="flex items-center gap-3">
                   <Avatar name={o.customer} />
                   <div className="min-w-0">
@@ -307,6 +487,7 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
 }
 
 function PipelineView({ onOpen }: { onOpen: (id: string) => void }) {
+  const { orders, advance } = useOrdersData();
   return (
     <Reveal>
       <div className="-mx-4 overflow-x-auto px-4 pb-2">
@@ -323,35 +504,47 @@ function PipelineView({ onOpen }: { onOpen: (id: string) => void }) {
                   <span className="rounded-full bg-glass px-2 py-0.5 text-xs text-muted-foreground">{col.length}</span>
                 </div>
                 <div className="space-y-3">
-                  {col.map((o) => (
-                    <button
-                      key={o.id}
-                      onClick={() => onOpen(o.id)}
-                      className="lift block w-full rounded-2xl border border-border bg-background/40 p-4 text-left hover:border-gold/40"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs text-muted-foreground">{o.id}</span>
-                        {o.priority === "High" && (
-                          <span className="rounded-full px-2 py-0.5 text-[0.6rem] font-medium text-gold" style={{ background: "oklch(0.84 0.14 84 / 12%)" }}>
-                            Priority
-                          </span>
-                        )}
+                  {col.map((o) => {
+                    const next = nextStage(o.stage);
+                    return (
+                      <div
+                        key={o.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => onOpen(o.id)}
+                        onKeyDown={(e) => { if (e.key === "Enter") onOpen(o.id); }}
+                        className="lift block w-full cursor-pointer rounded-2xl border border-border bg-background/40 p-4 text-left hover:border-gold/40"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-xs text-muted-foreground">{o.number}</span>
+                          {o.priority === "High" && (
+                            <span className="rounded-full px-2 py-0.5 text-[0.6rem] font-medium text-gold" style={{ background: "oklch(0.84 0.14 84 / 12%)" }}>
+                              Priority
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-3 flex items-center gap-2.5">
+                          <Avatar name={o.customer} className="size-7 text-[0.6rem]" />
+                          <span className="truncate text-sm font-medium text-foreground">{o.customer}</span>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                          <span>{o.items} items</span>
+                          <span className="text-sm font-semibold tabular-nums text-gold">${formatNum(o.total)}</span>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-1 text-[0.7rem] text-muted-foreground">
+                          <span className="flex items-center gap-1"><Clock className="size-3" /> {o.placed}</span>
+                          {next && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); void advance(o.id, next); }}
+                              className="flex items-center gap-1 rounded-full border border-border bg-glass px-2 py-0.5 text-[0.65rem] text-foreground/80 transition-colors hover:border-gold/50 hover:text-gold"
+                            >
+                              {next} <ArrowRight className="size-3" />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <div className="mt-3 flex items-center gap-2.5">
-                        <Avatar name={o.customer} className="size-7 text-[0.6rem]" />
-                        <span className="truncate text-sm font-medium text-foreground">{o.customer}</span>
-                      </div>
-                      <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-                        <span>{o.items} items</span>
-                        <span className="text-sm font-semibold tabular-nums text-gold">${formatNum(o.total)}</span>
-                      </div>
-                      <div className="mt-2 flex items-center gap-1 text-[0.7rem] text-muted-foreground">
-                        <Clock className="size-3" /> {o.placed}
-                        <span className="mx-1">·</span>
-                        <MapPin className="size-3" /> {o.city}
-                      </div>
-                    </button>
-                  ))}
+                    );
+                  })}
                   {col.length === 0 && (
                     <div className="rounded-2xl border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
                       Empty
@@ -368,16 +561,21 @@ function PipelineView({ onOpen }: { onOpen: (id: string) => void }) {
 }
 
 function DetailsView({ orderId }: { orderId: string }) {
+  const { orders, advance } = useOrdersData();
   const o = orders.find((x) => x.id === orderId) ?? orders[0];
-  const activeStage = STAGES.indexOf(o.stage);
-  const lineItems = [
-    { name: "Aurora Serum", qty: 1, price: 68 },
-    { name: "Midnight Oil", qty: 1, price: 54 },
-    { name: "Golden Hour Balm", qty: 2, price: 42 },
-  ].slice(0, o.items || 3);
+  if (!o) {
+    return (
+      <Reveal>
+        <GlassCard className="p-10 text-center text-sm text-muted-foreground">
+          Create an order first — its details will appear here.
+        </GlassCard>
+      </Reveal>
+    );
+  }
+  const activeStage = STAGES.indexOf(o.stage as Stage);
+  const lineItems = o.lineItems.length ? o.lineItems : [{ name: `Order ${o.number}`, qty: o.items || 1, price: o.total }];
   const subtotal = lineItems.reduce((a, l) => a + l.qty * l.price, 0);
-  const shipping = 12;
-  const tax = Math.round(subtotal * 0.08);
+  const next = nextStage(o.stage);
 
   return (
     <div className="space-y-4">
@@ -385,14 +583,22 @@ function DetailsView({ orderId }: { orderId: string }) {
         <GlassCard className="p-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <span className="font-mono text-lg text-foreground">{o.id}</span>
+              <span className="font-mono text-lg text-foreground">{o.number}</span>
               <StagePill stage={o.stage} />
             </div>
             <div className="flex gap-2">
-              <button className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
-                <PackageCheck className="size-3.5" /> Fulfill order
-              </button>
-              <button className="rounded-full border border-border bg-glass px-4 py-2 text-xs text-foreground/80 hover:border-gold/40">Refund</button>
+              {next ? (
+                <button onClick={() => void advance(o.id, next)} className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
+                  <PackageCheck className="size-3.5" /> Advance to {next}
+                </button>
+              ) : (
+                <span className="rounded-full border border-gold/30 bg-glass px-4 py-2 text-xs text-foreground/70">
+                  {o.stage === "Cancelled" ? "Cancelled" : "Completed"}
+                </span>
+              )}
+              {o.stage !== "Delivered" && o.stage !== "Cancelled" && (
+                <button onClick={() => void advance(o.id, "Cancelled")} className="rounded-full border border-border bg-glass px-4 py-2 text-xs text-foreground/80 hover:border-rose-400/50 hover:text-rose-300">Cancel</button>
+              )}
             </div>
           </div>
           <div className="mt-6">
@@ -420,15 +626,13 @@ function DetailsView({ orderId }: { orderId: string }) {
               ))}
             </div>
             <div className="mt-5 space-y-2 border-t border-border pt-4 text-sm">
-              {[["Subtotal", subtotal], ["Shipping", shipping], ["Tax", tax]].map(([k, v]) => (
-                <div key={k as string} className="flex justify-between text-muted-foreground">
-                  <span>{k}</span>
-                  <span className="tabular-nums">${formatNum(v as number)}</span>
-                </div>
-              ))}
+              <div className="flex justify-between text-muted-foreground">
+                <span>Items subtotal</span>
+                <span className="tabular-nums">${formatNum(subtotal)}</span>
+              </div>
               <div className="flex justify-between border-t border-border pt-2 text-base font-semibold">
-                <span>Total</span>
-                <span className="tabular-nums text-gold">${formatNum(subtotal + shipping + tax)}</span>
+                <span>Order total</span>
+                <span className="tabular-nums text-gold">${formatNum(o.total)}</span>
               </div>
             </div>
           </GlassCard>
@@ -476,8 +680,11 @@ function DetailsView({ orderId }: { orderId: string }) {
 }
 
 function CreateView() {
-  const [cart, setCart] = useState<Record<string, number>>({ p1: 1, p3: 2 });
-  const [customer, setCustomer] = useState("Ava Chen");
+  const { customers, addOrder } = useOrdersData();
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [customer, setCustomer] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
   const add = (id: string) => setCart((c) => ({ ...c, [id]: (c[id] ?? 0) + 1 }));
   const remove = (id: string) =>
     setCart((c) => {
@@ -492,6 +699,29 @@ function CreateView() {
     [cart],
   );
   const count = Object.values(cart).reduce((a, q) => a + q, 0);
+
+  const submit = async () => {
+    if (count === 0 || busy) return;
+    setBusy(true);
+    const items: OrderItem[] = Object.entries(cart).map(([id, q]) => {
+      const p = products.find((x) => x.id === id)!;
+      return { name: p.name, qty: q, price: p.price };
+    });
+    const matched = customers.find((c) => c.name.toLowerCase() === customer.trim().toLowerCase());
+    await addOrder({
+      customer_name: customer.trim() || "Guest",
+      customer_id: matched?.id ?? null,
+      channel: "Online store",
+      total,
+      item_count: count,
+      items,
+      status: "New",
+    });
+    setBusy(false);
+    setDone(true);
+    setCart({});
+    setCustomer("");
+  };
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
@@ -565,8 +795,15 @@ function CreateView() {
               <input
                 value={customer}
                 onChange={(e) => setCustomer(e.target.value)}
+                list="wf-customer-list"
+                placeholder="Customer name"
                 className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
               />
+              <datalist id="wf-customer-list">
+                {customers.map((c) => (
+                  <option key={c.id} value={c.name} />
+                ))}
+              </datalist>
             </div>
           </label>
 
@@ -597,12 +834,18 @@ function CreateView() {
             <div className="flex justify-between text-base font-semibold"><span>Total</span><span className="tabular-nums text-gold">${formatNum(total)}</span></div>
           </div>
           <button
-            disabled={count === 0}
+            onClick={submit}
+            disabled={count === 0 || busy}
             className="mt-4 flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
             style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}
           >
-            <Sparkles className="size-4" /> Create order
+            <Sparkles className="size-4" /> {busy ? "Creating…" : "Create order"}
           </button>
+          {done && (
+            <p className="mt-3 text-center text-xs text-emerald-300">
+              Order created — find it in the pipeline &amp; command center.
+            </p>
+          )}
         </GlassCard>
       </Reveal>
     </div>
@@ -610,27 +853,33 @@ function CreateView() {
 }
 
 function FulfillmentView() {
+  const { orders, advance } = useOrdersData();
   const queue = orders.filter((o) => ["Paid", "Processing", "Packed"].includes(o.stage));
+  const toPick = orders.filter((o) => o.stage === "Paid").length;
+  const toPack = orders.filter((o) => o.stage === "Processing").length;
+  const toShip = orders.filter((o) => o.stage === "Packed").length;
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile label="To pick" value={14} icon={Package} />
-        <StatTile label="To pack" value={9} icon={PackageCheck} />
-        <StatTile label="To ship" value={6} icon={Truck} />
+        <StatTile label="To pick" value={toPick} icon={Package} />
+        <StatTile label="To pack" value={toPack} icon={PackageCheck} />
+        <StatTile label="To ship" value={toShip} icon={Truck} />
       </div>
       <Reveal>
         <GlassCard className="p-6">
           <div className="flex items-center justify-between">
             <SectionLabel icon={PackageCheck}>Fulfillment queue</SectionLabel>
-            <span className="text-xs text-muted-foreground">SLA-sorted</span>
+            <span className="text-xs text-muted-foreground">{queue.length} in queue</span>
           </div>
           <div className="mt-4 space-y-2">
-            {queue.map((o, i) => {
-              const sla = ["12m left", "34m left", "1h 5m left", "past due", "2h left", "3h left"][i % 6];
-              const past = sla === "past due";
+            {queue.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">Nothing to fulfill right now.</p>
+            )}
+            {queue.map((o) => {
+              const next = nextStage(o.stage);
               return (
                 <div key={o.id} className="flex items-center gap-4 rounded-2xl border border-border bg-background/30 p-3">
-                  <span className="font-mono text-xs text-muted-foreground">{o.id}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{o.number}</span>
                   <div className="flex min-w-0 flex-1 items-center gap-3">
                     <Avatar name={o.customer} />
                     <div className="min-w-0">
@@ -639,12 +888,14 @@ function FulfillmentView() {
                     </div>
                   </div>
                   <StagePill stage={o.stage} />
-                  <span className={cn("flex w-24 items-center justify-end gap-1 text-xs", past ? "text-rose-300" : "text-muted-foreground")}>
-                    <Clock className="size-3" /> {sla}
+                  <span className="hidden w-24 items-center justify-end gap-1 text-xs text-muted-foreground sm:flex">
+                    <Clock className="size-3" /> {o.placed}
                   </span>
-                  <button className="rounded-full px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
-                    Advance
-                  </button>
+                  {next && (
+                    <button onClick={() => void advance(o.id, next)} className="rounded-full px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
+                      → {next}
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -776,7 +1027,7 @@ const viewMeta: Record<ViewKey, { title: string; sub: string }> = {
 
 export function OrdersWorkspace() {
   const [active, setActive] = useState<ViewKey>("overview");
-  const [orderId, setOrderId] = useState(orders[0].id);
+  const [orderId, setOrderId] = useState("");
   const meta = viewMeta[active];
 
   const openOrder = (id: string) => {
@@ -785,6 +1036,7 @@ export function OrdersWorkspace() {
   };
 
   return (
+    <OrdersProvider>
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
       <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 !hidden">
         <Brand subtle />
@@ -858,5 +1110,6 @@ export function OrdersWorkspace() {
         </div>
       </section>
     </div>
+    </OrdersProvider>
   );
 }

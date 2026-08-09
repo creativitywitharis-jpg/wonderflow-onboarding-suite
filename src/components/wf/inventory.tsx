@@ -33,6 +33,8 @@ import { Bar, Delta, Reveal, Ring, SectionLabel, StatTile, formatNum } from "@/c
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
+import { CsvImport } from "@/components/wf/CsvImport";
+import type { FieldSpec } from "@/lib/csv";
 import { listOrders } from "@/lib/orders";
 import {
   adjustStock,
@@ -136,6 +138,7 @@ type InvState = {
   products: Product[];
   loading: boolean;
   addProduct: (p: NewProduct) => Promise<void>;
+  importProducts: (rows: NewProduct[]) => Promise<{ error: Error | null }>;
   adjust: (id: string, delta: number) => Promise<void>;
   seed: () => Promise<void>;
 };
@@ -209,7 +212,18 @@ function InventoryProvider({ children }: { children: ReactNode }) {
     [org?.id, load],
   );
 
-  return <InvCtx.Provider value={{ products, loading, addProduct, adjust, seed }}>{children}</InvCtx.Provider>;
+  const importProducts = useCallback(
+    async (rows: NewProduct[]) => {
+      if (!org) return { error: new Error("No active workspace.") };
+      const { error } = await insertProducts(org.id, rows);
+      await load();
+      return { error };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+
+  return <InvCtx.Provider value={{ products, loading, addProduct, importProducts, adjust, seed }}>{children}</InvCtx.Provider>;
 }
 
 function sampleProducts(): NewProduct[] {
@@ -355,9 +369,24 @@ function CoverageBar({ p }: { p: Product }) {
  * Views
  * ─────────────────────────────────────────────────────────────────── */
 
+const PRODUCT_IMPORT_FIELDS: FieldSpec[] = [
+  { key: "name", label: "Name", required: true, aliases: ["product", "product name", "item", "title"] },
+  { key: "sku", label: "SKU", aliases: ["sku", "code", "product code", "barcode"] },
+  { key: "category", label: "Category", aliases: ["type", "group"] },
+  { key: "price", label: "Price", type: "number", aliases: ["price", "unit price", "retail", "sell price"] },
+  { key: "cost", label: "Cost", type: "number", aliases: ["cost", "unit cost", "cogs", "buy price"] },
+  { key: "stock", label: "Stock", type: "number", aliases: ["stock", "quantity", "qty", "on hand", "inventory"] },
+  { key: "reorder_point", label: "Reorder point", type: "number", aliases: ["reorder", "reorder point", "min", "minimum", "par"] },
+];
+
 function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
-  const { products, loading, seed } = useInv();
+  const { org } = useOrg();
+  const { products, loading, seed, importProducts } = useInv();
   const [busy, setBusy] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importer = importing && org ? (
+    <CsvImport entityLabel="products" fields={PRODUCT_IMPORT_FIELDS} orgId={org.id} onImport={(rows) => importProducts(rows as NewProduct[])} onClose={() => setImporting(false)} />
+  ) : null;
   const atRisk = products.filter((p) => p.status === "Low" || p.status === "Critical");
   const overstock = products.filter((p) => p.status === "Overstock");
   const stockValue = products.reduce((a, p) => a + p.stock * p.price, 0);
@@ -375,7 +404,7 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
             Add your catalog, or drop in a sample set to explore stock levels, reorder suggestions and forecasts.
           </p>
-          <div className="mt-6 flex justify-center">
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
             <button
               onClick={async () => { setBusy(true); await seed(); setBusy(false); }}
               disabled={busy}
@@ -384,8 +413,12 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
             >
               <Sparkles className="size-4" /> {busy ? "Adding…" : "Add sample products"}
             </button>
+            <button onClick={() => setImporting(true)} className="rounded-full border border-border bg-glass px-5 py-2.5 text-sm text-foreground/85 transition-colors hover:border-gold/40">
+              Import CSV
+            </button>
           </div>
         </GlassCard>
+        {importer}
       </Reveal>
     );
   }
@@ -481,7 +514,9 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
 }
 
 function ProductsView({ selectedId, onSelect }: { selectedId: string | null; onSelect: (id: string | null) => void }) {
-  const { products } = useInv();
+  const { org } = useOrg();
+  const { products, importProducts } = useInv();
+  const [importing, setImporting] = useState(false);
   const selected = selectedId ? products.find((x) => x.id === selectedId) : null;
   if (selected) {
     return <ProductDetail p={selected} onBack={() => onSelect(null)} />;
@@ -489,6 +524,10 @@ function ProductsView({ selectedId, onSelect }: { selectedId: string | null; onS
   return (
     <Reveal>
       <GlassCard className="p-5 sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <p className="text-sm font-medium text-foreground/80">{products.length} product{products.length === 1 ? "" : "s"}</p>
+          <button onClick={() => setImporting(true)} className="rounded-full border border-border bg-glass px-4 py-2 text-xs text-foreground/85 transition-colors hover:border-gold/40">Import CSV</button>
+        </div>
         <div className="hidden grid-cols-[1.6fr_0.9fr_0.7fr_0.8fr_1fr] gap-4 px-3 pb-2 text-[0.7rem] uppercase tracking-[0.14em] text-muted-foreground md:grid">
           <span>Product</span>
           <span>Category</span>
@@ -518,6 +557,9 @@ function ProductsView({ selectedId, onSelect }: { selectedId: string | null; onS
           ))}
         </div>
       </GlassCard>
+      {importing && org && (
+        <CsvImport entityLabel="products" fields={PRODUCT_IMPORT_FIELDS} orgId={org.id} onImport={(rows) => importProducts(rows as NewProduct[])} onClose={() => setImporting(false)} />
+      )}
     </Reveal>
   );
 }

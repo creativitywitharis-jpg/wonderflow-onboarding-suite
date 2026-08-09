@@ -47,6 +47,8 @@ import {
   type OrderItem,
   type OrderStatus,
 } from "@/lib/orders";
+import { CsvImport } from "@/components/wf/CsvImport";
+import type { FieldSpec } from "@/lib/csv";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -141,6 +143,7 @@ type OrdersState = {
   products: DbProduct[];
   loading: boolean;
   addOrder: (o: NewOrder) => Promise<void>;
+  importOrders: (rows: NewOrder[]) => Promise<{ error: Error | null }>;
   advance: (id: string, status: OrderStatus) => Promise<void>;
   seed: () => Promise<void>;
 };
@@ -208,8 +211,19 @@ function OrdersProvider({ children }: { children: ReactNode }) {
     [org?.id, customers, load],
   );
 
+  const importOrders = useCallback(
+    async (rows: NewOrder[]) => {
+      if (!org) return { error: new Error("No active workspace.") };
+      const { error } = await insertOrders(org.id, rows);
+      await load();
+      return { error };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+
   return (
-    <OrdersCtx.Provider value={{ orders, customers, products, loading, addOrder, advance, seed }}>
+    <OrdersCtx.Provider value={{ orders, customers, products, loading, addOrder, importOrders, advance, seed }}>
       {children}
     </OrdersCtx.Provider>
   );
@@ -332,9 +346,25 @@ function StatusTracker({ steps, active }: { steps: string[]; active: number }) {
  * Views
  * ─────────────────────────────────────────────────────────────────── */
 
+const ORDER_IMPORT_FIELDS: FieldSpec[] = [
+  { key: "customer_name", label: "Customer", aliases: ["customer", "client", "name", "customer name", "buyer"] },
+  { key: "number", label: "Order #", aliases: ["order", "order number", "order id", "reference"] },
+  { key: "status", label: "Status", enum: ["New", "Paid", "Processing", "Packed", "Shipped", "Delivered", "Cancelled"], aliases: ["stage", "state"] },
+  { key: "channel", label: "Channel", aliases: ["source", "sales channel"] },
+  { key: "city", label: "City", aliases: ["location", "town"] },
+  { key: "total", label: "Total", type: "number", required: true, aliases: ["amount", "order total", "revenue", "value", "grand total"] },
+  { key: "item_count", label: "Items", type: "number", aliases: ["items", "quantity", "qty", "units", "line items"] },
+  { key: "eta", label: "ETA", aliases: ["delivery", "expected", "eta date"] },
+];
+
 function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
-  const { orders, loading, seed } = useOrdersData();
+  const { org } = useOrg();
+  const { orders, loading, seed, importOrders } = useOrdersData();
   const [busy, setBusy] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importer = importing && org ? (
+    <CsvImport entityLabel="orders" fields={ORDER_IMPORT_FIELDS} orgId={org.id} onImport={(rows) => importOrders(rows as NewOrder[])} onClose={() => setImporting(false)} />
+  ) : null;
   const total = orders.length;
   const revenue = orders.reduce((a, o) => a + o.total, 0);
   const aov = total ? Math.round(revenue / total) : 0;
@@ -355,7 +385,7 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
             Create your first order, or drop in a sample set to explore the pipeline, fulfillment and analytics.
           </p>
-          <div className="mt-6 flex justify-center">
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
             <button
               onClick={async () => { setBusy(true); await seed(); setBusy(false); }}
               disabled={busy}
@@ -364,8 +394,12 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
             >
               <Sparkles className="size-4" /> {busy ? "Adding…" : "Add sample orders"}
             </button>
+            <button onClick={() => setImporting(true)} className="rounded-full border border-border bg-glass px-5 py-2.5 text-sm text-foreground/85 transition-colors hover:border-gold/40">
+              Import CSV
+            </button>
           </div>
         </GlassCard>
+        {importer}
       </Reveal>
     );
   }
@@ -449,7 +483,7 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
         <GlassCard className="p-6">
           <div className="flex items-center justify-between">
             <SectionLabel icon={Receipt}>Recent orders</SectionLabel>
-            <span className="text-xs text-muted-foreground">live</span>
+            <button onClick={() => setImporting(true)} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-gold/40">Import CSV</button>
           </div>
           <div className="mt-4 space-y-1">
             {orders.slice(0, 6).map((o) => (
@@ -474,6 +508,7 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
           </div>
         </GlassCard>
       </Reveal>
+      {importer}
     </div>
   );
 }

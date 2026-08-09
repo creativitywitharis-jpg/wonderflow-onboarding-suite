@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   ArrowLeft,
@@ -35,6 +35,8 @@ import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Delta, Donut, Reveal, Ring, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
+import { useOrg } from "@/lib/org-context";
+import { createCampaign, listCampaigns, updateCampaign, type CampaignStatus, type DbCampaign } from "@/lib/campaigns";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -104,14 +106,6 @@ type Campaign = {
   click: number;
   roi: number;
 };
-
-const initialCampaigns: Campaign[] = [
-  { id: "cmp1", name: "Summer Glow Launch", channel: "Email", status: "Active", audience: "All customers", sent: 12480, open: 42, click: 6.8, roi: 5.2 },
-  { id: "cmp2", name: "Champions VIP Early Access", channel: "SMS", status: "Active", audience: "Champions", sent: 486, open: 68, click: 24, roi: 8.4 },
-  { id: "cmp3", name: "Cart Abandon Retarget", channel: "Ads", status: "Active", audience: "Abandoners", sent: 1240, open: 0, click: 3.1, roi: 4.1 },
-  { id: "cmp4", name: "Referral Program Teaser", channel: "Social", status: "Scheduled", audience: "Loyal", sent: 0, open: 0, click: 0, roi: 0 },
-  { id: "cmp5", name: "Win-back — We miss you", channel: "Email", status: "Draft", audience: "Dormant", sent: 0, open: 0, click: 0, roi: 0 },
-];
 
 const channelMix = [
   { label: "Email", share: 34, color: GOLD },
@@ -385,15 +379,63 @@ function SegmentsView() {
   );
 }
 
+function toUiCampaign(c: DbCampaign): Campaign {
+  return {
+    id: c.id,
+    name: c.name,
+    channel: c.channel as Channel,
+    status: c.status,
+    audience: c.audience ?? "All customers",
+    sent: c.sent,
+    open: Number(c.open_rate),
+    click: Number(c.click_rate),
+    roi: Number(c.roi),
+  };
+}
+
+const CAMPAIGN_STATUSES: CampaignStatus[] = ["Active", "Scheduled", "Draft", "Done"];
+
 function CampaignsView() {
-  const [list, setList] = useState<Campaign[]>(initialCampaigns);
+  const { org } = useOrg();
+  const [list, setList] = useState<Campaign[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [channel, setChannel] = useState<Channel>("Email");
   const [audience, setAudience] = useState("Champions");
   const [name, setName] = useState("");
-  const launch = () => {
+
+  const load = useCallback(async () => {
+    if (!org) {
+      setList([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const rows = await listCampaigns(org.id);
+      setList(rows.map(toUiCampaign));
+    } catch {
+      setList([]);
+    }
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const launch = async () => {
+    if (!org || busy) return;
     const n = name.trim() || `${channel} campaign to ${audience}`;
-    setList((l) => [{ id: `cmp${Date.now()}`, name: n, channel, status: "Active", audience, sent: 0, open: 0, click: 0, roi: 0 }, ...l]);
+    setBusy(true);
+    await createCampaign(org.id, { name: n, channel, audience, status: "Active" });
+    setBusy(false);
     setName("");
+    await load();
+  };
+  const changeStatus = async (id: string, status: CampaignStatus) => {
+    await updateCampaign(id, { status });
+    await load();
   };
   const statusColor: Record<Campaign["status"], string> = { Active: "oklch(0.72 0.14 155)", Scheduled: "oklch(0.66 0.09 200)", Draft: "oklch(0.7 0.02 250)", Done: "oklch(0.84 0.14 84)" };
 
@@ -403,13 +445,17 @@ function CampaignsView() {
         <GlassCard className="p-6">
           <SectionLabel icon={Megaphone}>Campaigns</SectionLabel>
           <div className="mt-4 space-y-2">
+            {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading campaigns…</p>}
+            {!loading && list.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No campaigns yet — launch your first from the panel.</p>}
             {list.map((c) => {
-              const Icon = channelIcon[c.channel];
+              const Icon = channelIcon[c.channel] ?? Megaphone;
               return (
                 <div key={c.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 rounded-2xl border border-border bg-background/30 p-3 sm:grid-cols-[auto_1.4fr_1fr_1fr_auto]">
                   <span className="grid size-9 place-items-center rounded-lg border border-border bg-glass"><Icon className="size-4 text-gold" /></span>
                   <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{c.name}</p><p className="truncate text-xs text-muted-foreground">{c.channel} · {c.audience}</p></div>
-                  <span className="hidden items-center gap-1.5 text-xs sm:flex" style={{ color: statusColor[c.status] }}><span className="size-1.5 rounded-full" style={{ background: statusColor[c.status] }} />{c.status}</span>
+                  <select value={c.status} onChange={(e) => changeStatus(c.id, e.target.value as CampaignStatus)} className="hidden rounded-lg border border-border bg-background/40 px-2 py-1 text-xs outline-none focus:border-gold/50 sm:block" style={{ color: statusColor[c.status] }}>
+                    {CAMPAIGN_STATUSES.map((s) => <option key={s} value={s} className="text-foreground">{s}</option>)}
+                  </select>
                   <span className="hidden text-xs text-muted-foreground sm:block">{c.sent ? `${formatNum(c.sent)} sent · ${c.open}% open` : "—"}</span>
                   <span className="text-right text-sm font-semibold tabular-nums text-gold">{c.roi ? `${c.roi}x` : "—"}</span>
                 </div>
@@ -443,8 +489,8 @@ function CampaignsView() {
           <div className="mt-3 rounded-xl border border-gold/25 bg-glass p-3 text-xs text-foreground/80">
             <span className="text-gold">AI subject:</span> “Something glowing is coming for {audience.toLowerCase()} ✨”
           </div>
-          <button onClick={launch} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
-            <Rocket className="size-4" /> Launch campaign
+          <button onClick={launch} disabled={busy} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
+            <Rocket className="size-4" /> {busy ? "Launching…" : "Launch campaign"}
           </button>
         </GlassCard>
       </Reveal>

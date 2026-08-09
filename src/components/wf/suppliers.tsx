@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
@@ -31,6 +31,9 @@ import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Delta, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
+import { useOrg } from "@/lib/org-context";
+import { listProducts } from "@/lib/products";
+import { createSupplier, insertSuppliers, listSuppliers, updateSupplier, type NewSupplier } from "@/lib/suppliers";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -83,24 +86,144 @@ type Supplier = {
   likelihood: number;
 };
 
-const suppliers: Supplier[] = [
-  { id: "SUP-01", name: "Northwind Supply", category: "Packaging", country: "USA", rating: 4.8, reliability: 94, onTime: 97, leadTime: 4, spend: 428000, risk: "Low", priceIndex: -6, status: "Preferred", products: 34, since: "2021", impact: 82, likelihood: 18 },
-  { id: "SUP-02", name: "Lumen Labs", category: "Ingredients", country: "Germany", rating: 4.6, reliability: 90, onTime: 93, leadTime: 7, spend: 356000, risk: "Low", priceIndex: -2, status: "Preferred", products: 28, since: "2020", impact: 74, likelihood: 22 },
-  { id: "SUP-03", name: "Fjord Materials", category: "Oils", country: "Norway", rating: 4.2, reliability: 82, onTime: 86, leadTime: 9, spend: 214000, risk: "Medium", priceIndex: 4, status: "Active", products: 16, since: "2022", impact: 58, likelihood: 46 },
-  { id: "SUP-04", name: "Halcyon Glass", category: "Packaging", country: "China", rating: 3.9, reliability: 74, onTime: 79, leadTime: 14, spend: 189000, risk: "Medium", priceIndex: -11, status: "Active", products: 22, since: "2022", impact: 52, likelihood: 54 },
-  { id: "SUP-05", name: "Meridian Botanicals", category: "Ingredients", country: "India", rating: 4.4, reliability: 88, onTime: 91, leadTime: 11, spend: 167000, risk: "Low", priceIndex: -8, status: "Active", products: 19, since: "2023", impact: 46, likelihood: 24 },
-  { id: "SUP-06", name: "Cobalt Print", category: "Labels", country: "USA", rating: 4.1, reliability: 80, onTime: 84, leadTime: 5, spend: 98000, risk: "Low", priceIndex: 1, status: "Active", products: 12, since: "2023", impact: 30, likelihood: 28 },
-  { id: "SUP-07", name: "Solstice Freight", category: "Logistics", country: "USA", rating: 3.6, reliability: 68, onTime: 71, leadTime: 3, spend: 142000, risk: "High", priceIndex: 9, status: "Review", products: 1, since: "2022", impact: 78, likelihood: 68 },
-  { id: "SUP-08", name: "Tidewater Caps", category: "Packaging", country: "Vietnam", rating: 4.0, reliability: 78, onTime: 82, leadTime: 16, spend: 76000, risk: "Medium", priceIndex: -14, status: "Active", products: 9, since: "2024", impact: 38, likelihood: 50 },
+// Performance metrics are derived from the real rating + lead time (we don't
+// track PO history yet), so the module stays honest while looking complete.
+function riskOf(rating: number, leadTime: number): Risk {
+  if (rating < 3.8 || leadTime > 12) return "High";
+  if (rating < 4.3 || leadTime > 7) return "Medium";
+  return "Low";
+}
+
+function toUiSupplier(
+  s: import("@/lib/suppliers").DbSupplier,
+  productsByCat: Record<string, number>,
+): Supplier {
+  const rating = Number(s.rating) || 0;
+  const leadTime = s.lead_time_days ?? 0;
+  const reliability = Math.round((rating / 5) * 100);
+  const risk = riskOf(rating, leadTime);
+  const statusOk: Status[] = ["Preferred", "Active", "Review"];
+  const status = (statusOk.includes(s.status as Status) ? s.status : "Review") as Status;
+  return {
+    id: s.id,
+    name: s.name,
+    category: s.category ?? "General",
+    country: s.country ?? "—",
+    rating,
+    reliability,
+    onTime: Math.max(0, reliability - 3),
+    leadTime,
+    spend: Number(s.spend) || 0,
+    risk,
+    priceIndex: s.price_index ?? 0,
+    status,
+    products: productsByCat[(s.category ?? "").toLowerCase()] ?? 0,
+    since: new Date(s.created_at).getFullYear().toString(),
+    impact: risk === "High" ? 78 : risk === "Medium" ? 55 : 35,
+    likelihood: risk === "High" ? 62 : risk === "Medium" ? 46 : 22,
+  };
+}
+
+const SEGMENT_PALETTE = [GOLD, "oklch(0.7 0.11 60)", "oklch(0.66 0.09 200)", "oklch(0.62 0.12 300)", "oklch(0.75 0.13 150)", "oklch(0.72 0.14 155)"];
+
+// Real spend-by-category donut data derived from the org's suppliers.
+function spendByCategoryOf(list: Supplier[]): { label: string; share: number; color: string }[] {
+  const totals = new Map<string, number>();
+  for (const s of list) totals.set(s.category, (totals.get(s.category) ?? 0) + s.spend);
+  const grand = [...totals.values()].reduce((a, v) => a + v, 0) || 1;
+  return [...totals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([label, v], i) => ({ label, share: Math.round((v / grand) * 100), color: SEGMENT_PALETTE[i % SEGMENT_PALETTE.length] }));
+}
+
+// One sample set for the empty-state seed action.
+const SAMPLE_SUPPLIERS: NewSupplier[] = [
+  { name: "Northwind Supply", category: "Packaging", country: "USA", rating: 4.8, lead_time_days: 4, spend: 428000, price_index: -6, status: "Preferred" },
+  { name: "Lumen Labs", category: "Ingredients", country: "Germany", rating: 4.6, lead_time_days: 7, spend: 356000, price_index: -2, status: "Preferred" },
+  { name: "Fjord Materials", category: "Oils", country: "Norway", rating: 4.2, lead_time_days: 9, spend: 214000, price_index: 4, status: "Active" },
+  { name: "Halcyon Glass", category: "Packaging", country: "China", rating: 3.9, lead_time_days: 14, spend: 189000, price_index: -11, status: "Active" },
+  { name: "Meridian Botanicals", category: "Ingredients", country: "India", rating: 4.4, lead_time_days: 11, spend: 167000, price_index: -8, status: "Active" },
+  { name: "Solstice Freight", category: "Logistics", country: "USA", rating: 3.6, lead_time_days: 3, spend: 142000, price_index: 9, status: "Review" },
 ];
 
-const spendByCategory = [
-  { label: "Packaging", share: 38, color: GOLD },
-  { label: "Ingredients", share: 30, color: "oklch(0.7 0.11 60)" },
-  { label: "Oils", share: 13, color: "oklch(0.66 0.09 200)" },
-  { label: "Logistics", share: 12, color: "oklch(0.62 0.12 300)" },
-  { label: "Labels", share: 7, color: "oklch(0.75 0.13 150)" },
-];
+type SuppliersState = {
+  suppliers: Supplier[];
+  loading: boolean;
+  addSupplier: (s: NewSupplier) => Promise<void>;
+  setStatus: (id: string, status: Status) => Promise<void>;
+  seed: () => Promise<void>;
+};
+const SuppliersCtx = createContext<SuppliersState | null>(null);
+function useSuppliersData() {
+  const ctx = useContext(SuppliersCtx);
+  if (!ctx) throw new Error("useSuppliersData must be used within SuppliersProvider");
+  return ctx;
+}
+
+function SuppliersProvider({ children }: { children: ReactNode }) {
+  const { org } = useOrg();
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!org) {
+      setSuppliers([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [rows, prods] = await Promise.all([listSuppliers(org.id), listProducts(org.id).catch(() => [])]);
+      const byCat: Record<string, number> = {};
+      for (const p of prods) {
+        const k = (p.category ?? "").toLowerCase();
+        if (k) byCat[k] = (byCat[k] ?? 0) + 1;
+      }
+      setSuppliers(rows.map((r) => toUiSupplier(r, byCat)));
+    } catch {
+      setSuppliers([]);
+    }
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const addSupplier = useCallback(
+    async (s: NewSupplier) => {
+      if (!org) return;
+      await createSupplier(org.id, s);
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+  const setStatus = useCallback(
+    async (id: string, status: Status) => {
+      await updateSupplier(id, { status });
+      await load();
+    },
+    [load],
+  );
+  const seed = useCallback(
+    async () => {
+      if (!org) return;
+      await insertSuppliers(org.id, SAMPLE_SUPPLIERS);
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+
+  return (
+    <SuppliersCtx.Provider value={{ suppliers, loading, addSupplier, setStatus, seed }}>
+      {children}
+    </SuppliersCtx.Provider>
+  );
+}
 
 type PO = { id: string; supplier: string; items: number; total: number; status: string; placed: string; eta: string };
 const purchaseOrders: PO[] = [
@@ -178,6 +301,8 @@ function PriceLine({ data, up }: { data: number[]; up: boolean }) {
 /** Risk matrix scatter: impact (x) vs likelihood (y). */
 function RiskMatrix() {
   const { ref, inView } = useInView();
+  const { suppliers } = useSuppliersData();
+  const maxSpend = Math.max(1, ...suppliers.map((s) => s.spend));
   return (
     <div ref={ref}>
       <svg viewBox="0 0 220 200" className="w-full">
@@ -190,7 +315,7 @@ function RiskMatrix() {
         {suppliers.map((s, i) => {
           const cx = (s.impact / 100) * 220;
           const cy = 200 - (s.likelihood / 100) * 200;
-          const r = 4 + (s.spend / 428000) * 8;
+          const r = 4 + (s.spend / maxSpend) * 8;
           return (
             <g key={s.id} style={{ opacity: inView ? 1 : 0, transition: `opacity 0.5s ease ${i * 70}ms` }}>
               <circle cx={cx} cy={cy} r={inView ? r : 0} fill={`color-mix(in oklch, ${riskColor[s.risk]} 65%, transparent)`} stroke={riskColor[s.risk]} strokeWidth="1.5" style={{ transition: `r 0.6s cubic-bezier(0.2,0.8,0.2,1) ${i * 70}ms` }} />
@@ -211,14 +336,46 @@ function RiskMatrix() {
  * ─────────────────────────────────────────────────────────────────── */
 
 function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
+  const { suppliers, loading, seed } = useSuppliersData();
+  const [busy, setBusy] = useState(false);
   const alerts = suppliers.filter((s) => s.risk === "High" || s.status === "Review");
+  const totalSpend = suppliers.reduce((a, s) => a + s.spend, 0);
+  const avgLead = suppliers.length ? suppliers.reduce((a, s) => a + s.leadTime, 0) / suppliers.length : 0;
+  const avgOnTime = suppliers.length ? Math.round(suppliers.reduce((a, s) => a + s.onTime, 0) / suppliers.length) : 0;
+  const spendCats = spendByCategoryOf(suppliers);
+  const spendLabel = totalSpend >= 1_000_000 ? `$${(totalSpend / 1_000_000).toFixed(1)}M` : `$${formatNum(totalSpend)}`;
+
+  if (!loading && suppliers.length === 0) {
+    return (
+      <Reveal>
+        <GlassCard className="p-8 text-center sm:p-10">
+          <span className="orb mx-auto grid size-14 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+            <Factory className="size-6" stroke="oklch(0.2 0.02 70)" />
+          </span>
+          <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>No suppliers yet</h2>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+            Add your vendors to track spend, lead times and risk — or drop in a sample set to explore.
+          </p>
+          <button
+            onClick={async () => { setBusy(true); await seed(); setBusy(false); }}
+            disabled={busy}
+            className="mt-6 inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+            style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}
+          >
+            <Sparkles className="size-4" /> {busy ? "Adding…" : "Add sample suppliers"}
+          </button>
+        </GlassCard>
+      </Reveal>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Active suppliers" value={48} delta="4" icon={Building2} />
-        <StatTile label="Annual spend" value={1420000} prefix="$" delta="6.1%" positive={false} icon={DollarSign} />
-        <StatTile label="Avg lead time" value={8.4} suffix=" days" decimals={1} delta="0.7 days" icon={Clock} />
-        <StatTile label="On-time rate" value={91} suffix="%" delta="2.3 pts" icon={Truck} />
+        <StatTile label="Active suppliers" value={suppliers.length} icon={Building2} />
+        <StatTile label="Total spend" value={totalSpend} prefix="$" icon={DollarSign} />
+        <StatTile label="Avg lead time" value={avgLead} suffix=" days" decimals={1} icon={Clock} />
+        <StatTile label="Avg on-time rate" value={avgOnTime} suffix="%" icon={Truck} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
@@ -227,16 +384,16 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
             <SectionLabel icon={Globe}>Spend by category</SectionLabel>
             <div className="mt-4 flex items-center gap-6">
               <Donut
-                data={spendByCategory}
+                data={spendCats}
                 center={
                   <div>
-                    <div className="text-xl font-semibold tabular-nums gold-text">$1.4M</div>
-                    <div className="text-[0.6rem] uppercase tracking-[0.2em] text-muted-foreground">annual</div>
+                    <div className="text-xl font-semibold tabular-nums gold-text">{spendLabel}</div>
+                    <div className="text-[0.6rem] uppercase tracking-[0.2em] text-muted-foreground">total</div>
                   </div>
                 }
               />
               <ul className="min-w-0 flex-1 space-y-2">
-                {spendByCategory.map((s) => (
+                {spendCats.map((s) => (
                   <li key={s.label} className="flex items-center gap-2 text-sm">
                     <span className="size-2.5 shrink-0 rounded-full" style={{ background: s.color }} />
                     <span className="flex-1 truncate text-foreground/85">{s.label}</span>
@@ -258,9 +415,11 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Procurement briefing</p>
                 <p className="mt-2 text-[0.95rem] leading-relaxed text-foreground/90">
-                  You have an AI procurement manager. I found <span className="text-gold">$42k</span> in annual
-                  savings by shifting glass volume to Tidewater. <span className="text-gold">Solstice Freight</span> is
-                  trending high-risk — on-time dropped to 71%.
+                  {alerts.length > 0 ? (
+                    <>Across your <span className="text-gold">{suppliers.length}</span> suppliers, <span className="text-gold">{alerts.length}</span> need attention — high risk or under review. Avg lead time is <span className="text-gold">{avgLead.toFixed(1)} days</span>.</>
+                  ) : (
+                    <>Your <span className="text-gold">{suppliers.length}</span> suppliers are all in good standing. Avg lead time is <span className="text-gold">{avgLead.toFixed(1)} days</span> at <span className="text-gold">{avgOnTime}%</span> on-time.</>
+                  )}
                 </p>
               </div>
             </div>
@@ -305,14 +464,63 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
+const SUP_INPUT = "w-full rounded-xl border border-border bg-background/40 px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-gold/50";
+
 function DatabaseView({ selectedId, onSelect }: { selectedId: string | null; onSelect: (id: string | null) => void }) {
+  const { suppliers, loading, addSupplier } = useSuppliersData();
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ name: "", category: "", country: "", lead_time_days: "7", rating: "4.0", status: "Active" as Status });
+
   if (selectedId) {
-    const s = suppliers.find((x) => x.id === selectedId) ?? suppliers[0];
-    return <SupplierProfile s={s} onBack={() => onSelect(null)} />;
+    const s = suppliers.find((x) => x.id === selectedId);
+    if (s) return <SupplierProfile s={s} onBack={() => onSelect(null)} />;
+    onSelect(null);
   }
+
+  const submit = async () => {
+    if (!form.name.trim() || busy) return;
+    setBusy(true);
+    await addSupplier({
+      name: form.name.trim(),
+      category: form.category.trim() || null,
+      country: form.country.trim() || null,
+      lead_time_days: Number(form.lead_time_days) || 7,
+      rating: Number(form.rating) || 4,
+      status: form.status,
+    });
+    setBusy(false);
+    setForm({ name: "", category: "", country: "", lead_time_days: "7", rating: "4.0", status: "Active" });
+    setAdding(false);
+  };
+
   return (
     <Reveal>
       <GlassCard className="p-5 sm:p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <SectionLabel icon={Building2}>Suppliers</SectionLabel>
+          <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
+            <Package className="size-3.5" /> New supplier
+          </button>
+        </div>
+        {adding && (
+          <div className="mb-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
+            <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Supplier name *" className={SUP_INPUT} />
+            <input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} placeholder="Category (e.g. Packaging)" className={SUP_INPUT} />
+            <input value={form.country} onChange={(e) => setForm((f) => ({ ...f, country: e.target.value }))} placeholder="Country" className={SUP_INPUT} />
+            <div className="grid grid-cols-2 gap-3">
+              <input type="number" value={form.lead_time_days} onChange={(e) => setForm((f) => ({ ...f, lead_time_days: e.target.value }))} placeholder="Lead days" className={SUP_INPUT} />
+              <input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={(e) => setForm((f) => ({ ...f, rating: e.target.value }))} placeholder="Rating" className={SUP_INPUT} />
+            </div>
+            <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as Status }))} className={SUP_INPUT}>
+              {(["Preferred", "Active", "Review"] as Status[]).map((s) => <option key={s}>{s}</option>)}
+            </select>
+            <div className="flex gap-2 sm:col-span-2">
+              <button onClick={submit} disabled={!form.name.trim() || busy} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Save supplier"}</button>
+              <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+            </div>
+          </div>
+        )}
         <div className="hidden grid-cols-[1.6fr_0.8fr_0.7fr_0.8fr_0.9fr] gap-4 px-3 pb-2 text-[0.7rem] uppercase tracking-[0.14em] text-muted-foreground md:grid">
           <span>Supplier</span>
           <span>Rating</span>
@@ -321,6 +529,8 @@ function DatabaseView({ selectedId, onSelect }: { selectedId: string | null; onS
           <span className="text-right">Annual spend</span>
         </div>
         <div className="space-y-1">
+          {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading suppliers…</p>}
+          {!loading && suppliers.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No suppliers yet — add your first above.</p>}
           {suppliers.map((s) => (
             <button key={s.id} onClick={() => onSelect(s.id)} className="lift grid w-full grid-cols-1 items-center gap-4 rounded-2xl border border-transparent px-3 py-3 text-left hover:border-gold/30 hover:bg-glass md:grid-cols-[1.6fr_0.8fr_0.7fr_0.8fr_0.9fr]">
               <div className="flex items-center gap-3">
@@ -418,10 +628,18 @@ const criteria = [
 ];
 
 function CompareView() {
-  const [ids, setIds] = useState<string[]>(["SUP-01", "SUP-02", "SUP-04"]);
+  const { suppliers } = useSuppliersData();
+  const [ids, setIds] = useState<string[]>([]);
+  useEffect(() => {
+    setIds((prev) => (prev.length === 0 && suppliers.length > 0 ? suppliers.slice(0, 3).map((s) => s.id) : prev));
+  }, [suppliers]);
   const chosen = suppliers.filter((s) => ids.includes(s.id));
   const toggle = (id: string) =>
     setIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : prev.length < 3 ? [...prev, id] : prev));
+
+  if (suppliers.length === 0) {
+    return <GlassCard className="p-10 text-center text-sm text-muted-foreground">Add suppliers first — you'll be able to compare them side by side here.</GlassCard>;
+  }
 
   const scores = chosen.map((s) => ({ s, total: criteria.reduce((a, c) => a + c.get(s), 0) }));
   const winner = scores.sort((a, b) => b.total - a.total)[0]?.s;
@@ -575,6 +793,7 @@ function PricingView() {
 }
 
 function RiskView() {
+  const { suppliers } = useSuppliersData();
   const high = suppliers.filter((s) => s.risk === "High");
   const categoriesRisk = [
     { label: "Delivery risk", value: 28 },
@@ -720,6 +939,7 @@ export function SuppliersWorkspace() {
   };
 
   return (
+    <SuppliersProvider>
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
       <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 !hidden">
         <Brand subtle />
@@ -780,5 +1000,6 @@ export function SuppliersWorkspace() {
         </div>
       </section>
     </div>
+    </SuppliersProvider>
   );
 }

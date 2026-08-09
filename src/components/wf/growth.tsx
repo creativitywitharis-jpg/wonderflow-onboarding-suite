@@ -36,6 +36,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Delta, Donut, Reveal, Ring, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
+import { askAI } from "@/lib/ai";
 import { createCampaign, listCampaigns, updateCampaign, type CampaignStatus, type DbCampaign } from "@/lib/campaigns";
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -502,23 +503,37 @@ const contentTypes = ["Email", "Social post", "Ad copy", "Blog intro"] as const;
 const tones = ["Bold", "Friendly", "Professional", "Playful"] as const;
 
 function ContentView() {
+  const { org } = useOrg();
   const [type, setType] = useState<(typeof contentTypes)[number]>("Social post");
   const [tone, setTone] = useState<(typeof tones)[number]>("Bold");
-  const [topic, setTopic] = useState("Summer Glow serum launch");
+  const [topic, setTopic] = useState("Summer product launch");
   const [output, setOutput] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const generate = () => {
-    setBusy(true); setOutput(null);
-    window.setTimeout(() => {
-      const map: Record<string, string> = {
-        "Email": `Subject: Your glow, upgraded ✨\n\nHi there — meet ${topic}. ${tone === "Playful" ? "Warning: dangerously radiant." : "Crafted for visibly brighter skin in 7 days."} Tap in for early access and 15% off your first bottle.`,
-        "Social post": `${topic} is here ✨ ${tone === "Bold" ? "The glow you've been waiting for." : "Soft, radiant, undeniably you."} Limited first drop — link in bio. #WonderGlow`,
-        "Ad copy": `${topic}. Clinically-loved, founder-made. Get 15% off your first order — glow guaranteed or your money back.`,
-        "Blog intro": `There's a moment every morning when your skin either works with you or against you. ${topic} was built for the former — here's the science behind the glow.`,
-      };
-      setOutput(map[type]); setBusy(false);
-    }, 1300);
+  const generate = async () => {
+    if (busy) return;
+    setBusy(true);
+    setOutput(null);
+    setError(null);
+    const forBiz = org?.name ? ` for ${org.name}` : "";
+    const shape =
+      type === "Email"
+        ? "a short marketing email including a subject line"
+        : type === "Social post"
+          ? "a social media post (with a couple of fitting hashtags)"
+          : type === "Ad copy"
+            ? "a short, punchy ad"
+            : "an engaging blog intro paragraph";
+    const prompt = `Write ${shape} in a ${tone.toLowerCase()} tone${forBiz}. Topic: ${topic}. Keep it concise and ready to publish. Return only the copy — no preamble or explanation.`;
+    try {
+      const reply = await askAI([{ role: "user", content: prompt }], { id: org?.id, name: org?.name, industry: org?.industry });
+      setOutput(reply || "No content came back — try again.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't generate content. Please try again.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -549,8 +564,9 @@ function ContentView() {
           <SectionLabel icon={PenTool}>Generated draft</SectionLabel>
           <div className="mt-4 flex-1">
             {busy && <div className="typing flex items-center gap-1 py-4"><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /></div>}
+            {!busy && error && <p className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-200">{error}</p>}
             {!busy && output && <p className="whitespace-pre-line rounded-2xl border border-border bg-background/30 p-4 text-sm leading-relaxed text-foreground/90">{output}</p>}
-            {!busy && !output && <p className="py-10 text-center text-sm text-muted-foreground">Pick a type and tone, then generate a draft.</p>}
+            {!busy && !output && !error && <p className="py-10 text-center text-sm text-muted-foreground">Pick a type and tone, then generate a draft.</p>}
           </div>
           {output && !busy && (
             <div className="mt-4 flex gap-2">

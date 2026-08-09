@@ -37,6 +37,7 @@ import { Avatar, Bar, Delta, Reveal, SectionLabel, Sparkline, formatNum } from "
 import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
+import { askAI } from "@/lib/ai";
 import { listCustomers, type DbCustomer } from "@/lib/customers";
 import { listMembers, type Member } from "@/lib/team";
 
@@ -129,6 +130,38 @@ const quickActions: { icon: LucideIcon; label: string }[] = [
  * ─────────────────────────────────────────────────────────────────── */
 
 function AiBriefing({ company }: { company: string }) {
+  const s = useDash();
+  const { org } = useOrg();
+  const [brief, setBrief] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fallback =
+    s.total === 0
+      ? `Welcome, ${company}. Add your customers, orders and campaigns and I'll turn them into a prioritized daily briefing — what's at risk, what's working, and where to focus.`
+      : `${company}, you have ${s.total} customer${s.total === 1 ? "" : "s"} worth $${formatNum(s.totalLtv)} in lifetime value — ${s.atRisk} at risk and ${s.champions} champion${s.champions === 1 ? "" : "s"}. Tap Generate for a prioritized plan for today.`;
+
+  const generate = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const prompt = `Give me a 3-sentence morning briefing as my COO. Facts: ${s.total} customers, $${Math.round(s.totalLtv)} total lifetime value, average customer health ${s.avgHealth}/100, ${s.atRisk} at-risk customers, ${s.champions} champions, ${s.newC} new customers. Lead with the single most important priority for today, be specific and concrete, and use no preamble.`;
+    try {
+      const reply = await askAI([{ role: "user", content: prompt }], { id: org?.id, name: org?.name, industry: org?.industry });
+      setBrief(reply || fallback);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't generate the briefing.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tiles = [
+    { k: "Customers", v: formatNum(s.total), up: true },
+    { k: "Avg health", v: `${s.avgHealth}/100`, up: s.avgHealth >= 60 },
+    { k: "At-risk", v: `${s.atRisk} account${s.atRisk === 1 ? "" : "s"}`, up: false },
+  ];
+
   return (
     <Reveal>
       <GlassCard className="ai-glow glass-strong relative overflow-hidden p-6 sm:p-7">
@@ -140,36 +173,25 @@ function AiBriefing({ company }: { company: string }) {
           >
             <Sparkles className="size-5" stroke="oklch(0.2 0.02 70)" />
           </span>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">
-                AI daily briefing
-              </p>
-              <span className="text-xs text-muted-foreground">· auto-generated 6:00 AM</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">AI daily briefing</p>
+              <button
+                onClick={generate}
+                disabled={busy}
+                className="flex items-center gap-1.5 rounded-full border border-gold/30 bg-glass px-3 py-1 text-xs font-medium text-foreground/85 transition-colors hover:border-gold/60 disabled:opacity-60"
+              >
+                <Sparkles className="size-3 text-gold" /> {busy ? "Thinking…" : brief ? "Regenerate" : "Generate"}
+              </button>
             </div>
-            <p className="mt-3 text-[0.95rem] leading-relaxed text-foreground/90 sm:text-base">
-              Good news, {company}. Cash position is healthy and fulfilment latency dropped for the
-              third week running. Revenue is pacing <span className="text-gold">12% ahead</span> of
-              last month. I found <span className="text-gold">three moves</span> worth roughly{" "}
-              <span className="text-gold">$45k</span> this quarter — I can execute the first two on
-              your approval.
+            <p className="mt-3 whitespace-pre-line text-[0.95rem] leading-relaxed text-foreground/90 sm:text-base">
+              {error ? <span className="text-rose-300">{error}</span> : brief ?? fallback}
             </p>
             <div className="mt-5 grid gap-2 sm:grid-cols-3">
-              {[
-                { k: "Cash runway", v: "14.2 months", up: true },
-                { k: "Fulfilment latency", v: "-31% wow", up: true },
-                { k: "Churn risk", v: "27 accounts", up: false },
-              ].map((s) => (
-                <div key={s.k} className="rounded-2xl border border-border bg-background/30 px-4 py-3">
-                  <p className="text-xs text-muted-foreground">{s.k}</p>
-                  <p
-                    className={cn(
-                      "mt-1 text-sm font-semibold tabular-nums",
-                      s.up ? "text-foreground" : "text-gold",
-                    )}
-                  >
-                    {s.v}
-                  </p>
+              {tiles.map((t) => (
+                <div key={t.k} className="rounded-2xl border border-border bg-background/30 px-4 py-3">
+                  <p className="text-xs text-muted-foreground">{t.k}</p>
+                  <p className={cn("mt-1 text-sm font-semibold tabular-nums", t.up ? "text-foreground" : "text-gold")}>{t.v}</p>
                 </div>
               ))}
             </div>

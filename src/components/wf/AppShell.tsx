@@ -19,6 +19,7 @@ import {
   LayoutGrid,
   Lock,
   Megaphone,
+  Menu,
   MessageSquare,
   Plug,
   Plus,
@@ -472,9 +473,12 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
  * Top command bar
  * ─────────────────────────────────────────────────────────────────── */
 
-function TopBar({ onSearch, onToggleAi, onQuickCreate }: { onSearch: () => void; onToggleAi: () => void; onQuickCreate: () => void }) {
+function TopBar({ onSearch, onToggleAi, onQuickCreate, onMenu }: { onSearch: () => void; onToggleAi: () => void; onQuickCreate: () => void; onMenu: () => void }) {
   return (
     <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-border bg-background/60 px-4 py-3 backdrop-blur-xl lg:px-6">
+      <button onClick={onMenu} aria-label="Open menu" className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-glass text-foreground/80 transition-colors hover:border-gold/40 lg:hidden">
+        <Menu className="size-4" />
+      </button>
       <button onClick={onSearch} className="flex flex-1 items-center gap-2 rounded-full border border-border bg-glass px-4 py-2 text-sm text-muted-foreground transition-colors hover:border-gold/40 sm:max-w-md">
         <Search className="size-4" />
         <span className="flex-1 text-left">Search or jump to…</span>
@@ -492,6 +496,96 @@ function TopBar({ onSearch, onToggleAi, onQuickCreate }: { onSearch: () => void;
 }
 
 /* ──────────────────────────────────────────────────────────────────────
+ * Mobile navigation drawer
+ * ─────────────────────────────────────────────────────────────────── */
+
+function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { org, role, userName, userEmail } = useOrg();
+  const navigate = useNavigate();
+
+  const enabled = org?.enabled_modules ?? ALL_MODULES;
+  const planMods = planLimits(org?.plan).modules;
+  const groups = navGroups
+    .map((g) => ({
+      ...g,
+      items: g.items
+        .filter((it) => {
+          const m = ROUTE_MODULE[it.to];
+          return !m || m === "admin" || enabled.includes(m);
+        })
+        .map((it) => {
+          const m = ROUTE_MODULE[it.to];
+          return { ...it, locked: !!m && m !== "admin" && !planMods.includes(m) };
+        }),
+    }))
+    .filter((g) => g.items.length > 0);
+
+  if (!open) return null;
+
+  const doSignOut = async () => {
+    await signOut();
+    onClose();
+    navigate({ to: "/auth" });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 lg:hidden">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="glass absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col overflow-y-auto p-4">
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <Mark className="size-7" />
+            <span className="text-sm font-semibold tracking-tight">WonderFlow <span className="gold-text">OS</span></span>
+          </span>
+          <button onClick={onClose} aria-label="Close menu" className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground hover:text-foreground">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-border bg-glass px-3 py-2.5">
+          <p className="truncate text-sm font-medium text-foreground">{org?.name ?? "Your business"}</p>
+          <p className="truncate text-xs capitalize text-muted-foreground">{role ?? userEmail}</p>
+        </div>
+
+        <nav className="mt-4 flex-1 space-y-4">
+          {groups.map((g) => (
+            <div key={g.label}>
+              <p className="px-2 pb-1 text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">{g.label}</p>
+              <div className="space-y-0.5">
+                {g.items.map((it) =>
+                  it.locked ? (
+                    <Link key={it.label + it.to} to="/admin" onClick={onClose} className="group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground/45 hover:bg-glass hover:text-foreground/70">
+                      <it.icon className="size-4 shrink-0" />
+                      <span className="flex-1 truncate">{it.label}</span>
+                      <Lock className="size-3 shrink-0 text-muted-foreground/60" />
+                    </Link>
+                  ) : (
+                    <Link key={it.label + it.to} to={it.to} onClick={onClose} className="group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground" activeProps={{ style: { background: "oklch(0.84 0.14 84 / 12%)", color: "var(--color-foreground)" } }}>
+                      <it.icon className="size-4 shrink-0 group-hover:text-gold" />
+                      <span className="truncate">{it.label}</span>
+                    </Link>
+                  ),
+                )}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        <div className="border-t border-border pt-2">
+          <div className="flex items-center gap-3 px-2 py-2">
+            <span className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-glass text-xs font-semibold text-foreground/80">{initials(userName)}</span>
+            <p className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{userName}</p>
+          </div>
+          <button onClick={doSignOut} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground">
+            <LogOut className="size-4 shrink-0" /> Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
  * Shell
  * ─────────────────────────────────────────────────────────────────── */
 
@@ -499,6 +593,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [aiOpen, setAiOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { signedIn, authLoading, loading, orgs } = useOrg();
   const navigate = useNavigate();
 
@@ -521,8 +616,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Backdrop intensity={0.22} />
       <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
 
+      <MobileNav open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
+
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar onSearch={() => setPaletteOpen(true)} onToggleAi={() => setAiOpen((o) => !o)} onQuickCreate={() => setPaletteOpen(true)} />
+        <TopBar onSearch={() => setPaletteOpen(true)} onToggleAi={() => setAiOpen((o) => !o)} onQuickCreate={() => setPaletteOpen(true)} onMenu={() => setMobileNavOpen(true)} />
         <div className="flex min-h-0 flex-1">
           <main className="min-w-0 flex-1 overflow-x-hidden">{children}</main>
           {aiOpen && (

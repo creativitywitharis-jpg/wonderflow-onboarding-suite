@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
@@ -30,6 +30,12 @@ import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Donut, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
+import { useOrg } from "@/lib/org-context";
+import { listCustomers, type DbCustomer } from "@/lib/customers";
+import { listOrders, type DbOrder } from "@/lib/orders";
+import { listProducts, type DbProduct } from "@/lib/products";
+import { listSuppliers, type DbSupplier } from "@/lib/suppliers";
+import { listCampaigns, type DbCampaign } from "@/lib/campaigns";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Chart toolkit
@@ -148,27 +154,7 @@ function ChartCard({ title, icon, children, className, right }: { title: string;
  * Data
  * ─────────────────────────────────────────────────────────────────── */
 
-const revenueYr = [220, 238, 231, 255, 268, 281, 296, 312, 305, 331, 352, 374];
-const revenueLastYr = [180, 192, 198, 205, 214, 220, 232, 240, 246, 258, 270, 285];
-
-const salesChannels = [
-  { label: "Online store", share: 58, color: palette[0] },
-  { label: "POS", share: 22, color: palette[1] },
-  { label: "Marketplace", share: 14, color: palette[2] },
-  { label: "Social", share: 6, color: palette[3] },
-];
-const topProducts = [
-  { label: "Aurora Serum", value: 23256, display: "$23.3k" },
-  { label: "Midnight Oil", value: 15552, display: "$15.6k" },
-  { label: "Golden Hour Balm", value: 8988, display: "$9.0k" },
-  { label: "Radiance Mask", value: 8448, display: "$8.4k" },
-];
-const custSegments = [
-  { label: "Champions", share: 34, color: palette[0] },
-  { label: "Loyal", share: 28, color: palette[1] },
-  { label: "New", share: 26, color: palette[2] },
-  { label: "At risk", share: 12, color: palette[3] },
-];
+// ── Demo-only series that need historical data the app hasn't accrued yet ──
 const retention = {
   cols: ["M0", "M1", "M2", "M3", "M4"],
   rows: [
@@ -178,39 +164,6 @@ const retention = {
     { label: "Jun", cells: [100, 93, 0, 0, 0] },
   ],
 };
-const categories = [
-  { label: "Serums", share: 32, color: palette[0] },
-  { label: "Oils", share: 24, color: palette[1] },
-  { label: "Cleansers", share: 18, color: palette[2] },
-  { label: "Balms", share: 14, color: palette[3] },
-  { label: "Masks", share: 12, color: palette[4] },
-];
-const spendByCategory = [
-  { label: "Packaging", share: 38, color: palette[0] },
-  { label: "Ingredients", share: 30, color: palette[1] },
-  { label: "Oils", share: 13, color: palette[2] },
-  { label: "Logistics", share: 12, color: palette[3] },
-  { label: "Labels", share: 7, color: palette[4] },
-];
-const topSuppliers = [
-  { label: "Northwind Supply", value: 428000, display: "$428k" },
-  { label: "Lumen Labs", value: 356000, display: "$356k" },
-  { label: "Fjord Materials", value: 214000, display: "$214k" },
-  { label: "Halcyon Glass", value: 189000, display: "$189k" },
-];
-const marketingChannels = [
-  { label: "Email", share: 34, color: palette[0] },
-  { label: "Social", share: 24, color: palette[1] },
-  { label: "Ads", share: 18, color: palette[2] },
-  { label: "Referral", share: 14, color: palette[3] },
-  { label: "SMS", share: 10, color: palette[4] },
-];
-const campaigns = [
-  { label: "Champions VIP", value: 84, display: "8.4x" },
-  { label: "Summer Glow", value: 52, display: "5.2x" },
-  { label: "Cart Retarget", value: 41, display: "4.1x" },
-  { label: "Referral Teaser", value: 33, display: "3.3x" },
-];
 const expenses = [
   { label: "COGS", share: 32, color: palette[0] },
   { label: "Marketing", share: 22, color: palette[1] },
@@ -220,24 +173,155 @@ const expenses = [
 ];
 
 /* ──────────────────────────────────────────────────────────────────────
+ * Real analytics — derived from the org's own data
+ * ─────────────────────────────────────────────────────────────────── */
+
+type Share = { label: string; share: number; color: string };
+type LabelVal = { label: string; value: number; display?: string };
+type AnalyticsData = {
+  loading: boolean;
+  revenue: number;
+  ordersCount: number;
+  customersCount: number;
+  aov: number;
+  avgLtv: number;
+  inventoryValue: number;
+  activeSKUs: number;
+  unitsSold30: number;
+  annualSpend: number;
+  suppliersCount: number;
+  avgLeadTime: number;
+  revenueByMonth: number[];
+  salesChannels: Share[];
+  custSegments: Share[];
+  categories: Share[];
+  spendByCategory: Share[];
+  marketingChannels: Share[];
+  topProducts: LabelVal[];
+  topSuppliers: LabelVal[];
+  campaignsRoi: LabelVal[];
+};
+
+function toShares(counts: Map<string, number>): Share[] {
+  const total = [...counts.values()].reduce((a, v) => a + v, 0);
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([label, v], i) => ({ label, share: total ? Math.round((v / total) * 100) : 0, color: palette[i % palette.length] }));
+}
+
+function compute(
+  customers: DbCustomer[],
+  orders: DbOrder[],
+  products: DbProduct[],
+  suppliers: DbSupplier[],
+  campaigns: DbCampaign[],
+): Omit<AnalyticsData, "loading"> {
+  const now = new Date();
+  const revenue = orders.reduce((a, o) => a + Number(o.total), 0);
+  const ordersCount = orders.length;
+
+  // channels, product revenue, units — from real orders + line items
+  const channelCounts = new Map<string, number>();
+  const prodRev = new Map<string, number>();
+  let unitsSold30 = 0;
+  const buckets = new Array(12).fill(0);
+  for (const o of orders) {
+    channelCounts.set(o.channel ?? "Other", (channelCounts.get(o.channel ?? "Other") ?? 0) + 1);
+    for (const it of o.items ?? []) prodRev.set(it.name, (prodRev.get(it.name) ?? 0) + it.qty * it.price);
+    const d = new Date(o.created_at);
+    const diff = (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
+    if (diff >= 0 && diff < 12) buckets[11 - diff] += Number(o.total);
+    if (now.getTime() - d.getTime() < 30 * 864e5) for (const it of o.items ?? []) unitsSold30 += it.qty;
+  }
+
+  const tierCounts = new Map<string, number>();
+  for (const c of customers) tierCounts.set(c.tier, (tierCounts.get(c.tier) ?? 0) + 1);
+  const catCounts = new Map<string, number>();
+  for (const p of products) catCounts.set(p.category ?? "Other", (catCounts.get(p.category ?? "Other") ?? 0) + 1);
+  const supSpend = new Map<string, number>();
+  for (const s of suppliers) supSpend.set(s.category ?? "Other", (supSpend.get(s.category ?? "Other") ?? 0) + Number(s.spend));
+  const mktCounts = new Map<string, number>();
+  for (const c of campaigns) mktCounts.set(c.channel, (mktCounts.get(c.channel) ?? 0) + 1);
+
+  const totalLtv = customers.reduce((a, c) => a + Number(c.ltv), 0);
+
+  return {
+    revenue,
+    ordersCount,
+    customersCount: customers.length,
+    aov: ordersCount ? Math.round(revenue / ordersCount) : 0,
+    avgLtv: customers.length ? Math.round(totalLtv / customers.length) : 0,
+    inventoryValue: products.reduce((a, p) => a + p.stock * Number(p.price), 0),
+    activeSKUs: products.length,
+    unitsSold30,
+    annualSpend: suppliers.reduce((a, s) => a + Number(s.spend), 0),
+    suppliersCount: suppliers.length,
+    avgLeadTime: suppliers.length ? Math.round((suppliers.reduce((a, s) => a + s.lead_time_days, 0) / suppliers.length) * 10) / 10 : 0,
+    revenueByMonth: buckets,
+    salesChannels: toShares(channelCounts),
+    custSegments: toShares(tierCounts),
+    categories: toShares(catCounts),
+    spendByCategory: toShares(supSpend),
+    marketingChannels: toShares(mktCounts),
+    topProducts: [...prodRev.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([label, v]) => ({ label, value: Math.round(v), display: `$${formatNum(Math.round(v))}` })),
+    topSuppliers: [...suppliers].sort((a, b) => Number(b.spend) - Number(a.spend)).slice(0, 5).map((s) => ({ label: s.name, value: Number(s.spend), display: `$${formatNum(Number(s.spend))}` })),
+    campaignsRoi: [...campaigns].filter((c) => c.roi > 0).sort((a, b) => b.roi - a.roi).slice(0, 5).map((c) => ({ label: c.name, value: Math.round(c.roi * 10), display: `${c.roi}x` })),
+  };
+}
+
+const EMPTY: AnalyticsData = { loading: true, ...compute([], [], [], [], []) };
+const AnalyticsCtx = createContext<AnalyticsData>(EMPTY);
+function useAnalytics() {
+  return useContext(AnalyticsCtx);
+}
+
+function AnalyticsProvider({ children }: { children: ReactNode }) {
+  const { org } = useOrg();
+  const [data, setData] = useState<AnalyticsData>(EMPTY);
+  useEffect(() => {
+    let alive = true;
+    if (!org?.id) {
+      setData({ ...EMPTY, loading: false });
+      return;
+    }
+    setData((d) => ({ ...d, loading: true }));
+    Promise.all([
+      listCustomers(org.id).catch(() => []),
+      listOrders(org.id).catch(() => []),
+      listProducts(org.id).catch(() => []),
+      listSuppliers(org.id).catch(() => []),
+      listCampaigns(org.id).catch(() => []),
+    ]).then(([c, o, p, s, cm]) => {
+      if (alive) setData({ loading: false, ...compute(c, o, p, s, cm) });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [org?.id]);
+  return <AnalyticsCtx.Provider value={data}>{children}</AnalyticsCtx.Provider>;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
  * Views
  * ─────────────────────────────────────────────────────────────────── */
 
 function ExecutiveView() {
+  const a = useAnalytics();
   const scorecard = [
-    { label: "Sales", value: 88, display: "88" },
-    { label: "Marketing", value: 76, display: "76" },
-    { label: "Operations", value: 82, display: "82" },
-    { label: "Finance", value: 90, display: "90" },
-    { label: "Product", value: 79, display: "79" },
+    { label: "Customers", value: Math.min(100, a.customersCount), display: `${a.customersCount}` },
+    { label: "Orders", value: Math.min(100, a.ordersCount), display: `${a.ordersCount}` },
+    { label: "Suppliers", value: Math.min(100, a.suppliersCount), display: `${a.suppliersCount}` },
+    { label: "SKUs", value: Math.min(100, a.activeSKUs), display: `${a.activeSKUs}` },
   ];
+  const topSeg = a.custSegments[0];
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Revenue (YTD)" value={3420000} prefix="$" delta="18%" icon={DollarSign} />
-        <StatTile label="Orders (YTD)" value={28400} delta="12%" icon={ShoppingCart} />
-        <StatTile label="Customers" value={2841} delta="6%" icon={Users} />
-        <StatTile label="Gross margin" value={68} suffix="%" delta="2 pts" icon={TrendingUp} />
+        <StatTile label="Revenue (all orders)" value={a.revenue} prefix="$" icon={DollarSign} />
+        <StatTile label="Orders" value={a.ordersCount} icon={ShoppingCart} />
+        <StatTile label="Customers" value={a.customersCount} icon={Users} />
+        <StatTile label="Avg order value" value={a.aov} prefix="$" icon={TrendingUp} />
       </div>
 
       <Reveal>
@@ -247,39 +331,40 @@ function ExecutiveView() {
             <span className="orb grid size-11 shrink-0 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Brain className="size-5" stroke="oklch(0.2 0.02 70)" /></span>
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">What's happening</p>
-              <p className="mt-2 text-[0.95rem] leading-relaxed text-foreground/90">You finally understand everything happening inside the company. Revenue is up <span className="text-gold">18% YTD</span>, driven by Champions and the Online store. Watch marketing efficiency — CAC is creeping up while ROAS holds at 5.4x.</p>
+              <p className="mt-2 text-[0.95rem] leading-relaxed text-foreground/90">Across <span className="text-gold">{a.customersCount}</span> customers and <span className="text-gold">{a.ordersCount}</span> orders, you've booked <span className="text-gold">${formatNum(a.revenue)}</span> in revenue at a <span className="text-gold">${formatNum(a.aov)}</span> average order value{topSeg ? <>. Your largest segment is <span className="text-gold">{topSeg.label}</span> ({topSeg.share}% of customers)</> : null}.</p>
             </div>
           </div>
         </GlassCard>
       </Reveal>
 
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <ChartCard title="Revenue vs last year" icon={BarChart3} right={<span className="flex items-center gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded" style={{ background: GOLD }} />This yr</span><span className="flex items-center gap-1"><span className="h-0.5 w-3 rounded bg-muted-foreground/50" />Last yr</span></span>}>
-          <AreaChart data={revenueYr} compare={revenueLastYr} />
+        <ChartCard title="Revenue by month" icon={BarChart3} right={<span className="text-xs text-muted-foreground">last 12 months</span>}>
+          <AreaChart data={a.revenueByMonth} />
         </ChartCard>
-        <ChartCard title="Department scorecard" icon={Target}>
+        <ChartCard title="Workspace at a glance" icon={Target}>
           <HBars items={scorecard} />
         </ChartCard>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="Revenue by segment" icon={Users}>
-          <div className="flex items-center gap-6"><Donut data={custSegments} size={150} /><Legend items={custSegments} /></div>
+        <ChartCard title="Customers by segment" icon={Users}>
+          {a.custSegments.length ? <div className="flex items-center gap-6"><Donut data={a.custSegments} size={150} /><Legend items={a.custSegments} /></div> : <p className="py-8 text-center text-sm text-muted-foreground">Add customers to see segments.</p>}
         </ChartCard>
-        <ChartCard title="Top products" icon={Package}><HBars items={topProducts} /></ChartCard>
+        <ChartCard title="Top products" icon={Package}>{a.topProducts.length ? <HBars items={a.topProducts} /> : <p className="py-8 text-center text-sm text-muted-foreground">No product sales yet.</p>}</ChartCard>
       </div>
     </div>
   );
 }
 
 function SalesView() {
+  const { revenueByMonth: revenueYr, salesChannels, topProducts, revenue, ordersCount, aov, unitsSold30 } = useAnalytics();
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Revenue (30d)" value={412908} prefix="$" delta="12.4%" icon={DollarSign} />
-        <StatTile label="Orders (30d)" value={3284} delta="8.1%" icon={ShoppingCart} />
-        <StatTile label="Avg order value" value={124} prefix="$" delta="3.1%" icon={Activity} />
-        <StatTile label="Conversion" value={2.7} suffix="%" decimals={1} delta="0.3 pts" icon={Target} />
+        <StatTile label="Revenue (all orders)" value={revenue} prefix="$" icon={DollarSign} />
+        <StatTile label="Orders" value={ordersCount} icon={ShoppingCart} />
+        <StatTile label="Avg order value" value={aov} prefix="$" icon={Activity} />
+        <StatTile label="Units sold (30d)" value={unitsSold30} icon={Target} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
         <ChartCard title="Monthly revenue" icon={BarChart3} right={<span className="text-xs text-muted-foreground">$K</span>}><Bars data={revenueYr} labels={months} /></ChartCard>
@@ -291,14 +376,16 @@ function SalesView() {
 }
 
 function CustomersView() {
+  const { custSegments, customersCount, avgLtv } = useAnalytics();
   const acquisition = [64, 72, 68, 81, 88, 96, 104, 118, 112, 128, 136, 142];
+  const topSeg = custSegments[0];
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="New (30d)" value={142} delta="18%" icon={Users} />
-        <StatTile label="Active customers" value={2190} delta="4%" icon={Activity} />
-        <StatTile label="Churn rate" value={2.4} suffix="%" decimals={1} delta="0.3 pts" positive icon={TrendingUp} />
-        <StatTile label="Avg LTV" value={4820} prefix="$" delta="11%" icon={DollarSign} />
+        <StatTile label="Total customers" value={customersCount} icon={Users} />
+        <StatTile label="Avg lifetime value" value={avgLtv} prefix="$" icon={DollarSign} />
+        <StatTile label={topSeg ? `Largest: ${topSeg.label}` : "Largest segment"} value={topSeg?.share ?? 0} suffix="%" icon={Activity} />
+        <StatTile label="Active segments" value={custSegments.length} icon={TrendingUp} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
         <ChartCard title="New customers / month" icon={TrendingUp}><AreaChart data={acquisition} /></ChartCard>
@@ -310,14 +397,15 @@ function CustomersView() {
 }
 
 function ProductsView() {
+  const { topProducts, categories, activeSKUs, unitsSold30, inventoryValue } = useAnalytics();
   const units = [420, 468, 512, 498, 540, 588, 612, 654];
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Active SKUs" value={912} delta="18" icon={Package} />
-        <StatTile label="Units sold (30d)" value={4626} delta="9%" icon={ShoppingCart} />
-        <StatTile label="Sell-through" value={68} suffix="%" delta="2.2 pts" icon={Target} />
-        <StatTile label="Return rate" value={2.1} suffix="%" decimals={1} delta="0.4 pts" positive icon={Activity} />
+        <StatTile label="Active SKUs" value={activeSKUs} icon={Package} />
+        <StatTile label="Units sold (30d)" value={unitsSold30} icon={ShoppingCart} />
+        <StatTile label="Categories" value={categories.length} icon={Target} />
+        <StatTile label="Inventory value" value={inventoryValue} prefix="$" icon={Activity} />
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard title="Top products" icon={Package}><HBars items={topProducts} /></ChartCard>
@@ -329,14 +417,15 @@ function ProductsView() {
 }
 
 function InventoryView() {
+  const { categories, inventoryValue, activeSKUs, unitsSold30 } = useAnalytics();
   const value = [280, 292, 288, 305, 312, 320, 318, 332, 340, 352, 361, 374];
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Inventory value" value={374200} prefix="$" delta="3.6%" icon={Layers} />
-        <StatTile label="Turnover rate" value={5.4} suffix="x" decimals={1} delta="0.4x" icon={Activity} />
-        <StatTile label="Low / critical" value={2} delta="1" positive={false} icon={Boxes} />
-        <StatTile label="Deadstock" value={4.1} suffix="%" decimals={1} delta="0.6 pts" positive icon={TrendingUp} />
+        <StatTile label="Inventory value" value={inventoryValue} prefix="$" icon={Layers} />
+        <StatTile label="Active SKUs" value={activeSKUs} icon={Boxes} />
+        <StatTile label="Categories" value={categories.length} icon={Activity} />
+        <StatTile label="Units sold (30d)" value={unitsSold30} icon={TrendingUp} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
         <ChartCard title="Inventory value trend" icon={BarChart3} right={<span className="text-xs text-muted-foreground">$K</span>}><Bars data={value} labels={months} /></ChartCard>
@@ -347,14 +436,15 @@ function InventoryView() {
 }
 
 function SuppliersView() {
+  const { spendByCategory, topSuppliers, annualSpend, suppliersCount, avgLeadTime } = useAnalytics();
   const onTime = [86, 88, 87, 90, 89, 91, 90, 92, 91, 93, 92, 94];
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Annual spend" value={1420000} prefix="$" delta="6.1%" positive={false} icon={DollarSign} />
-        <StatTile label="On-time rate" value={91} suffix="%" delta="2.3 pts" icon={CheckCircle2} />
-        <StatTile label="Avg lead time" value={8.4} suffix=" days" decimals={1} delta="0.7 days" icon={Activity} />
-        <StatTile label="Active suppliers" value={48} delta="4" icon={Building2} />
+        <StatTile label="Total spend" value={annualSpend} prefix="$" icon={DollarSign} />
+        <StatTile label="Active suppliers" value={suppliersCount} icon={Building2} />
+        <StatTile label="Avg lead time" value={avgLeadTime} suffix=" days" decimals={1} icon={Activity} />
+        <StatTile label="Categories" value={spendByCategory.length} icon={CheckCircle2} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
         <ChartCard title="Spend by category" icon={Globe}><div className="flex items-center gap-6"><Donut data={spendByCategory} size={150} /><Legend items={spendByCategory} /></div></ChartCard>
@@ -366,14 +456,17 @@ function SuppliersView() {
 }
 
 function MarketingView() {
+  const { marketingChannels, campaignsRoi: campaigns } = useAnalytics();
   const spendRev = [3.8, 4.1, 4.0, 4.4, 4.6, 4.9, 5.1, 5.4];
+  const bestRoi = campaigns[0] ? campaigns[0].value / 10 : 0;
+  const avgRoi = campaigns.length ? Math.round((campaigns.reduce((s, c) => s + c.value / 10, 0) / campaigns.length) * 10) / 10 : 0;
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Visitors (30d)" value={48200} delta="12%" icon={Globe} />
-        <StatTile label="Conversion" value={2.7} suffix="%" decimals={1} delta="0.3 pts" icon={Target} />
-        <StatTile label="Avg CAC" value={86} prefix="$" delta="12%" positive icon={Activity} />
-        <StatTile label="Blended ROAS" value={5.4} suffix="x" decimals={1} delta="0.5x" icon={TrendingUp} />
+        <StatTile label="Campaigns" value={campaigns.length} icon={Megaphone} />
+        <StatTile label="Channels" value={marketingChannels.length} icon={Globe} />
+        <StatTile label="Best ROI" value={bestRoi} suffix="x" decimals={1} icon={TrendingUp} />
+        <StatTile label="Avg ROI" value={avgRoi} suffix="x" decimals={1} icon={Target} />
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard title="New customers by channel" icon={Globe}><div className="flex items-center gap-6"><Donut data={marketingChannels} size={150} /><Legend items={marketingChannels} /></div></ChartCard>
@@ -477,6 +570,7 @@ const builderDims = ["By month", "By channel", "By category", "By segment"] as c
 const builderCharts = ["Bars", "Area", "Donut"] as const;
 
 function BuilderView() {
+  const { revenueByMonth: revenueYr, salesChannels, categories, custSegments } = useAnalytics();
   const [metric, setMetric] = useState<(typeof builderMetrics)[number]>("Revenue");
   const [dim, setDim] = useState<(typeof builderDims)[number]>("By month");
   const [chart, setChart] = useState<(typeof builderCharts)[number]>("Bars");
@@ -486,7 +580,7 @@ function BuilderView() {
     if (dim === "By month") return { kind: "series" as const, values: revenueYr.map((v) => Math.round(v * scale)) };
     const map: Record<string, { label: string; share: number; color: string }[]> = { "By channel": salesChannels, "By category": categories, "By segment": custSegments };
     return { kind: "split" as const, split: map[dim] ?? salesChannels };
-  }, [metric, dim]);
+  }, [metric, dim, revenueYr, salesChannels, categories, custSegments]);
 
   return (
     <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
@@ -568,6 +662,7 @@ export function AnalyticsWorkspace() {
   const [active, setActive] = useState<ViewKey>("executive");
   const meta = viewMeta[active];
   return (
+    <AnalyticsProvider>
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
       <aside className="glass sticky top-6 hidden h-[calc(100vh-3rem)] w-56 shrink-0 flex-col rounded-3xl p-5 !hidden">
         <Brand subtle />
@@ -619,5 +714,6 @@ export function AnalyticsWorkspace() {
         </div>
       </section>
     </div>
+    </AnalyticsProvider>
   );
 }

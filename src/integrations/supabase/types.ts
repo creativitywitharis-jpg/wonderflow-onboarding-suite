@@ -486,6 +486,81 @@ export type Database = {
           },
         ]
       }
+      suppliers: {
+        Row: {
+          category: string | null
+          contact_name: string | null
+          country: string | null
+          created_at: string
+          created_by: string | null
+          email: string | null
+          id: string
+          lead_time_days: number
+          name: string
+          notes: string | null
+          org_id: string
+          phone: string | null
+          price_index: number
+          rating: number
+          spend: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          contact_name?: string | null
+          country?: string | null
+          created_at?: string
+          created_by?: string | null
+          email?: string | null
+          id?: string
+          lead_time_days?: number
+          name: string
+          notes?: string | null
+          org_id: string
+          phone?: string | null
+          price_index?: number
+          rating?: number
+          spend?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          contact_name?: string | null
+          country?: string | null
+          created_at?: string
+          created_by?: string | null
+          email?: string | null
+          id?: string
+          lead_time_days?: number
+          name?: string
+          notes?: string | null
+          org_id?: string
+          phone?: string | null
+          price_index?: number
+          rating?: number
+          spend?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "suppliers_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "suppliers_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never

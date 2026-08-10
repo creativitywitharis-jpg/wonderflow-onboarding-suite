@@ -43,6 +43,186 @@ export type Database = {
           },
         ]
       }
+      automations: {
+        Row: {
+          action: string | null
+          action_config: Json
+          action_key: string
+          created_at: string
+          created_by: string | null
+          enabled: boolean
+          id: string
+          last_run: string | null
+          name: string
+          org_id: string
+          runs: number
+          trigger: string | null
+          trigger_key: string
+          updated_at: string
+        }
+        Insert: {
+          action?: string | null
+          action_config?: Json
+          action_key?: string
+          created_at?: string
+          created_by?: string | null
+          enabled?: boolean
+          id?: string
+          last_run?: string | null
+          name: string
+          org_id: string
+          runs?: number
+          trigger?: string | null
+          trigger_key?: string
+          updated_at?: string
+        }
+        Update: {
+          action?: string | null
+          action_config?: Json
+          action_key?: string
+          created_at?: string
+          created_by?: string | null
+          enabled?: boolean
+          id?: string
+          last_run?: string | null
+          name?: string
+          org_id?: string
+          runs?: number
+          trigger?: string | null
+          trigger_key?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automations_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      campaigns: {
+        Row: {
+          audience: string | null
+          budget: number
+          channel: string
+          click_rate: number
+          created_at: string
+          created_by: string | null
+          id: string
+          name: string
+          open_rate: number
+          org_id: string
+          roi: number
+          sent: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          audience?: string | null
+          budget?: number
+          channel?: string
+          click_rate?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name: string
+          open_rate?: number
+          org_id: string
+          roi?: number
+          sent?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          audience?: string | null
+          budget?: number
+          channel?: string
+          click_rate?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name?: string
+          open_rate?: number
+          org_id?: string
+          roi?: number
+          sent?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaigns_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "campaigns_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      connections: {
+        Row: {
+          config: Json
+          created_at: string
+          created_by: string | null
+          id: string
+          org_id: string
+          provider: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          config?: Json
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          org_id: string
+          provider: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          config?: Json
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          org_id?: string
+          provider?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connections_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connections_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customers: {
         Row: {
           company: string | null
@@ -95,6 +275,73 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      expenses: {
+        Row: {
+          amount: number
+          category: string | null
+          created_at: string
+          created_by: string | null
+          date: string
+          id: string
+          notes: string | null
+          org_id: string
+          status: string
+          supplier_id: string | null
+          updated_at: string
+          vendor: string | null
+        }
+        Insert: {
+          amount?: number
+          category?: string | null
+          created_at?: string
+          created_by?: string | null
+          date?: string
+          id?: string
+          notes?: string | null
+          org_id: string
+          status?: string
+          supplier_id?: string | null
+          updated_at?: string
+          vendor?: string | null
+        }
+        Update: {
+          amount?: number
+          category?: string | null
+          created_at?: string
+          created_by?: string | null
+          date?: string
+          id?: string
+          notes?: string | null
+          org_id?: string
+          status?: string
+          supplier_id?: string | null
+          updated_at?: string
+          vendor?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expenses_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
             referencedColumns: ["id"]
           },
         ]
@@ -185,6 +432,88 @@ export type Database = {
           },
           {
             foreignKeyName: "invitations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      invoices: {
+        Row: {
+          amount: number
+          created_at: string
+          created_by: string | null
+          customer_id: string | null
+          customer_name: string | null
+          due_date: string | null
+          id: string
+          issue_date: string
+          items: Json
+          notes: string | null
+          number: string | null
+          org_id: string
+          paid_at: string | null
+          status: string
+          tax: number
+          total: number
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          customer_name?: string | null
+          due_date?: string | null
+          id?: string
+          issue_date?: string
+          items?: Json
+          notes?: string | null
+          number?: string | null
+          org_id: string
+          paid_at?: string | null
+          status?: string
+          tax?: number
+          total?: number
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          customer_name?: string | null
+          due_date?: string | null
+          id?: string
+          issue_date?: string
+          items?: Json
+          notes?: string | null
+          number?: string | null
+          org_id?: string
+          paid_at?: string | null
+          status?: string
+          tax?: number
+          total?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoices_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -441,6 +770,76 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      purchase_orders: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          eta: string | null
+          id: string
+          items: number
+          notes: string | null
+          number: string | null
+          org_id: string
+          status: string
+          supplier_id: string | null
+          supplier_name: string | null
+          total: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          eta?: string | null
+          id?: string
+          items?: number
+          notes?: string | null
+          number?: string | null
+          org_id: string
+          status?: string
+          supplier_id?: string | null
+          supplier_name?: string | null
+          total?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          eta?: string | null
+          id?: string
+          items?: number
+          notes?: string | null
+          number?: string | null
+          org_id?: string
+          status?: string
+          supplier_id?: string | null
+          supplier_name?: string | null
+          total?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_orders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_orders_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_orders_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       subscriptions: {
         Row: {

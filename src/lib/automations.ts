@@ -57,14 +57,16 @@ export async function listAutomations(orgId: string): Promise<DbAutomation[]> {
 export async function createAutomation(orgId: string, a: NewAutomation) {
   const { data, error } = await supabase
     .from("automations")
-    .insert({ org_id: orgId, ...a })
+    .insert({ org_id: orgId, ...a, action_config: (a.action_config ?? {}) as never })
     .select(COLS)
     .single();
   return { data: data as DbAutomation | null, error: error ? new Error(error.message) : null };
 }
 
 export async function insertAutomations(orgId: string, rows: NewAutomation[]) {
-  const { error } = await supabase.from("automations").insert(rows.map((r) => ({ org_id: orgId, ...r })));
+  const { error } = await supabase
+    .from("automations")
+    .insert(rows.map((r) => ({ org_id: orgId, ...r, action_config: (r.action_config ?? {}) as never })));
   return { error: error ? new Error(error.message) : null };
 }
 

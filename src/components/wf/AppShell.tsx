@@ -32,6 +32,7 @@ import {
   Sparkles,
   Users,
   UsersRound,
+  Wallet,
   Workflow,
   X,
   type LucideIcon,
@@ -56,6 +57,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     items: [
       { label: "Dashboard", to: "/dashboard", icon: Home },
       { label: "CRM", to: "/crm", icon: Users },
+      { label: "Finance", to: "/finance", icon: Wallet },
       { label: "Orders", to: "/orders", icon: ShoppingCart },
       { label: "Inventory", to: "/inventory", icon: Boxes },
       { label: "Suppliers", to: "/suppliers", icon: Factory },
@@ -97,6 +99,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
 const ROUTE_MODULE: Record<string, string> = {
   "/dashboard": "dashboard",
   "/crm": "crm",
+  "/finance": "finance",
   "/orders": "orders",
   "/inventory": "inventory",
   "/suppliers": "suppliers",
@@ -124,6 +127,7 @@ type Command = { label: string; hint: string; to: string; icon: LucideIcon; ai?:
 const commands: Command[] = [
   { label: "Go to Dashboard", hint: "Navigate", to: "/dashboard", icon: Home },
   { label: "Find a customer", hint: "CRM", to: "/crm", icon: Users },
+  { label: "Create an invoice", hint: "Finance", to: "/finance", icon: Wallet },
   { label: "Create an order", hint: "Orders", to: "/orders", icon: ShoppingCart },
   { label: "Open inventory", hint: "Inventory", to: "/inventory", icon: Boxes },
   { label: "Launch a campaign", hint: "WonderGrowth", to: "/growth", icon: Megaphone },

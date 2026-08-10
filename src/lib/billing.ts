@@ -43,7 +43,7 @@ export function planById(id: string | null | undefined): Plan | undefined {
 
 // ── Plan limits (single source of truth for gating) ──────────────────────
 // `admin` is always allowed so users can always reach Billing to upgrade.
-const PLAN_CORE_MODULES = ["dashboard", "crm", "team", "analytics", "advisor", "automation", "admin"];
+const PLAN_CORE_MODULES = ["dashboard", "crm", "finance", "team", "analytics", "advisor", "automation", "admin"];
 const PLAN_COMMERCE_MODULES = ["orders", "inventory", "suppliers", "growth"];
 
 export type PlanLimits = {

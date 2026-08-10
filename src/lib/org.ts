@@ -5,7 +5,7 @@ const ACTIVE_ORG_KEY = "wf-active-org";
 // Industry → which modules light up. Commerce businesses get the full pack;
 // everyone gets the universal core. This is the "any industry" strategy.
 const COMMERCE_INDUSTRIES = ["E-commerce", "Retail", "Manufacturing", "Hospitality"];
-const CORE_MODULES = ["dashboard", "crm", "team", "analytics", "advisor", "automation"];
+const CORE_MODULES = ["dashboard", "crm", "finance", "team", "analytics", "advisor", "automation"];
 const COMMERCE_MODULES = ["orders", "inventory", "suppliers", "growth"];
 
 export function enabledModulesFor(industry?: string): string[] {

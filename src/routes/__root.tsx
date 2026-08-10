@@ -136,6 +136,7 @@ function RootShell({ children }: { children: ReactNode }) {
 const APP_PREFIXES = [
   "/dashboard",
   "/crm",
+  "/finance",
   "/orders",
   "/inventory",
   "/suppliers",

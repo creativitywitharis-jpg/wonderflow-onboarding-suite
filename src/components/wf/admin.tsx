@@ -7,11 +7,13 @@ import {
   Bot,
   Building2,
   Check,
+  Copy,
   CreditCard,
   Cpu,
   Database,
   Globe,
   KeyRound,
+  Link2,
   Loader2,
   Lock,
   Mail,
@@ -35,6 +37,7 @@ import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/pri
 import { useOrg } from "@/lib/org-context";
 import { updateOrganization } from "@/lib/org";
 import { listConnections, syncStripe, type DbConnection } from "@/lib/connections";
+import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
 import { PLANS, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
 import { cancelInvitation, inviteMember, listInvitations, listMembers, setMemberStatus, type Invitation, type Member } from "@/lib/team";
 
@@ -504,6 +507,89 @@ function AiConfigView() {
   );
 }
 
+function FormEndpointCard() {
+  const { org } = useOrg();
+  const [key, setKey] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!org) return;
+    getIngestKey(org.id).then((k) => { setKey(k); setLoaded(true); }).catch(() => setLoaded(true));
+  }, [org?.id]);
+
+  const url = key ? inboundUrl(key) : "";
+  const snippet = `<form action="${url}" method="POST">
+  <input name="name" placeholder="Name" required />
+  <input name="email" type="email" placeholder="Email" />
+  <textarea name="message" placeholder="Message"></textarea>
+  <button type="submit">Send</button>
+</form>`;
+
+  const copy = (text: string, what: string) => {
+    navigator.clipboard?.writeText(text).then(() => { setCopied(what); setTimeout(() => setCopied(null), 1600); }).catch(() => {});
+  };
+  const generate = async () => { if (!org || busy) return; setBusy(true); const { key: k } = await enableIngest(org.id); if (k) setKey(k); setBusy(false); };
+  const turnOff = async () => { if (!org || busy) return; setBusy(true); await disableIngest(org.id); setKey(null); setBusy(false); };
+
+  return (
+    <Reveal>
+      <GlassCard className="p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="grid size-11 place-items-center rounded-2xl border border-gold/25 bg-glass"><Link2 className="size-5 text-gold" /></span>
+            <div>
+              <p className="text-sm font-semibold text-foreground">Website &amp; forms</p>
+              <p className="text-xs text-muted-foreground">Capture leads from your site straight into the CRM — and fire your automations.</p>
+            </div>
+          </div>
+          {key
+            ? <span className="flex items-center gap-1.5 text-xs text-emerald-300"><StatusDot tone="ok" /> Live</span>
+            : <span className="rounded-full border border-border px-2 py-0.5 text-[0.65rem] text-muted-foreground">Off</span>}
+        </div>
+
+        {!loaded ? (
+          <p className="mt-5 text-sm text-muted-foreground">Loading…</p>
+        ) : !key ? (
+          <div className="mt-5">
+            <p className="text-sm text-foreground/85">Generate a secure endpoint, then point any form (your website, Typeform, Zapier…) at it. Every submission becomes a new lead — and triggers your <span className="text-gold">customer.created</span> automations.</p>
+            <button onClick={generate} disabled={busy} className="mt-4 flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)" }}>
+              <Link2 className="size-4" /> {busy ? "Generating…" : "Generate form endpoint"}
+            </button>
+          </div>
+        ) : (
+          <div className="mt-5 space-y-4">
+            <div>
+              <p className="mb-1.5 text-[0.65rem] uppercase tracking-wide text-muted-foreground">Your endpoint URL</p>
+              <div className="flex items-center gap-2 rounded-xl border border-border bg-background/40 px-3 py-2">
+                <code className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/85">{url}</code>
+                <button onClick={() => copy(url, "url")} className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[0.65rem] text-muted-foreground hover:text-foreground">
+                  {copied === "url" ? <Check className="size-3.5 text-emerald-400" /> : <Copy className="size-3.5" />} {copied === "url" ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <p className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">Paste this on your website</p>
+                <button onClick={() => copy(snippet, "html")} className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[0.65rem] text-muted-foreground hover:text-foreground">
+                  {copied === "html" ? <Check className="size-3.5 text-emerald-400" /> : <Copy className="size-3.5" />} {copied === "html" ? "Copied" : "Copy HTML"}
+                </button>
+              </div>
+              <pre className="overflow-x-auto rounded-xl border border-border bg-background/40 p-3 font-mono text-[0.7rem] leading-relaxed text-foreground/80">{snippet}</pre>
+            </div>
+            <p className="text-xs text-muted-foreground">Works with any tool that can POST a form — Webflow, WordPress, Framer, Typeform, Zapier/Make. Recognised fields: <span className="text-foreground/80">name, email, phone, company, message</span>.</p>
+            <div className="flex gap-2">
+              <button onClick={generate} disabled={busy} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 hover:border-gold/40 disabled:opacity-60">Regenerate key</button>
+              <button onClick={turnOff} disabled={busy} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-rose-300 disabled:opacity-60">Turn off</button>
+            </div>
+          </div>
+        )}
+      </GlassCard>
+    </Reveal>
+  );
+}
+
 function IntegrationsView() {
   const { org } = useOrg();
   const [conns, setConns] = useState<DbConnection[]>([]);
@@ -538,6 +624,7 @@ function IntegrationsView() {
   return (
     <div className="space-y-4">
       {msg && <p className="rounded-2xl border border-gold/25 bg-glass px-4 py-3 text-sm text-foreground/85">{msg}</p>}
+      <FormEndpointCard />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {PROVIDERS.map((p, i) => {
           const conn = statusOf(p.id);

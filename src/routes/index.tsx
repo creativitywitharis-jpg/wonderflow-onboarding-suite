@@ -19,11 +19,13 @@ import {
 import { Backdrop } from "@/components/wf/Backdrop";
 import { Brand } from "@/components/wf/Brand";
 import { Eyebrow, GhostButton, GlassCard, GoldButton } from "@/components/wf/ui";
+import { supabase } from "@/lib/supabase";
 
 // ── Waitlist wiring ───────────────────────────────────────────────────────
-// Paste a free Formspree/Getform endpoint here to collect signups
-// (e.g. "https://formspree.io/f/xxxxxx"). Until you do, the form falls back to
-// opening an email to CONTACT_EMAIL so no signup is ever lost.
+// Primary: WonderFlow's own `waitlist` edge function (stores signups + sends a
+// branded welcome email via Resend). If it isn't deployed yet, the form falls
+// back to this Formspree endpoint, then to a plain email — so no signup is ever
+// lost while the backend waits to deploy.
 const WAITLIST_ENDPOINT = "https://formspree.io/f/mzeprnqv";
 const CONTACT_EMAIL = "hello@wonderglowstudios.org";
 
@@ -51,22 +53,38 @@ function WaitlistForm({ big = false }: { big?: boolean }) {
     e.preventDefault();
     const value = email.trim();
     if (!value || state === "sending") return;
-    if (!WAITLIST_ENDPOINT) {
-      window.location.href = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent("WonderFlow waitlist")}&body=${encodeURIComponent(`Please add me to the waitlist: ${value}`)}`;
-      setState("done");
-      return;
-    }
     setState("sending");
+
+    // 1) Preferred: WonderFlow's own endpoint (stores + sends a branded welcome).
     try {
-      const r = await fetch(WAITLIST_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ email: value, source: "landing" }),
-      });
-      setState(r.ok ? "done" : "error");
+      const { error } = await supabase.functions.invoke("waitlist", { body: { email: value, source: "landing" } });
+      if (!error) {
+        setState("done");
+        return;
+      }
     } catch {
-      setState("error");
+      /* function not deployed yet — fall through to Formspree */
     }
+
+    // 2) Fallback: Formspree.
+    if (WAITLIST_ENDPOINT) {
+      try {
+        const r = await fetch(WAITLIST_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ email: value, source: "landing" }),
+        });
+        setState(r.ok ? "done" : "error");
+        return;
+      } catch {
+        setState("error");
+        return;
+      }
+    }
+
+    // 3) Last resort: open an email so nothing is ever lost.
+    window.location.href = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent("WonderFlow waitlist")}&body=${encodeURIComponent(`Please add me to the waitlist: ${value}`)}`;
+    setState("done");
   }
 
   if (state === "done") {

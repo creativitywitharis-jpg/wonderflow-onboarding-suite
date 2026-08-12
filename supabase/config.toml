@@ -23,3 +23,6 @@ verify_jwt = true
 
 [functions.inbound]
 verify_jwt = false
+
+[functions.waitlist]
+verify_jwt = false

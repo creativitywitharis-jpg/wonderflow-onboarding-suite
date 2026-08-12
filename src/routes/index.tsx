@@ -24,7 +24,7 @@ import { Eyebrow, GhostButton, GlassCard, GoldButton } from "@/components/wf/ui"
 // Paste a free Formspree/Getform endpoint here to collect signups
 // (e.g. "https://formspree.io/f/xxxxxx"). Until you do, the form falls back to
 // opening an email to CONTACT_EMAIL so no signup is ever lost.
-const WAITLIST_ENDPOINT = "";
+const WAITLIST_ENDPOINT = "https://formspree.io/f/mzeprnqv";
 const CONTACT_EMAIL = "hello@wonderglowstudios.org";
 
 export const Route = createFileRoute("/")({

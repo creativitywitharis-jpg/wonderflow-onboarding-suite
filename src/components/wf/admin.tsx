@@ -38,6 +38,7 @@ import { useOrg } from "@/lib/org-context";
 import { updateOrganization } from "@/lib/org";
 import { listConnections, syncStripe, type DbConnection } from "@/lib/connections";
 import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
+import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
 import { PLANS, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
 import { cancelInvitation, inviteMember, listInvitations, listMembers, setMemberStatus, type Invitation, type Member } from "@/lib/team";
 
@@ -590,6 +591,102 @@ function FormEndpointCard() {
   );
 }
 
+function WebhooksCard() {
+  const { org } = useOrg();
+  const [hooks, setHooks] = useState<DbWebhookEndpoint[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [url, setUrl] = useState("");
+  const [events, setEvents] = useState<string[]>(EVENT_CATALOG.map((e) => e.key));
+  const [busy, setBusy] = useState(false);
+  const [testMsg, setTestMsg] = useState<string | null>(null);
+
+  const load = () => {
+    if (!org) return;
+    listWebhooks(org.id).then((h) => { setHooks(h); setLoaded(true); }).catch(() => setLoaded(true));
+  };
+  useEffect(() => { load(); }, [org?.id]);
+
+  const add = async () => {
+    if (!org || !url.trim() || events.length === 0 || busy) return;
+    setBusy(true);
+    await createWebhook(org.id, url, events);
+    setBusy(false);
+    setUrl("");
+    setAdding(false);
+    load();
+  };
+  const test = async (h: DbWebhookEndpoint) => {
+    if (!org) return;
+    setTestMsg("Sending test…");
+    const r = await testWebhook(org.id, h.id);
+    setTestMsg(r.ok ? `✓ Test delivered (HTTP ${r.status})` : `Test failed${r.status ? ` (HTTP ${r.status})` : ""}${r.detail ? `: ${r.detail}` : ""}`);
+    load();
+  };
+
+  return (
+    <Reveal>
+      <GlassCard className="p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="grid size-11 place-items-center rounded-2xl border border-gold/25 bg-glass"><Zap className="size-5 text-gold" /></span>
+            <div>
+              <p className="text-sm font-semibold text-foreground">Outbound webhooks</p>
+              <p className="text-xs text-muted-foreground">Send WonderFlow events to Zapier, Make, or any URL — connect to 5,000+ apps.</p>
+            </div>
+          </div>
+          <button onClick={() => setAdding((a) => !a)} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110" style={{ background: "var(--gradient-gold)" }}>Add endpoint</button>
+        </div>
+
+        {adding && (
+          <div className="mt-4 rounded-2xl border border-border bg-background/30 p-4">
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a Zapier Catch Hook URL, or https://your-server.com/hook" className={inputCls} />
+            <p className="mt-3 mb-1.5 text-[0.65rem] uppercase tracking-wide text-muted-foreground">Send these events</p>
+            <div className="flex flex-wrap gap-2">
+              {EVENT_CATALOG.map((ev) => {
+                const on = events.includes(ev.key);
+                return (
+                  <button key={ev.key} onClick={() => setEvents((s) => (s.includes(ev.key) ? s.filter((x) => x !== ev.key) : [...s, ev.key]))} title={ev.desc} className={cn("rounded-full border px-3 py-1.5 text-xs transition-colors", on ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground hover:text-foreground")} style={on ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>
+                    {on && <Check className="mr-1 inline size-3 text-gold" />}{ev.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button onClick={add} disabled={busy || !url.trim() || events.length === 0} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Adding…" : "Add webhook"}</button>
+              <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {testMsg && <p className="mt-3 rounded-xl border border-gold/25 bg-glass px-3 py-2 text-xs text-foreground/85">{testMsg}</p>}
+
+        <div className="mt-4 space-y-2">
+          {loaded && hooks.length === 0 && !adding && (
+            <p className="text-xs text-muted-foreground">No webhooks yet. Add one to start pushing events out. Payloads are POSTed as JSON and signed with <code className="font-mono text-foreground/80">x-wonderflow-signature</code>.</p>
+          )}
+          {hooks.map((h) => (
+            <div key={h.id} className="rounded-2xl border border-border bg-background/30 p-3">
+              <div className="flex items-center gap-2">
+                <StatusDot tone={h.enabled ? (h.failures > 0 ? "warn" : "ok") : "err"} />
+                <code className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/85">{h.url}</code>
+                <button onClick={() => test(h)} className="rounded-lg border border-border px-2 py-1 text-[0.65rem] text-muted-foreground hover:text-foreground">Test</button>
+                <button onClick={async () => { await toggleWebhook(h.id, !h.enabled); load(); }} className="rounded-lg border border-border px-2 py-1 text-[0.65rem] text-muted-foreground hover:text-foreground">{h.enabled ? "Pause" : "Resume"}</button>
+                <button onClick={async () => { await deleteWebhook(h.id); load(); }} aria-label="Delete" className="grid size-6 place-items-center rounded-lg border border-border text-muted-foreground hover:border-rose-400/50 hover:text-rose-300"><Trash2 className="size-3.5" /></button>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {h.events.map((e) => <span key={e} className="rounded-full border border-border bg-glass px-2 py-0.5 font-mono text-[0.6rem] text-muted-foreground">{e}</span>)}
+                {h.last_status != null && <span className="ml-auto text-[0.65rem] text-muted-foreground">last: HTTP {h.last_status}{h.failures > 0 ? ` · ${h.failures} fails` : ""}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-[0.7rem] text-muted-foreground">Tip: in Zapier, create a <b>Webhooks by Zapier → Catch Hook</b>, copy its URL here, and every event flows into your Zaps.</p>
+      </GlassCard>
+    </Reveal>
+  );
+}
+
 function IntegrationsView() {
   const { org } = useOrg();
   const [conns, setConns] = useState<DbConnection[]>([]);
@@ -625,6 +722,7 @@ function IntegrationsView() {
     <div className="space-y-4">
       {msg && <p className="rounded-2xl border border-gold/25 bg-glass px-4 py-3 text-sm text-foreground/85">{msg}</p>}
       <FormEndpointCard />
+      <WebhooksCard />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {PROVIDERS.map((p, i) => {
           const conn = statusOf(p.id);

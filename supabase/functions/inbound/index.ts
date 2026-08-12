@@ -9,6 +9,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { runAutomations } from "../_shared/automation-runner.ts";
+import { deliverWebhooks } from "../_shared/webhook-dispatch.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -83,20 +84,15 @@ Deno.serve(async (req: Request) => {
     await admin.from("interactions").insert({ org_id: orgId, customer_id: customerId, channel: "note", body: `📥 New web lead — ${bodyText}` });
   }
 
-  // Fire the org's customer.created automations (AI reply / owner email / webhook).
+  // Fire the org's customer.created automations + outbound webhooks.
   let ran = 0;
+  const eventPayload = { customer_id: customerId, name, email, company, message, source };
   try {
-    const results = await runAutomations(admin, orgId, "customer.created", {
-      customer_id: customerId,
-      name,
-      email,
-      company,
-      message,
-      source,
-    });
+    const results = await runAutomations(admin, orgId, "customer.created", eventPayload);
     ran = results.length;
+    await deliverWebhooks(admin, orgId, "customer.created", eventPayload);
   } catch {
-    // never fail the capture because an automation errored
+    // never fail the capture because an automation or webhook errored
   }
 
   return json({ ok: true, customer_id: customerId, automations_fired: ran });

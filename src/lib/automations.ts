@@ -29,11 +29,15 @@ export type NewAutomation = {
 
 const COLS = "id,name,trigger,action,trigger_key,action_key,action_config,enabled,runs,last_run,created_at";
 
-/** Fire an event so the engine runs any matching enabled automations.
- *  Best-effort + non-blocking: failures never break the triggering action. */
+/** WonderFlow events. A subset (TriggerKey) can drive automations; all of them
+ *  fan out to subscribed outbound webhooks. */
+export type WfEvent = TriggerKey | "invoice.paid";
+
+/** Fire an event so the engine runs any matching automations AND delivers to
+ *  subscribed outbound webhooks. Best-effort + non-blocking. */
 export async function fireAutomationEvent(
   orgId: string,
-  event: TriggerKey,
+  event: WfEvent,
   payload: Record<string, unknown>,
 ): Promise<void> {
   try {

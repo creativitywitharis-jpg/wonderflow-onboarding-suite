@@ -22,6 +22,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
 import { listCustomers } from "@/lib/customers";
+import { fireAutomationEvent } from "@/lib/automations";
 import {
   createExpense,
   createInvoice,
@@ -128,10 +129,19 @@ function FinanceProvider({ children }: { children: ReactNode }) {
   const setStatus = useCallback(
     async (id: string, status: InvoiceStatus) => {
       await setInvoiceStatus(id, status);
+      if (status === "paid" && org) {
+        const inv = invoices.find((i) => i.id === id);
+        void fireAutomationEvent(org.id, "invoice.paid", {
+          invoice_id: id,
+          number: inv?.number ?? null,
+          customer_name: inv?.customer_name ?? null,
+          total: inv ? Number(inv.total) : null,
+        });
+      }
       await load();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [load],
+    [org?.id, invoices, load],
   );
   const addExpense = useCallback(
     async (e: NewExpense) => {

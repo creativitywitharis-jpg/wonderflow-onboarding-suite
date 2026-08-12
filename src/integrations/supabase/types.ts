@@ -653,6 +653,7 @@ export type Database = {
           health_score: number
           id: string
           industry: string | null
+          ingest_key: string | null
           name: string
           plan: string
           slug: string | null
@@ -664,6 +665,7 @@ export type Database = {
           health_score?: number
           id?: string
           industry?: string | null
+          ingest_key?: string | null
           name: string
           plan?: string
           slug?: string | null
@@ -675,6 +677,7 @@ export type Database = {
           health_score?: number
           id?: string
           industry?: string | null
+          ingest_key?: string | null
           name?: string
           plan?: string
           slug?: string | null

@@ -23,6 +23,7 @@ import { Avatar, Bar, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@
 import { useOrg } from "@/lib/org-context";
 import { listCustomers } from "@/lib/customers";
 import { fireAutomationEvent } from "@/lib/automations";
+import { rollUpOrder } from "@/lib/rollup";
 import {
   createExpense,
   createInvoice,
@@ -131,6 +132,15 @@ function FinanceProvider({ children }: { children: ReactNode }) {
       await setInvoiceStatus(id, status);
       if (status === "paid" && org) {
         const inv = invoices.find((i) => i.id === id);
+        // A paid invoice is a services business's "purchase" — roll it up into
+        // the client's LTV + order count (cascades to loyalty and segmentation).
+        if (inv) {
+          await rollUpOrder(org.id, {
+            customer_id: inv.customer_id,
+            customer_name: inv.customer_name,
+            total: Number(inv.total),
+          });
+        }
         void fireAutomationEvent(org.id, "invoice.paid", {
           invoice_id: id,
           number: inv?.number ?? null,

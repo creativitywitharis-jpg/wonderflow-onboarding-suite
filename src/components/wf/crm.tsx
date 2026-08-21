@@ -16,6 +16,7 @@ import {
   Layers,
   Mail,
   MessageSquare,
+  Pencil,
   Phone,
   Plus,
   Search,
@@ -36,7 +37,7 @@ import { Avatar, Bar, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@
 import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
-import { createCustomer, insertCustomers, listCustomers, type DbCustomer, type NewCustomer } from "@/lib/customers";
+import { createCustomer, insertCustomers, listCustomers, updateCustomer, type DbCustomer, type NewCustomer } from "@/lib/customers";
 import { addInteraction, listCustomerInteractions, listInteractions, type DbInteraction, type InteractionChannel } from "@/lib/interactions";
 import { CsvImport } from "@/components/wf/CsvImport";
 import type { FieldSpec } from "@/lib/csv";
@@ -142,6 +143,7 @@ type CustomersState = {
   customers: Customer[];
   loading: boolean;
   addCustomer: (c: NewCustomer) => Promise<void>;
+  editCustomer: (id: string, patch: Partial<NewCustomer>) => Promise<{ error: Error | null }>;
   importCustomers: (rows: NewCustomer[]) => Promise<{ error: Error | null }>;
   seed: () => Promise<void>;
   resegment: () => Promise<{ changed: number; total: number }>;
@@ -191,6 +193,16 @@ function CustomersProvider({ children }: { children: ReactNode }) {
     [org?.id, load],
   );
 
+  const editCustomer = useCallback(
+    async (id: string, patch: Partial<NewCustomer>) => {
+      const { error } = await updateCustomer(id, patch);
+      await load();
+      return { error };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [load],
+  );
+
   const seed = useCallback(
     async () => {
       if (!org) return;
@@ -225,7 +237,7 @@ function CustomersProvider({ children }: { children: ReactNode }) {
     [org?.id, customers, load],
   );
 
-  return <CustomersCtx.Provider value={{ customers, loading, addCustomer, importCustomers, seed, resegment }}>{children}</CustomersCtx.Provider>;
+  return <CustomersCtx.Provider value={{ customers, loading, addCustomer, editCustomer, importCustomers, seed, resegment }}>{children}</CustomersCtx.Provider>;
 }
 
 // Segment metadata — real counts and revenue share are derived from the org's
@@ -674,9 +686,43 @@ function ProfilesView({
   selectedId: string;
   onSelect: (id: string) => void;
 }) {
-  const { customers } = useCustomersData();
+  const { customers, editCustomer } = useCustomersData();
   const c = customers.find((x) => x.id === selectedId) ?? customers[0];
   const [timeline, setTimeline] = useState<{ icon: LucideIcon; t: string; d: string }[]>([]);
+  const [editing, setEditing] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [ef, setEf] = useState({ name: "", company: "", email: "", tier: "New", ltv: 0, orders: 0, health: 0, since: "" });
+
+  const openEdit = () => {
+    if (!c) return;
+    setEf({
+      name: c.name,
+      company: c.company ?? "",
+      email: c.email ?? "",
+      tier: c.tier,
+      ltv: c.ltv,
+      orders: c.orders,
+      health: c.health,
+      since: c.since === "—" ? "" : c.since,
+    });
+    setEditing(true);
+  };
+  const saveEdit = async () => {
+    if (!c || savingEdit) return;
+    setSavingEdit(true);
+    await editCustomer(c.id, {
+      name: ef.name.trim(),
+      company: ef.company.trim() || undefined,
+      email: ef.email.trim() || undefined,
+      tier: ef.tier,
+      ltv: Number(ef.ltv) || 0,
+      orders: Number(ef.orders) || 0,
+      health: Math.max(0, Math.min(100, Number(ef.health) || 0)),
+      since: ef.since.trim() || undefined,
+    });
+    setSavingEdit(false);
+    setEditing(false);
+  };
   useEffect(() => {
     let alive = true;
     if (c?.id) {
@@ -767,6 +813,61 @@ function ProfilesView({
                 <Sparkles className="size-3.5 text-gold" /> Ask AI
               </button>
             </div>
+            <button
+              onClick={editing ? () => setEditing(false) : openEdit}
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-full border border-border bg-glass px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground"
+            >
+              <Pencil className="size-3.5" /> {editing ? "Close editor" : "Edit details"}
+            </button>
+
+            {editing && (
+              <div className="mt-4 w-full space-y-2.5 border-t border-border pt-4 text-left">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <label className="col-span-2 text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Name
+                    <input value={ef.name} onChange={(e) => setEf((f) => ({ ...f, name: e.target.value }))} className={cn(CRM_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Company
+                    <input value={ef.company} onChange={(e) => setEf((f) => ({ ...f, company: e.target.value }))} className={cn(CRM_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Tier
+                    <select value={ef.tier} onChange={(e) => setEf((f) => ({ ...f, tier: e.target.value }))} className={cn(CRM_INPUT, "mt-1")}>
+                      {["Champion", "Loyal", "Potential", "New", "At risk", "Dormant"].map((t) => <option key={t}>{t}</option>)}
+                    </select>
+                  </label>
+                  <label className="col-span-2 text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Email
+                    <input value={ef.email} onChange={(e) => setEf((f) => ({ ...f, email: e.target.value }))} className={cn(CRM_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-gold">
+                    Lifetime value ($)
+                    <input type="number" min={0} value={ef.ltv} onChange={(e) => setEf((f) => ({ ...f, ltv: Number(e.target.value) }))} className={cn(CRM_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Orders
+                    <input type="number" min={0} value={ef.orders} onChange={(e) => setEf((f) => ({ ...f, orders: Number(e.target.value) }))} className={cn(CRM_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Health (0–100)
+                    <input type="number" min={0} max={100} value={ef.health} onChange={(e) => setEf((f) => ({ ...f, health: Number(e.target.value) }))} className={cn(CRM_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Customer since
+                    <input value={ef.since} onChange={(e) => setEf((f) => ({ ...f, since: e.target.value }))} placeholder="e.g. 2023" className={cn(CRM_INPUT, "mt-1")} />
+                  </label>
+                </div>
+                <button
+                  onClick={saveEdit}
+                  disabled={!ef.name.trim() || savingEdit}
+                  className="flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+                  style={{ background: "var(--gradient-gold)" }}
+                >
+                  <Check className="size-3.5" /> {savingEdit ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            )}
           </GlassCard>
         </Reveal>
 

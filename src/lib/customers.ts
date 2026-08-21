@@ -53,3 +53,14 @@ export async function insertCustomers(orgId: string, rows: NewCustomer[]) {
   const { error } = await supabase.from("customers").insert(rows.map((r) => ({ org_id: orgId, ...r })));
   return { error: error ? new Error(error.message) : null };
 }
+
+/** Update an existing customer (RLS restricts this to the owning org's members). */
+export async function updateCustomer(id: string, patch: Partial<NewCustomer>) {
+  const { data, error } = await supabase
+    .from("customers")
+    .update(patch)
+    .eq("id", id)
+    .select(COLS)
+    .single();
+  return { data: data as DbCustomer | null, error: error ? new Error(error.message) : null };
+}

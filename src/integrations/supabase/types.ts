@@ -844,6 +844,69 @@ export type Database = {
           },
         ]
       }
+      reward_codes: {
+        Row: {
+          code: string
+          created_at: string
+          customer_id: string
+          customer_name: string | null
+          grade: string
+          id: string
+          issued_at: string
+          org_id: string
+          points_at_issue: number
+          status: string
+          threshold: number
+          used_at: string | null
+          value: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          customer_id: string
+          customer_name?: string | null
+          grade: string
+          id?: string
+          issued_at?: string
+          org_id: string
+          points_at_issue?: number
+          status?: string
+          threshold: number
+          used_at?: string | null
+          value?: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          customer_id?: string
+          customer_name?: string | null
+          grade?: string
+          id?: string
+          issued_at?: string
+          org_id?: string
+          points_at_issue?: number
+          status?: string
+          threshold?: number
+          used_at?: string | null
+          value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reward_codes_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reward_codes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subscriptions: {
         Row: {
           created_at: string

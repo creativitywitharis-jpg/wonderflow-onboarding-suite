@@ -111,6 +111,10 @@ const ROUTE_MODULE: Record<string, string> = {
   "/admin": "admin",
 };
 const ALL_MODULES = Object.values(ROUTE_MODULE);
+// Core modules are universal — always shown, regardless of an org's stored
+// enabled_modules (which is snapshotted at signup and can go stale when new core
+// modules ship, e.g. Finance). Only the commerce pack is industry-gated.
+const CORE_ALWAYS = ["dashboard", "crm", "finance", "team", "analytics", "advisor", "automation", "admin"];
 
 function healthTier(score: number) {
   if (score >= 85) return "Excellent";
@@ -326,7 +330,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         // Keep destinations relevant to the org's industry.
         .filter((it) => {
           const m = ROUTE_MODULE[it.to];
-          return !m || m === "admin" || enabled.includes(m);
+          return !m || CORE_ALWAYS.includes(m) || enabled.includes(m);
         })
         // Flag those the industry enables but the current plan doesn't include.
         .map((it) => {
@@ -515,7 +519,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
       items: g.items
         .filter((it) => {
           const m = ROUTE_MODULE[it.to];
-          return !m || m === "admin" || enabled.includes(m);
+          return !m || CORE_ALWAYS.includes(m) || enabled.includes(m);
         })
         .map((it) => {
           const m = ROUTE_MODULE[it.to];

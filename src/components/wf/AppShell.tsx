@@ -45,6 +45,7 @@ import { useOrg } from "@/lib/org-context";
 import { signOut } from "@/lib/use-auth";
 import { askAI } from "@/lib/ai";
 import { getAiUsage, planLimits } from "@/lib/billing";
+import { buildInsights, type Insight } from "@/lib/insights";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Navigation model
@@ -223,11 +224,6 @@ function CommandPalette({ open, onClose, onAsk }: { open: boolean; onClose: () =
 
 type ChatMsg = { role: "ai" | "user"; text: string };
 const quickPrompts = ["Summarize today", "Where am I losing money?", "What should I focus on?"];
-const insights = [
-  { text: "Revenue is pacing 12% ahead of last month.", tone: "up" },
-  { text: "Golden Hour Balm stocks out in 3 days.", tone: "warn" },
-  { text: "84 accounts are primed for an upsell (+$52k).", tone: "up" },
-];
 
 function AiPanel({ onClose }: { onClose: () => void }) {
   const { org } = useOrg();
@@ -245,6 +241,19 @@ function AiPanel({ onClose }: { onClose: () => void }) {
     return () => { alive = false; };
   }, [org?.id, limit]);
   const remaining = limit === null ? null : Math.max(0, limit - (usage ?? 0));
+
+  // Real "Today's insights" derived from this org's own data (fails soft to []).
+  const [insights, setInsights] = useState<Insight[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (org?.id) {
+      setInsights(null);
+      buildInsights(org.id).then((r) => alive && setInsights(r)).catch(() => alive && setInsights([]));
+    } else {
+      setInsights([]);
+    }
+    return () => { alive = false; };
+  }, [org?.id]);
 
   async function send(text: string) {
     const q = text.trim();
@@ -285,7 +294,15 @@ function AiPanel({ onClose }: { onClose: () => void }) {
           <div>
             <p className="px-1 text-[0.65rem] uppercase tracking-[0.18em] text-muted-foreground">Today's insights</p>
             <div className="mt-2 space-y-2">
-              {insights.map((it) => (
+              {insights === null && (
+                <div className="rounded-2xl border border-border bg-background/30 p-3 text-sm text-muted-foreground">Reading your data…</div>
+              )}
+              {insights?.length === 0 && (
+                <div className="rounded-2xl border border-border bg-background/30 p-3 text-sm text-muted-foreground">
+                  Add customers, products, or invoices and I'll surface what needs attention here.
+                </div>
+              )}
+              {insights?.map((it) => (
                 <div key={it.text} className="flex items-start gap-2 rounded-2xl border border-border bg-background/30 p-3 text-sm text-foreground/85">
                   <span className="mt-1.5 size-1.5 shrink-0 rounded-full" style={{ background: it.tone === "warn" ? "oklch(0.68 0.16 25)" : "oklch(0.84 0.14 84)" }} />{it.text}
                 </div>

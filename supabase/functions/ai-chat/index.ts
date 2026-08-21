@@ -20,7 +20,7 @@ type Business = { name?: string | null; industry?: string | null } | null;
 // Monthly AI message allowance per plan (null = unlimited). Mirrors PLAN_LIMITS
 // in src/lib/billing.ts.
 const AI_MONTHLY: Record<string, number | null> = {
-  trial: 25,
+  trial: 500, // BETA: generous free access — drop back to ~25 when billing goes live
   starter: 100,
   growth: null,
   scale: null,

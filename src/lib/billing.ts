@@ -54,7 +54,10 @@ export type PlanLimits = {
 };
 
 export const PLAN_LIMITS: Record<string, PlanLimits> = {
-  trial: { label: "Trial", modules: PLAN_CORE_MODULES, seats: 1, aiMonthly: 25 },
+  // BETA: early users get the FULL platform free — all modules, generous AI, up
+  // to 5 seats. Tighten this back down (e.g. core modules, aiMonthly 25, 1 seat)
+  // when you turn on live billing. Keep in sync with AI_MONTHLY in ai-chat.
+  trial: { label: "Trial", modules: [...PLAN_CORE_MODULES, ...PLAN_COMMERCE_MODULES], seats: 5, aiMonthly: 500 },
   starter: { label: "Starter", modules: PLAN_CORE_MODULES, seats: 1, aiMonthly: 100 },
   growth: { label: "Growth", modules: [...PLAN_CORE_MODULES, ...PLAN_COMMERCE_MODULES], seats: 5, aiMonthly: null },
   scale: { label: "Scale", modules: [...PLAN_CORE_MODULES, ...PLAN_COMMERCE_MODULES], seats: 20, aiMonthly: null },

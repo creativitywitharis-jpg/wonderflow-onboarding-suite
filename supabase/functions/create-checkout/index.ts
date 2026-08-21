@@ -72,7 +72,7 @@ Deno.serve(async (req: Request) => {
   if (!membership) return json({ error: "You don't have access to this workspace." }, 403);
 
   const stripe = new Stripe(stripeKey, {
-    apiVersion: "2024-06-20",
+    apiVersion: "2025-02-24.acacia",
     httpClient: Stripe.createFetchHttpClient(),
   });
 

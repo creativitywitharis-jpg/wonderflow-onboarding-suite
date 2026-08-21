@@ -74,7 +74,7 @@ Deno.serve(async (req: Request) => {
   if (!customer) return json({ error: "No billing account yet — choose a plan first." }, 400);
 
   const stripe = new Stripe(stripeKey, {
-    apiVersion: "2024-06-20",
+    apiVersion: "2025-02-24.acacia",
     httpClient: Stripe.createFetchHttpClient(),
   });
   const origin = body.origin || req.headers.get("origin") || "";

@@ -12,7 +12,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const stripe = new Stripe(
   Deno.env.get("STRIPE_SECRET_KEY") ?? Deno.env.get("STRIPE_TEST_API_KEY") ?? "",
   {
-  apiVersion: "2024-06-20",
+  apiVersion: "2025-02-24.acacia",
   httpClient: Stripe.createFetchHttpClient(),
   },
 );

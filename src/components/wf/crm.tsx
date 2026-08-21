@@ -39,6 +39,7 @@ import { addInteraction, listCustomerInteractions, listInteractions, type DbInte
 import { CsvImport } from "@/components/wf/CsvImport";
 import type { FieldSpec } from "@/lib/csv";
 import { fireAutomationEvent } from "@/lib/automations";
+import { resegmentCustomers } from "@/lib/segment";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -130,6 +131,7 @@ type CustomersState = {
   addCustomer: (c: NewCustomer) => Promise<void>;
   importCustomers: (rows: NewCustomer[]) => Promise<{ error: Error | null }>;
   seed: () => Promise<void>;
+  resegment: () => Promise<{ changed: number; total: number }>;
 };
 const CustomersCtx = createContext<CustomersState | null>(null);
 function useCustomersData() {
@@ -197,7 +199,20 @@ function CustomersProvider({ children }: { children: ReactNode }) {
     [org?.id, load],
   );
 
-  return <CustomersCtx.Provider value={{ customers, loading, addCustomer, importCustomers, seed }}>{children}</CustomersCtx.Provider>;
+  const resegment = useCallback(
+    async () => {
+      if (!org) return { changed: 0, total: 0 };
+      const res = await resegmentCustomers(
+        customers.map((c) => ({ id: c.id, ltv: c.ltv, orders: c.orders, health: c.health, tier: c.tier })),
+      );
+      await load();
+      return res;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, customers, load],
+  );
+
+  return <CustomersCtx.Provider value={{ customers, loading, addCustomer, importCustomers, seed, resegment }}>{children}</CustomersCtx.Provider>;
 }
 
 // Segment metadata — real counts and revenue share are derived from the org's
@@ -846,9 +861,22 @@ function ProfilesView({
 }
 
 function SegmentsView({ onExplore }: { onExplore: () => void }) {
-  const { customers } = useCustomersData();
+  const { customers, resegment } = useCustomersData();
   const segs = deriveSegments(customers);
   const total = customers.length;
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const runResegment = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const { changed, total: n } = await resegment();
+      setNote(changed === 0 ? `All ${n} customers already correctly tiered.` : `Re-tiered ${changed} of ${n} customers.`);
+    } catch {
+      setNote("Couldn't re-segment — please try again.");
+    }
+    setBusy(false);
+  };
   return (
     <div className="space-y-5">
       <Reveal>
@@ -864,14 +892,25 @@ function SegmentsView({ onExplore }: { onExplore: () => void }) {
                 Your <span className="text-gold">{formatNum(total)}</span> customer{total === 1 ? "" : "s"}, grouped
                 into 6 segments by tier and share of lifetime value.
               </p>
+              {note && <p className="mt-1.5 text-xs text-gold">{note}</p>}
             </div>
-            <button
-              onClick={onExplore}
-              className="flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]"
-              style={{ background: "var(--gradient-gold)" }}
-            >
-              View customers <ArrowRight className="size-3.5" />
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={runResegment}
+                disabled={busy || total === 0}
+                title="Auto-classify every customer by value, order frequency, and health"
+                className="flex items-center gap-2 rounded-full border border-gold/40 px-4 py-2.5 text-xs font-semibold text-gold transition-all hover:bg-gold/10 active:scale-[0.98] disabled:opacity-50"
+              >
+                <Sparkles className="size-3.5" /> {busy ? "Segmenting…" : "Smart re-segment"}
+              </button>
+              <button
+                onClick={onExplore}
+                className="flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]"
+                style={{ background: "var(--gradient-gold)" }}
+              >
+                View customers <ArrowRight className="size-3.5" />
+              </button>
+            </div>
           </div>
         </GlassCard>
       </Reveal>

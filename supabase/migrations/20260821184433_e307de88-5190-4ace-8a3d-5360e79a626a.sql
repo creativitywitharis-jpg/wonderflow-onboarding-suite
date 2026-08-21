@@ -1,0 +1,1 @@
+revoke all on public.reward_codes from anon;

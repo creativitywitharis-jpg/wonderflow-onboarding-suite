@@ -106,6 +106,21 @@ function AuthScreen() {
     else setNotice(`Confirmation email re-sent to ${confirmEmail}.`);
   }
 
+  async function sendReset() {
+    const target = email.trim();
+    if (!target) {
+      setError("Enter your email above first, then tap 'Forgot password?'.");
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    const { error } = await supabase.auth.resetPasswordForEmail(target, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) setError(error.message);
+    else setNotice(`If an account exists for ${target}, we've sent a password reset link. Check your inbox.`);
+  }
+
   async function google() {
     setError(null);
     const result = await lovable.auth.signInWithOAuth("google", {
@@ -224,6 +239,14 @@ function AuthScreen() {
                 </button>
               </div>
             </Field>
+
+            {mode === "signin" && (
+              <div className="-mt-2 text-right">
+                <button type="button" onClick={sendReset} className="text-xs text-muted-foreground transition-colors hover:text-gold">
+                  Forgot password?
+                </button>
+              </div>
+            )}
 
             {error && (
               <p className="flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-200">

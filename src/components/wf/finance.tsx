@@ -10,7 +10,9 @@ import {
   PieChart,
   Plus,
   Receipt,
+  Send,
   Sparkles,
+  Trash2,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -29,12 +31,15 @@ import {
   createInvoice,
   insertExpenses,
   insertInvoices,
+  invoiceTotals,
   isOverdue,
   listExpenses,
   listInvoices,
+  sendInvoice,
   setInvoiceStatus,
   type DbExpense,
   type DbInvoice,
+  type InvoiceItem,
   type InvoiceStatus,
   type NewExpense,
   type NewInvoice,
@@ -75,7 +80,7 @@ type FinState = {
   expenses: DbExpense[];
   customers: { id: string; name: string }[];
   loading: boolean;
-  addInvoice: (inv: NewInvoice) => Promise<void>;
+  addInvoice: (inv: NewInvoice) => Promise<{ data: DbInvoice | null }>;
   setStatus: (id: string, status: InvoiceStatus) => Promise<void>;
   addExpense: (e: NewExpense) => Promise<void>;
   seed: () => Promise<void>;
@@ -120,9 +125,10 @@ function FinanceProvider({ children }: { children: ReactNode }) {
 
   const addInvoice = useCallback(
     async (inv: NewInvoice) => {
-      if (!org) return;
-      await createInvoice(org.id, inv);
+      if (!org) return { data: null };
+      const { data } = await createInvoice(org.id, inv);
       await load();
+      return { data };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org?.id, load],
@@ -260,27 +266,61 @@ function OverviewView() {
 
 const INV_STATUSES: InvoiceStatus[] = ["draft", "sent", "paid", "void"];
 
+const BLANK_ITEM: InvoiceItem = { description: "", qty: 1, price: 0 };
+
 function InvoicesView() {
   const { invoices, customers, loading, addInvoice, setStatus, seed } = useFin();
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ customer: "", amount: "", tax: "", due: "" });
+  const [form, setForm] = useState<{ customer: string; items: InvoiceItem[]; taxRate: string; due: string; notes: string }>({
+    customer: "",
+    items: [{ ...BLANK_ITEM }],
+    taxRate: "",
+    due: "",
+    notes: "",
+  });
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [sendMsg, setSendMsg] = useState<string | null>(null);
 
-  const submit = async () => {
+  const totals = invoiceTotals(form.items, Number(form.taxRate) || 0);
+  const setItem = (i: number, patch: Partial<InvoiceItem>) =>
+    setForm((f) => ({ ...f, items: f.items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)) }));
+  const addItem = () => setForm((f) => ({ ...f, items: [...f.items, { ...BLANK_ITEM }] }));
+  const removeItem = (i: number) => setForm((f) => ({ ...f, items: f.items.filter((_, idx) => idx !== i) }));
+
+  const submit = async (thenSend: boolean) => {
     if (!form.customer.trim() || busy) return;
     setBusy(true);
+    setSendMsg(null);
     const cust = customers.find((c) => c.id === form.customer);
-    await addInvoice({
+    const items = form.items.filter((it) => it.description.trim() || it.price);
+    const t = invoiceTotals(items, Number(form.taxRate) || 0);
+    const { data } = await addInvoice({
       customer_id: cust?.id ?? null,
       customer_name: cust?.name ?? form.customer.trim(),
-      amount: Number(form.amount) || 0,
-      tax: Number(form.tax) || 0,
+      items,
+      amount: t.subtotal,
+      tax: t.tax,
+      total: t.total,
       due_date: form.due || null,
-      status: "sent",
+      notes: form.notes.trim() || null,
+      status: "draft",
     });
+    if (thenSend && data?.id) {
+      const r = await sendInvoice(data.id);
+      setSendMsg(r.sent ? "✓ Invoice emailed to the client." : `Saved as draft — couldn't email: ${r.error ?? "unknown error"}`);
+    }
     setBusy(false);
-    setForm({ customer: "", amount: "", tax: "", due: "" });
+    setForm({ customer: "", items: [{ ...BLANK_ITEM }], taxRate: "", due: "", notes: "" });
     setAdding(false);
+  };
+
+  const send = async (i: DbInvoice) => {
+    setSendingId(i.id);
+    setSendMsg(null);
+    const r = await sendInvoice(i.id);
+    setSendMsg(r.sent ? `✓ Invoice ${i.number} emailed to the client.` : `Couldn't email invoice ${i.number}: ${r.error ?? "unknown error"}`);
+    setSendingId(null);
   };
 
   if (!loading && invoices.length === 0 && !adding) {
@@ -308,38 +348,75 @@ function InvoicesView() {
         </div>
 
         {adding && (
-          <div className="mt-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
-            <label className="text-xs">
-              <span className="mb-1 block uppercase tracking-wide text-muted-foreground">Customer</span>
-              {customers.length > 0 ? (
-                <select value={form.customer} onChange={(e) => setForm((f) => ({ ...f, customer: e.target.value }))} className={FIN_INPUT}>
-                  <option value="">Select customer…</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              ) : (
-                <input value={form.customer} onChange={(e) => setForm((f) => ({ ...f, customer: e.target.value }))} placeholder="Customer name" className={FIN_INPUT} />
-              )}
-            </label>
-            <label className="text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">Due date</span><input type="date" value={form.due} onChange={(e) => setForm((f) => ({ ...f, due: e.target.value }))} className={FIN_INPUT} /></label>
-            <label className="text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">Amount</span><input type="number" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} placeholder="0.00" className={FIN_INPUT} /></label>
-            <label className="text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">Tax</span><input type="number" value={form.tax} onChange={(e) => setForm((f) => ({ ...f, tax: e.target.value }))} placeholder="0.00" className={FIN_INPUT} /></label>
-            <div className="flex gap-2 sm:col-span-2">
-              <button onClick={submit} disabled={busy || !form.customer.trim()} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Create & send"}</button>
+          <div className="mt-4 space-y-3 rounded-2xl border border-border bg-background/30 p-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-xs">
+                <span className="mb-1 block uppercase tracking-wide text-muted-foreground">Customer</span>
+                {customers.length > 0 ? (
+                  <select value={form.customer} onChange={(e) => setForm((f) => ({ ...f, customer: e.target.value }))} className={FIN_INPUT}>
+                    <option value="">Select customer…</option>
+                    {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                ) : (
+                  <input value={form.customer} onChange={(e) => setForm((f) => ({ ...f, customer: e.target.value }))} placeholder="Customer name" className={FIN_INPUT} />
+                )}
+              </label>
+              <label className="text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">Due date</span><input type="date" value={form.due} onChange={(e) => setForm((f) => ({ ...f, due: e.target.value }))} className={FIN_INPUT} /></label>
+            </div>
+
+            {/* Line items */}
+            <div>
+              <p className="mb-1.5 text-[0.65rem] uppercase tracking-wide text-muted-foreground">Line items</p>
+              <div className="space-y-2">
+                {form.items.map((it, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input value={it.description} onChange={(e) => setItem(i, { description: e.target.value })} placeholder="Description" className={cn(FIN_INPUT, "flex-1")} />
+                    <input type="number" min={0} value={it.qty} onChange={(e) => setItem(i, { qty: Number(e.target.value) })} title="Qty" className={cn(FIN_INPUT, "w-16")} />
+                    <span className="text-xs text-muted-foreground">×$</span>
+                    <input type="number" min={0} value={it.price} onChange={(e) => setItem(i, { price: Number(e.target.value) })} title="Unit price" className={cn(FIN_INPUT, "w-24")} />
+                    <span className="w-20 text-right text-xs tabular-nums text-foreground/85">${formatNum((Number(it.qty) || 0) * (Number(it.price) || 0))}</span>
+                    <button onClick={() => removeItem(i)} disabled={form.items.length === 1} title="Remove line" className="grid size-8 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300 disabled:opacity-40"><Trash2 className="size-3.5" /></button>
+                  </div>
+                ))}
+              </div>
+              <button onClick={addItem} className="mt-2 flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40"><Plus className="size-3.5" /> Add line</button>
+            </div>
+
+            {/* Tax + totals */}
+            <div className="flex flex-wrap items-end justify-between gap-3 border-t border-border pt-3">
+              <label className="text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">Tax rate (%)</span><input type="number" min={0} value={form.taxRate} onChange={(e) => setForm((f) => ({ ...f, taxRate: e.target.value }))} placeholder="0" className={cn(FIN_INPUT, "w-24")} /></label>
+              <div className="text-right text-xs text-muted-foreground">
+                <div>Subtotal <span className="ml-2 tabular-nums text-foreground/85">${formatNum(totals.subtotal)}</span></div>
+                <div>Tax <span className="ml-2 tabular-nums text-foreground/85">${formatNum(totals.tax)}</span></div>
+                <div className="mt-1 text-base font-semibold text-gold">Total <span className="ml-2 tabular-nums">${formatNum(totals.total)}</span></div>
+              </div>
+            </div>
+
+            <label className="block text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">Notes / payment instructions</span><input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} placeholder="e.g. Net 14 · Pay to IBAN … · Thank you!" className={FIN_INPUT} /></label>
+
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => submit(true)} disabled={busy || !form.customer.trim()} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}><Send className="size-3.5" /> {busy ? "Working…" : "Create & email to client"}</button>
+              <button onClick={() => submit(false)} disabled={busy || !form.customer.trim()} className="rounded-full border border-border px-4 py-2 text-xs text-foreground/80 hover:border-gold/40 disabled:opacity-50">Save as draft</button>
               <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
             </div>
           </div>
         )}
 
+        {sendMsg && <p className="mt-3 rounded-xl border border-gold/25 bg-glass px-3 py-2 text-xs text-foreground/85">{sendMsg}</p>}
+
         <div className="mt-5 space-y-1">
           {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>}
           {invoices.map((i) => (
-            <div key={i.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-gold/20 hover:bg-glass sm:grid-cols-[auto_1.4fr_1fr_0.8fr_auto]">
+            <div key={i.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-gold/20 hover:bg-glass sm:grid-cols-[auto_1.4fr_1fr_auto_0.8fr_auto]">
               <span className="font-mono text-xs text-muted-foreground">{i.number}</span>
               <div className="flex items-center gap-3">
                 <Avatar name={i.customer_name ?? "Customer"} />
                 <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{i.customer_name ?? "Customer"}</p><p className="text-xs text-muted-foreground">{i.due_date ? `due ${i.due_date}` : "—"}</p></div>
               </div>
               <div className="hidden sm:block"><StatusBadge inv={i} /></div>
+              <button onClick={() => send(i)} disabled={sendingId === i.id} title="Email this invoice to the client" className="hidden items-center gap-1 rounded-lg border border-border px-2 py-1 text-[0.65rem] text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground disabled:opacity-50 sm:flex">
+                <Send className="size-3" /> {sendingId === i.id ? "Sending…" : "Send"}
+              </button>
               <select value={i.status} onChange={(e) => setStatus(i.id, e.target.value as InvoiceStatus)} className="hidden rounded-lg border border-border bg-background/40 px-2 py-1 text-xs text-foreground outline-none focus:border-gold/50 sm:block">
                 {INV_STATUSES.map((s) => <option key={s} value={s} className="capitalize">{s}</option>)}
               </select>

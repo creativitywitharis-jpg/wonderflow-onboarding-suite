@@ -2,6 +2,8 @@ import { supabase } from "./supabase";
 
 export type InvoiceStatus = "draft" | "sent" | "paid" | "void";
 
+export type InvoiceItem = { description: string; qty: number; price: number };
+
 export type DbInvoice = {
   id: string;
   customer_id: string | null;
@@ -13,6 +15,7 @@ export type DbInvoice = {
   amount: number;
   tax: number;
   total: number;
+  items: InvoiceItem[];
   notes: string | null;
   paid_at: string | null;
   created_at: string;
@@ -28,8 +31,16 @@ export type NewInvoice = {
   amount: number;
   tax?: number;
   total?: number;
+  items?: InvoiceItem[];
   notes?: string | null;
 };
+
+/** Subtotal, tax and total for a set of line items at a tax rate (%). */
+export function invoiceTotals(items: InvoiceItem[], taxRate = 0) {
+  const subtotal = items.reduce((a, it) => a + (Number(it.qty) || 0) * (Number(it.price) || 0), 0);
+  const tax = Math.round(subtotal * (Number(taxRate) || 0)) / 100;
+  return { subtotal: Math.round(subtotal * 100) / 100, tax, total: Math.round((subtotal + tax) * 100) / 100 };
+}
 
 export type DbExpense = {
   id: string;
@@ -53,7 +64,7 @@ export type NewExpense = {
   notes?: string | null;
 };
 
-const INV_COLS = "id,customer_id,customer_name,number,status,issue_date,due_date,amount,tax,total,notes,paid_at,created_at";
+const INV_COLS = "id,customer_id,customer_name,number,status,issue_date,due_date,amount,tax,total,items,notes,paid_at,created_at";
 const EXP_COLS = "id,supplier_id,vendor,category,amount,date,status,notes,created_at";
 
 function invNumber() {
@@ -98,6 +109,17 @@ export async function setInvoiceStatus(id: string, status: InvoiceStatus) {
     .update({ status, paid_at: status === "paid" ? new Date().toISOString() : null })
     .eq("id", id);
   return { error: error ? new Error(error.message) : null };
+}
+
+/** Email the invoice to the customer (branded) via the send-invoice edge fn,
+ *  which also flips the invoice to 'sent'. Fails soft. */
+export async function sendInvoice(invoiceId: string, origin?: string): Promise<{ sent: boolean; error: string | null }> {
+  const { data, error } = await supabase.functions.invoke("send-invoice", {
+    body: { invoiceId, origin: origin ?? window.location.origin },
+  });
+  if (error) return { sent: false, error: error.message };
+  const res = data as { sent?: boolean; error?: string } | null;
+  return { sent: !!res?.sent, error: res?.error ?? null };
 }
 
 export async function listExpenses(orgId: string): Promise<DbExpense[]> {

@@ -1,6 +1,6 @@
 import { supabase } from "./supabase";
 import { listCustomers } from "./customers";
-import { issueRewardCodes, listRewardCodes } from "./loyalty";
+import { getLoyaltySettings, issueRewardCodes, listRewardCodes } from "./loyalty";
 
 // Order roll-up — the engine that turns a static CRM into a living one. When an
 // order arrives (logged in-app, imported, or received from a connected website),
@@ -61,10 +61,13 @@ export async function rollUpOrders(orgId: string, orders: RollupOrder[]): Promis
   );
   if (affected.length === 0) return { customersUpdated: 0, codesIssued: 0 };
 
-  // Auto-issue any loyalty codes the new points unlock (fails soft if not migrated).
+  // Auto-issue any loyalty codes the new points unlock, per THIS org's program
+  // (skips entirely if the business has loyalty turned off). Fails soft if unmigrated.
+  const settings = await getLoyaltySettings(orgId);
+  if (!settings.enabled) return { customersUpdated: affected.length, codesIssued: 0 };
   const affectedIds = new Set(affected.map((a) => a.id));
   const existing = (await listRewardCodes(orgId)).filter((rc) => affectedIds.has(rc.customer_id));
-  const { issued } = await issueRewardCodes(orgId, affected, existing);
+  const { issued } = await issueRewardCodes(orgId, affected, existing, settings);
 
   return { customersUpdated: affected.length, codesIssued: issued };
 }

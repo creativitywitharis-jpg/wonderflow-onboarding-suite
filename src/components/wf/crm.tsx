@@ -19,12 +19,15 @@ import {
   Pencil,
   Phone,
   Plus,
+  Power,
+  Sliders,
   Search,
   Send,
   Sparkles,
   Star,
   Target,
   Ticket,
+  Trash2,
   TrendingUp,
   Users,
   Zap,
@@ -44,14 +47,17 @@ import type { FieldSpec } from "@/lib/csv";
 import { fireAutomationEvent } from "@/lib/automations";
 import { resegmentCustomers } from "@/lib/segment";
 import {
-  GRADES,
+  DEFAULT_SETTINGS,
+  gradeColor,
   gradeFor,
+  getLoyaltySettings,
   issueRewardCodes,
   listRewardCodes,
   markCodeUsed,
   nextMilestone,
   pointsFor,
-  POINTS_PER_DOLLAR,
+  saveLoyaltySettings,
+  type LoyaltySettings,
   type RewardCode,
 } from "@/lib/loyalty";
 
@@ -1310,26 +1316,33 @@ function LoyaltyView() {
   const { customers } = useCustomersData();
   const { org } = useOrg();
   const [codes, setCodes] = useState<RewardCode[]>([]);
+  const [settings, setSettings] = useState<LoyaltySettings>(DEFAULT_SETTINGS);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
-  const loadCodes = useCallback(async () => {
+  const loadAll = useCallback(async () => {
     if (!org) return;
-    setCodes(await listRewardCodes(org.id));
+    const [c, s] = await Promise.all([listRewardCodes(org.id), getLoyaltySettings(org.id)]);
+    setCodes(c);
+    setSettings(s);
   }, [org?.id]);
   useEffect(() => {
-    void loadCodes();
-  }, [loadCodes]);
+    void loadAll();
+  }, [loadAll]);
+
+  const grades = [...settings.grades].sort((a, b) => a.threshold - b.threshold);
+  const topGradeName = grades.length ? grades[grades.length - 1].grade : "";
 
   // Members with points (lifetime spend) + current grade, ranked.
   const members = customers
-    .map((c) => ({ ...c, points: pointsFor(c.ltv), grade: gradeFor(pointsFor(c.ltv)) }))
+    .map((c) => ({ ...c, points: pointsFor(c.ltv, settings), grade: gradeFor(pointsFor(c.ltv, settings), settings) }))
     .sort((a, b) => b.points - a.points);
   const top = members.slice(0, 5);
 
-  // Exclusive count at each grade (the repeating "Elite" tier folds into Platinum).
+  // Exclusive count at each grade (the repeating "Elite" tier folds into the top grade).
   const gradeCount = (name: string) =>
-    members.filter((m) => (m.grade ? (m.grade.grade === "Elite" ? "Platinum" : m.grade.grade) : "") === name).length;
+    members.filter((m) => (m.grade ? (m.grade.grade === "Elite" ? topGradeName : m.grade.grade) : "") === name).length;
 
   const issued = codes.length;
   const used = codes.filter((c) => c.status === "used").length;
@@ -1343,16 +1356,17 @@ function LoyaltyView() {
       org.id,
       customers.map((c) => ({ id: c.id, name: c.name, ltv: c.ltv })),
       codes,
+      settings,
     );
     if (error) setNote("Reward codes need the database update (0022) applied first.");
     else setNote(n === 0 ? "Everyone's rewards are up to date." : `Issued ${n} new reward code${n === 1 ? "" : "s"}.`);
-    await loadCodes();
+    await loadAll();
     setBusy(false);
   };
 
   const toggleUsed = async (c: RewardCode) => {
     await markCodeUsed(c.id, c.status !== "used");
-    await loadCodes();
+    await loadAll();
   };
 
   return (
@@ -1367,44 +1381,86 @@ function LoyaltyView() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Rewards engine</p>
-              <p className="mt-1 text-sm text-foreground/85">
-                {POINTS_PER_DOLLAR} point per $1 spent · points only climb. A reward code auto-issues at each milestone —{" "}
-                <span className="text-gold">{formatNum(issued)}</span> issued, {formatNum(outstanding)} outstanding, {formatNum(used)} used.
-              </p>
+              {settings.enabled ? (
+                <p className="mt-1 text-sm text-foreground/85">
+                  {settings.pointsPerDollar} point{settings.pointsPerDollar === 1 ? "" : "s"} per $1 spent · points only climb. A reward code
+                  auto-issues at each milestone — <span className="text-gold">{formatNum(issued)}</span> issued, {formatNum(outstanding)}{" "}
+                  outstanding, {formatNum(used)} used.
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-foreground/70">Loyalty is turned off for this workspace. Open settings to enable it.</p>
+              )}
               {note && <p className="mt-1.5 text-xs text-gold">{note}</p>}
             </div>
             <button
-              onClick={runIssue}
-              disabled={busy || customers.length === 0}
-              title="Check every customer and issue codes for milestones they've reached"
-              className="flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
-              style={{ background: "var(--gradient-gold)" }}
+              onClick={() => setShowSettings((v) => !v)}
+              title="Configure your loyalty program"
+              className="flex items-center gap-2 rounded-full border border-border bg-glass px-4 py-2.5 text-xs font-semibold text-foreground/80 transition-all hover:border-gold/40 active:scale-[0.98]"
             >
-              <Sparkles className="size-3.5" /> {busy ? "Checking…" : "Check & issue rewards"}
+              <Sliders className="size-3.5" /> Settings
             </button>
+            {settings.enabled && (
+              <button
+                onClick={runIssue}
+                disabled={busy || customers.length === 0}
+                title="Check every customer and issue codes for milestones they've reached"
+                className="flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+                style={{ background: "var(--gradient-gold)" }}
+              >
+                <Sparkles className="size-3.5" /> {busy ? "Checking…" : "Check & issue rewards"}
+              </button>
+            )}
           </div>
         </GlassCard>
       </Reveal>
 
+      {showSettings && org && (
+        <LoyaltySettingsPanel orgId={org.id} settings={settings} onSaved={async () => { await loadAll(); }} onClose={() => setShowSettings(false)} />
+      )}
+
+      {!settings.enabled ? (
+        <Reveal>
+          <GlassCard className="flex flex-col items-center p-10 text-center">
+            <span className="grid size-14 place-items-center rounded-full border border-border bg-glass">
+              <Crown className="size-6 text-muted-foreground" />
+            </span>
+            <h3 className="mt-4 text-lg" style={{ fontFamily: "var(--font-display)" }}>Loyalty is off</h3>
+            <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+              Turn on the rewards program to auto-issue codes as customers hit spending milestones. You control every threshold and value.
+            </p>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="mt-5 flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]"
+              style={{ background: "var(--gradient-gold)" }}
+            >
+              <Power className="size-4" /> Turn on loyalty
+            </button>
+          </GlassCard>
+        </Reveal>
+      ) : (
+      <>
       {/* Grade ladder */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {GRADES.map((g, i) => (
-          <Reveal key={g.grade} delay={i * 60} className="h-full">
+        {grades.map((g, i) => {
+          const color = gradeColor(i);
+          return (
+          <Reveal key={`${g.grade}-${g.threshold}`} delay={i * 60} className="h-full">
             <GlassCard className="lift h-full p-5 hover:border-gold/40">
               <div className="flex items-center justify-between">
                 <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass">
-                  <Crown className="size-4" style={{ color: g.color }} />
+                  <Crown className="size-4" style={{ color }} />
                 </span>
                 <span className="text-xs text-muted-foreground">{formatNum(g.threshold)} pts → ${g.value}</span>
               </div>
-              <p className="mt-4 text-sm font-semibold" style={{ color: g.color }}>
+              <p className="mt-4 text-sm font-semibold" style={{ color }}>
                 {g.grade}
               </p>
               <p className="mt-1 text-2xl font-semibold tabular-nums">{formatNum(gradeCount(g.grade))}</p>
               <p className="text-xs text-muted-foreground">member{gradeCount(g.grade) === 1 ? "" : "s"} at this grade</p>
             </GlassCard>
           </Reveal>
-        ))}
+          );
+        })}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -1415,7 +1471,7 @@ function LoyaltyView() {
             <div className="mt-4 space-y-2.5">
               {top.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">Add customers to rank your top members.</p>}
               {top.map((m, i) => {
-                const nxt = nextMilestone(m.points);
+                const nxt = nextMilestone(m.points, settings);
                 return (
                   <div key={m.id} className="rounded-xl px-2 py-2">
                     <div className="flex items-center gap-3">
@@ -1495,7 +1551,157 @@ function LoyaltyView() {
           </GlassCard>
         </Reveal>
       </div>
+      </>
+      )}
     </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Loyalty settings editor
+ * ─────────────────────────────────────────────────────────────────── */
+
+function LoyaltySettingsPanel({
+  orgId,
+  settings,
+  onSaved,
+  onClose,
+}: {
+  orgId: string;
+  settings: LoyaltySettings;
+  onSaved: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState<LoyaltySettings>(settings);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const setGrade = (i: number, patch: Partial<{ grade: string; threshold: number; value: number }>) =>
+    setDraft((d) => ({ ...d, grades: d.grades.map((g, idx) => (idx === i ? { ...g, ...patch } : g)) }));
+  const addGrade = () =>
+    setDraft((d) => ({ ...d, grades: [...d.grades, { grade: `Tier ${d.grades.length + 1}`, threshold: 0, value: 0 }] }));
+  const removeGrade = (i: number) => setDraft((d) => ({ ...d, grades: d.grades.filter((_, idx) => idx !== i) }));
+
+  const save = async () => {
+    setSaving(true);
+    setMsg(null);
+    const clean = {
+      ...draft,
+      pointsPerDollar: Math.max(0.01, Number(draft.pointsPerDollar) || 1),
+      grades: draft.grades
+        .map((g) => ({ grade: g.grade.trim() || "Tier", threshold: Math.max(0, Number(g.threshold) || 0), value: Math.max(0, Number(g.value) || 0) }))
+        .sort((a, b) => a.threshold - b.threshold),
+    };
+    const { error } = await saveLoyaltySettings(orgId, clean);
+    if (error) setMsg("Couldn't save — the loyalty_settings table (migration 0023) may not be applied yet.");
+    else {
+      setMsg("Saved.");
+      await onSaved();
+    }
+    setSaving(false);
+  };
+
+  return (
+    <Reveal>
+      <GlassCard className="p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SectionLabel icon={Sliders}>Loyalty settings</SectionLabel>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={draft.enabled}
+              onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
+              className="size-4 accent-[oklch(0.84_0.14_84)]"
+            />
+            <span className={draft.enabled ? "text-gold" : "text-muted-foreground"}>{draft.enabled ? "Program on" : "Program off"}</span>
+          </label>
+        </div>
+
+        <div className="mt-5 grid gap-5 lg:grid-cols-2">
+          {/* Earn rate + grades */}
+          <div className="space-y-3">
+            <label className="block text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+              Earn rate — points per $1 spent
+              <input
+                type="number"
+                min={0.01}
+                step={0.5}
+                value={draft.pointsPerDollar}
+                onChange={(e) => setDraft((d) => ({ ...d, pointsPerDollar: Number(e.target.value) }))}
+                className={cn(CRM_INPUT, "mt-1 max-w-[8rem]")}
+              />
+            </label>
+
+            <div>
+              <p className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">Grades — points needed → code value</p>
+              <div className="mt-2 space-y-2">
+                {draft.grades.map((g, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input value={g.grade} onChange={(e) => setGrade(i, { grade: e.target.value })} placeholder="Name" className={cn(CRM_INPUT, "flex-1")} />
+                    <input type="number" min={0} value={g.threshold} onChange={(e) => setGrade(i, { threshold: Number(e.target.value) })} title="Points threshold" className={cn(CRM_INPUT, "w-24")} />
+                    <span className="text-xs text-muted-foreground">→ $</span>
+                    <input type="number" min={0} value={g.value} onChange={(e) => setGrade(i, { value: Number(e.target.value) })} title="Code value ($)" className={cn(CRM_INPUT, "w-20")} />
+                    <button onClick={() => removeGrade(i)} title="Remove grade" className="grid size-8 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-red-500/40 hover:text-red-400">
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button onClick={addGrade} className="mt-2 flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40">
+                <Plus className="size-3.5" /> Add grade
+              </button>
+            </div>
+          </div>
+
+          {/* Repeating tier + save */}
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-border bg-background/30 p-4">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={draft.repeat.enabled}
+                  onChange={(e) => setDraft((d) => ({ ...d, repeat: { ...d.repeat, enabled: e.target.checked } }))}
+                  className="size-4 accent-[oklch(0.84_0.14_84)]"
+                />
+                <span className="font-medium">Repeating top tier</span>
+              </label>
+              <p className="mt-1 text-xs text-muted-foreground">Keeps rewarding your biggest customers past the top grade.</p>
+              {draft.repeat.enabled && (
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <label className="text-[0.6rem] uppercase tracking-wide text-muted-foreground">
+                    Starts at
+                    <input type="number" min={0} value={draft.repeat.start} onChange={(e) => setDraft((d) => ({ ...d, repeat: { ...d.repeat, start: Number(e.target.value) } }))} className={cn(CRM_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.6rem] uppercase tracking-wide text-muted-foreground">
+                    Every (pts)
+                    <input type="number" min={1} value={draft.repeat.step} onChange={(e) => setDraft((d) => ({ ...d, repeat: { ...d.repeat, step: Number(e.target.value) } }))} className={cn(CRM_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.6rem] uppercase tracking-wide text-muted-foreground">
+                    Code $
+                    <input type="number" min={0} value={draft.repeat.value} onChange={(e) => setDraft((d) => ({ ...d, repeat: { ...d.repeat, value: Number(e.target.value) } }))} className={cn(CRM_INPUT, "mt-1")} />
+                  </label>
+                </div>
+              )}
+            </div>
+
+            {msg && <p className="text-xs text-gold">{msg}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={save}
+                disabled={saving}
+                className="flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+                style={{ background: "var(--gradient-gold)" }}
+              >
+                <Check className="size-3.5" /> {saving ? "Saving…" : "Save settings"}
+              </button>
+              <button onClick={onClose} className="rounded-full border border-border px-4 py-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </GlassCard>
+    </Reveal>
   );
 }
 

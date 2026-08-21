@@ -38,21 +38,48 @@ function pick(obj: Record<string, unknown>, keys: string[]): string {
   return "";
 }
 
-// ── Loyalty milestones (mirrors src/lib/loyalty.ts) ────────────────────────
-const GRADES = [
-  { grade: "Bronze", threshold: 250, value: 10 },
-  { grade: "Silver", threshold: 750, value: 25 },
-  { grade: "Gold", threshold: 1500, value: 50 },
-  { grade: "Platinum", threshold: 3000, value: 100 },
-];
-const REPEAT = { grade: "Elite", start: 4000, step: 1000, value: 75 };
+// ── Loyalty milestones (mirrors src/lib/loyalty.ts, per-org settings) ───────
+type Grade = { grade: string; threshold: number; value: number };
+type LoyaltySettings = {
+  enabled: boolean;
+  pointsPerDollar: number;
+  grades: Grade[];
+  repeat: { enabled: boolean; start: number; step: number; value: number };
+};
+const DEFAULT_SETTINGS: LoyaltySettings = {
+  enabled: true,
+  pointsPerDollar: 1,
+  grades: [
+    { grade: "Bronze", threshold: 250, value: 10 },
+    { grade: "Silver", threshold: 750, value: 25 },
+    { grade: "Gold", threshold: 1500, value: 50 },
+    { grade: "Platinum", threshold: 3000, value: 100 },
+  ],
+  repeat: { enabled: true, start: 4000, step: 1000, value: 75 },
+};
 
-function earnedMilestones(points: number) {
-  const out: { grade: string; threshold: number; value: number }[] = [];
-  for (const g of GRADES) if (points >= g.threshold) out.push(g);
-  if (points >= REPEAT.start) {
-    const highest = REPEAT.start + Math.floor((points - REPEAT.start) / REPEAT.step) * REPEAT.step;
-    out.push({ grade: REPEAT.grade, threshold: highest, value: REPEAT.value });
+async function getSettings(admin: SupabaseClient, orgId: string): Promise<LoyaltySettings> {
+  try {
+    const { data } = await admin.from("loyalty_settings").select("*").eq("org_id", orgId).maybeSingle();
+    if (!data) return DEFAULT_SETTINGS;
+    const row = data as Record<string, unknown>;
+    return {
+      enabled: row.enabled !== false,
+      pointsPerDollar: Number(row.points_per_dollar) || 1,
+      grades: Array.isArray(row.grades) && row.grades.length ? (row.grades as Grade[]) : DEFAULT_SETTINGS.grades,
+      repeat: (row.repeat as LoyaltySettings["repeat"]) ?? DEFAULT_SETTINGS.repeat,
+    };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+function earnedMilestones(points: number, s: LoyaltySettings) {
+  const out: Grade[] = [];
+  for (const g of [...s.grades].sort((a, b) => a.threshold - b.threshold)) if (points >= g.threshold) out.push(g);
+  if (s.repeat.enabled && points >= s.repeat.start) {
+    const highest = s.repeat.start + Math.floor((points - s.repeat.start) / s.repeat.step) * s.repeat.step;
+    out.push({ grade: "Elite", threshold: highest, value: s.repeat.value });
   }
   return out;
 }
@@ -62,15 +89,17 @@ function makeCode(grade: string): string {
   return `${grade.slice(0, 4).toUpperCase()}-${rand}`;
 }
 
-// Roll a sale into a customer + auto-issue any newly-earned reward codes.
+// Roll a sale into a customer + auto-issue any newly-earned reward codes (per this org's program).
 async function rollUp(admin: SupabaseClient, orgId: string, customerId: string, name: string, amount: number) {
   const { data: cust } = await admin.from("customers").select("orders,ltv").eq("id", customerId).single();
   const newLtv = Number((cust as { ltv?: number } | null)?.ltv || 0) + amount;
   const newOrders = Number((cust as { orders?: number } | null)?.orders || 0) + 1;
   await admin.from("customers").update({ orders: newOrders, ltv: newLtv }).eq("id", customerId);
 
-  const points = Math.max(0, Math.round(newLtv)); // 1 pt per $1
-  const earned = earnedMilestones(points);
+  const settings = await getSettings(admin, orgId);
+  if (!settings.enabled) return newLtv;
+  const points = Math.max(0, Math.round(newLtv * settings.pointsPerDollar));
+  const earned = earnedMilestones(points, settings);
   if (earned.length > 0) {
     const rows = earned.map((m) => ({
       org_id: orgId,

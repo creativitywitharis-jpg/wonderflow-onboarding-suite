@@ -521,6 +521,44 @@ export type Database = {
           },
         ]
       }
+      loyalty_settings: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          grades: Json
+          org_id: string
+          points_per_dollar: number
+          repeat: Json
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          grades?: Json
+          org_id: string
+          points_per_dollar?: number
+          repeat?: Json
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          grades?: Json
+          org_id?: string
+          points_per_dollar?: number
+          repeat?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "loyalty_settings_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           created_at: string

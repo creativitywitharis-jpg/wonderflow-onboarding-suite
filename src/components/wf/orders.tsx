@@ -50,6 +50,7 @@ import {
 import { CsvImport } from "@/components/wf/CsvImport";
 import type { FieldSpec } from "@/lib/csv";
 import { fireAutomationEvent } from "@/lib/automations";
+import { rollUpOrder, rollUpOrders } from "@/lib/rollup";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -191,8 +192,14 @@ function OrdersProvider({ children }: { children: ReactNode }) {
     async (o: NewOrder) => {
       if (!org) return;
       const { data } = await createOrder(org.id, o);
-      await load();
       if (data) {
+        // Fold this order into its customer's running totals (orders + LTV),
+        // which cascades to loyalty points, codes and segmentation.
+        await rollUpOrder(org.id, {
+          customer_id: data.customer_id,
+          customer_name: data.customer_name,
+          total: data.total,
+        });
         void fireAutomationEvent(org.id, "order.created", {
           order_id: data.id,
           number: data.number,
@@ -201,6 +208,7 @@ function OrdersProvider({ children }: { children: ReactNode }) {
           customer_name: data.customer_name,
         });
       }
+      await load();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org?.id, load],
@@ -225,6 +233,14 @@ function OrdersProvider({ children }: { children: ReactNode }) {
     async (rows: NewOrder[]) => {
       if (!org) return { error: new Error("No active workspace.") };
       const { error } = await insertOrders(org.id, rows);
+      if (!error) {
+        // Roll every imported order into its customer — this is how an order-history
+        // CSV builds real purchase counts + LTV (and issues any earned reward codes).
+        await rollUpOrders(
+          org.id,
+          rows.map((r) => ({ customer_id: r.customer_id, customer_name: r.customer_name, total: r.total })),
+        );
+      }
       await load();
       return { error };
     },

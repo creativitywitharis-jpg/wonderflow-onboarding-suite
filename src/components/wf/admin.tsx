@@ -600,6 +600,16 @@ function WebhooksCard() {
   const [events, setEvents] = useState<string[]>(EVENT_CATALOG.map((e) => e.key));
   const [busy, setBusy] = useState(false);
   const [testMsg, setTestMsg] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<Set<string>>(new Set());
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const toggleReveal = (id: string) =>
+    setRevealed((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const copySecret = (id: string, secret: string) => {
+    void navigator.clipboard?.writeText(secret);
+    setCopied(id);
+    setTimeout(() => setCopied((c) => (c === id ? null : c)), 1500);
+  };
 
   const load = () => {
     if (!org) return;
@@ -632,7 +642,7 @@ function WebhooksCard() {
             <span className="grid size-11 place-items-center rounded-2xl border border-gold/25 bg-glass"><Zap className="size-5 text-gold" /></span>
             <div>
               <p className="text-sm font-semibold text-foreground">Outbound webhooks</p>
-              <p className="text-xs text-muted-foreground">Send WonderFlow events to Zapier, Make, or any URL — connect to 5,000+ apps.</p>
+              <p className="text-xs text-muted-foreground">Send WonderFlow events to Zapier, Make, n8n, or any URL — each POST is HMAC-signed.</p>
             </div>
           </div>
           <button onClick={() => setAdding((a) => !a)} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110" style={{ background: "var(--gradient-gold)" }}>Add endpoint</button>
@@ -640,7 +650,7 @@ function WebhooksCard() {
 
         {adding && (
           <div className="mt-4 rounded-2xl border border-border bg-background/30 p-4">
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a Zapier Catch Hook URL, or https://your-server.com/hook" className={inputCls} />
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a catch-hook URL from Zapier, Make, n8n, or your own server" className={inputCls} />
             <p className="mt-3 mb-1.5 text-[0.65rem] uppercase tracking-wide text-muted-foreground">Send these events</p>
             <div className="flex flex-wrap gap-2">
               {EVENT_CATALOG.map((ev) => {
@@ -678,10 +688,26 @@ function WebhooksCard() {
                 {h.events.map((e) => <span key={e} className="rounded-full border border-border bg-glass px-2 py-0.5 font-mono text-[0.6rem] text-muted-foreground">{e}</span>)}
                 {h.last_status != null && <span className="ml-auto text-[0.65rem] text-muted-foreground">last: HTTP {h.last_status}{h.failures > 0 ? ` · ${h.failures} fails` : ""}</span>}
               </div>
+              {/* Signing secret — used to verify each request's x-wonderflow-signature */}
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-glass px-2 py-1.5">
+                <span className="shrink-0 text-[0.6rem] uppercase tracking-wide text-muted-foreground">Signing secret</span>
+                <code className="min-w-0 flex-1 truncate font-mono text-[0.65rem] text-foreground/85">
+                  {revealed.has(h.id) ? h.secret : `whsec_${"•".repeat(20)}`}
+                </code>
+                <button onClick={() => toggleReveal(h.id)} className="shrink-0 rounded-lg border border-border px-2 py-1 text-[0.6rem] text-muted-foreground hover:text-foreground">{revealed.has(h.id) ? "Hide" : "Reveal"}</button>
+                <button onClick={() => copySecret(h.id, h.secret)} className="shrink-0 rounded-lg border border-border px-2 py-1 text-[0.6rem] text-muted-foreground hover:text-foreground">{copied === h.id ? "Copied ✓" : "Copy"}</button>
+              </div>
             </div>
           ))}
         </div>
-        <p className="mt-3 text-[0.7rem] text-muted-foreground">Tip: in Zapier, create a <b>Webhooks by Zapier → Catch Hook</b>, copy its URL here, and every event flows into your Zaps.</p>
+        <div className="mt-3 space-y-1.5 rounded-2xl border border-border bg-background/20 p-3 text-[0.7rem] text-muted-foreground">
+          <p><b className="text-foreground/80">Works with any tool:</b> paste a catch-hook URL from <b>Zapier</b> (Webhooks → Catch Hook), <b>Make</b> (Custom webhook), <b>n8n</b> (Webhook node — cloud or self-hosted), or your own server.</p>
+          <p>
+            <b className="text-foreground/80">Verify each request</b> (optional but recommended): every POST carries a header{" "}
+            <code className="font-mono text-foreground/80">x-wonderflow-signature: sha256=…</code>. Recompute{" "}
+            <code className="font-mono text-foreground/80">HMAC-SHA256(secret, rawBody)</code> with the signing secret above and compare — a match proves it genuinely came from WonderFlow, unaltered. The secret never travels in the request.
+          </p>
+        </div>
       </GlassCard>
     </Reveal>
   );

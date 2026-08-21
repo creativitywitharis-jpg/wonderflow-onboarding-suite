@@ -8,6 +8,7 @@ import {
   Bot,
   Brain,
   Building2,
+  Check,
   Crown,
   Gift,
   Heart,
@@ -22,6 +23,7 @@ import {
   Sparkles,
   Star,
   Target,
+  Ticket,
   TrendingUp,
   Users,
   Zap,
@@ -40,6 +42,17 @@ import { CsvImport } from "@/components/wf/CsvImport";
 import type { FieldSpec } from "@/lib/csv";
 import { fireAutomationEvent } from "@/lib/automations";
 import { resegmentCustomers } from "@/lib/segment";
+import {
+  GRADES,
+  gradeFor,
+  issueRewardCodes,
+  listRewardCodes,
+  markCodeUsed,
+  nextMilestone,
+  pointsFor,
+  POINTS_PER_DOLLAR,
+  type RewardCode,
+} from "@/lib/loyalty";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -260,23 +273,8 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-// Loyalty tiers by lifetime value — real member counts are derived from the
-// org's customers (ordered high→low so the first threshold met wins).
-const LOYALTY_TIERS = [
-  { tier: "Platinum", min: 15000, color: "oklch(0.9 0.05 250)" },
-  { tier: "Gold", min: 8000, color: GOLD },
-  { tier: "Silver", min: 3000, color: "oklch(0.8 0.02 250)" },
-  { tier: "Bronze", min: 0, color: "oklch(0.62 0.08 55)" },
-];
-function loyaltyTierOf(ltv: number): string {
-  return (LOYALTY_TIERS.find((t) => ltv >= t.min) ?? LOYALTY_TIERS[LOYALTY_TIERS.length - 1]).tier;
-}
-
-const rewards = [
-  { label: "$50 account credit", pts: "5,000 pts", icon: Gift },
-  { label: "Priority support line", pts: "8,000 pts", icon: Zap },
-  { label: "Early feature access", pts: "12,000 pts", icon: Star },
-];
+// The loyalty points program (grades, thresholds, code values, earn rate) lives
+// in src/lib/loyalty.ts so it stays the single source of truth for the engine.
 
 /* ──────────────────────────────────────────────────────────────────────
  * Small viz primitives (CRM-specific)
@@ -1209,73 +1207,189 @@ function CommsView() {
 
 function LoyaltyView() {
   const { customers } = useCustomersData();
-  const tierCounts = LOYALTY_TIERS.map((t) => ({
-    ...t,
-    members: customers.filter((c) => loyaltyTierOf(c.ltv) === t.tier).length,
-  }));
-  const top = [...customers].sort((a, b) => b.ltv - a.ltv).slice(0, 4);
+  const { org } = useOrg();
+  const [codes, setCodes] = useState<RewardCode[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const loadCodes = useCallback(async () => {
+    if (!org) return;
+    setCodes(await listRewardCodes(org.id));
+  }, [org?.id]);
+  useEffect(() => {
+    void loadCodes();
+  }, [loadCodes]);
+
+  // Members with points (lifetime spend) + current grade, ranked.
+  const members = customers
+    .map((c) => ({ ...c, points: pointsFor(c.ltv), grade: gradeFor(pointsFor(c.ltv)) }))
+    .sort((a, b) => b.points - a.points);
+  const top = members.slice(0, 5);
+
+  // Exclusive count at each grade (the repeating "Elite" tier folds into Platinum).
+  const gradeCount = (name: string) =>
+    members.filter((m) => (m.grade ? (m.grade.grade === "Elite" ? "Platinum" : m.grade.grade) : "") === name).length;
+
+  const issued = codes.length;
+  const used = codes.filter((c) => c.status === "used").length;
+  const outstanding = codes.filter((c) => c.status === "issued").length;
+
+  const runIssue = async () => {
+    if (!org) return;
+    setBusy(true);
+    setNote(null);
+    const { issued: n, error } = await issueRewardCodes(
+      org.id,
+      customers.map((c) => ({ id: c.id, name: c.name, ltv: c.ltv })),
+      codes,
+    );
+    if (error) setNote("Reward codes need the database update (0022) applied first.");
+    else setNote(n === 0 ? "Everyone's rewards are up to date." : `Issued ${n} new reward code${n === 1 ? "" : "s"}.`);
+    await loadCodes();
+    setBusy(false);
+  };
+
+  const toggleUsed = async (c: RewardCode) => {
+    await markCodeUsed(c.id, c.status !== "used");
+    await loadCodes();
+  };
 
   return (
     <div className="space-y-5">
+      {/* Engine header */}
+      <Reveal>
+        <GlassCard className="glass-strong relative overflow-hidden p-6">
+          <div className="veil pointer-events-none absolute inset-0 opacity-60" />
+          <div className="relative flex flex-wrap items-center gap-4">
+            <span className="orb grid size-11 shrink-0 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+              <Crown className="size-5" stroke="oklch(0.2 0.02 70)" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Rewards engine</p>
+              <p className="mt-1 text-sm text-foreground/85">
+                {POINTS_PER_DOLLAR} point per $1 spent · points only climb. A reward code auto-issues at each milestone —{" "}
+                <span className="text-gold">{formatNum(issued)}</span> issued, {formatNum(outstanding)} outstanding, {formatNum(used)} used.
+              </p>
+              {note && <p className="mt-1.5 text-xs text-gold">{note}</p>}
+            </div>
+            <button
+              onClick={runIssue}
+              disabled={busy || customers.length === 0}
+              title="Check every customer and issue codes for milestones they've reached"
+              className="flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+              style={{ background: "var(--gradient-gold)" }}
+            >
+              <Sparkles className="size-3.5" /> {busy ? "Checking…" : "Check & issue rewards"}
+            </button>
+          </div>
+        </GlassCard>
+      </Reveal>
+
+      {/* Grade ladder */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {tierCounts.map((t, i) => (
-          <Reveal key={t.tier} delay={i * 60} className="h-full">
+        {GRADES.map((g, i) => (
+          <Reveal key={g.grade} delay={i * 60} className="h-full">
             <GlassCard className="lift h-full p-5 hover:border-gold/40">
               <div className="flex items-center justify-between">
                 <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass">
-                  <Crown className="size-4" style={{ color: t.color }} />
+                  <Crown className="size-4" style={{ color: g.color }} />
                 </span>
-                <span className="text-xs text-muted-foreground">${formatNum(t.min)}+ LTV</span>
+                <span className="text-xs text-muted-foreground">{formatNum(g.threshold)} pts → ${g.value}</span>
               </div>
-              <p className="mt-4 text-sm font-semibold" style={{ color: t.color }}>
-                {t.tier}
+              <p className="mt-4 text-sm font-semibold" style={{ color: g.color }}>
+                {g.grade}
               </p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">{formatNum(t.members)}</p>
-              <p className="text-xs text-muted-foreground">member{t.members === 1 ? "" : "s"}</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">{formatNum(gradeCount(g.grade))}</p>
+              <p className="text-xs text-muted-foreground">member{gradeCount(g.grade) === 1 ? "" : "s"} at this grade</p>
             </GlassCard>
           </Reveal>
         ))}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
+        {/* Top members + progress to next milestone */}
         <Reveal className="h-full">
           <GlassCard className="h-full p-6">
             <SectionLabel icon={Award}>Top members</SectionLabel>
-            <div className="mt-4 space-y-1">
+            <div className="mt-4 space-y-2.5">
               {top.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">Add customers to rank your top members.</p>}
-              {top.map((m, i) => (
-                <div key={m.id} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
-                  <span className="w-5 text-center text-sm font-semibold text-muted-foreground">{i + 1}</span>
-                  <Avatar name={m.name} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground">{m.name}</p>
-                    <p className="text-xs text-muted-foreground">{loyaltyTierOf(m.ltv)}</p>
+              {top.map((m, i) => {
+                const nxt = nextMilestone(m.points);
+                return (
+                  <div key={m.id} className="rounded-xl px-2 py-2">
+                    <div className="flex items-center gap-3">
+                      <span className="w-5 text-center text-sm font-semibold text-muted-foreground">{i + 1}</span>
+                      <Avatar name={m.name} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground">{m.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {m.grade ? m.grade.grade : "No grade yet"} · {formatNum(m.points)} pts
+                        </p>
+                      </div>
+                      <span className="text-sm font-semibold tabular-nums text-gold">{formatNum(m.points)}</span>
+                    </div>
+                    {nxt && (
+                      <div className="mt-2 pl-8">
+                        <Bar value={nxt.pct} tone="gold" />
+                        <p className="mt-1 text-[11px] text-muted-foreground">{formatNum(nxt.remaining)} pts to next reward</p>
+                      </div>
+                    )}
                   </div>
-                  <span className="text-sm font-semibold tabular-nums text-gold">
-                    ${formatNum(m.ltv)}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </GlassCard>
         </Reveal>
 
+        {/* Rewards ledger */}
         <Reveal className="h-full" delay={80}>
           <GlassCard className="h-full p-6">
-            <SectionLabel icon={Gift}>Rewards catalog</SectionLabel>
-            <div className="mt-4 space-y-3">
-              {rewards.map((r) => (
+            <SectionLabel icon={Ticket}>Rewards ledger</SectionLabel>
+            <div className="mt-4 space-y-2.5">
+              {codes.length === 0 && (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  No codes issued yet. Click <span className="text-gold">Check &amp; issue rewards</span> to award earned milestones.
+                </p>
+              )}
+              {codes.slice(0, 12).map((c) => (
                 <div
-                  key={r.label}
-                  className="lift flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-4 hover:border-gold/40"
+                  key={c.id}
+                  className="flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-3.5"
                 >
                   <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-glass">
-                    <r.icon className="size-4 text-gold" />
+                    <Gift className="size-4 text-gold" />
                   </span>
-                  <span className="flex-1 text-sm text-foreground/85">{r.label}</span>
-                  <span className="shrink-0 text-xs font-medium text-gold">{r.pts}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {c.customer_name ?? "Customer"} · <span className="text-gold">${formatNum(Number(c.value))}</span>
+                    </p>
+                    <p className="font-mono text-xs text-muted-foreground">
+                      {c.grade} · {c.code}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => toggleUsed(c)}
+                    className={cn(
+                      "flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-all active:scale-[0.97]",
+                      c.status === "used"
+                        ? "border-emerald-500/40 text-emerald-400"
+                        : "border-gold/40 text-gold hover:bg-gold/10",
+                    )}
+                    title={c.status === "used" ? "Mark as not used" : "Mark this code redeemed"}
+                  >
+                    {c.status === "used" ? (
+                      <>
+                        <Check className="size-3" /> Used
+                      </>
+                    ) : (
+                      "Mark used"
+                    )}
+                  </button>
                 </div>
               ))}
+              {codes.length > 12 && (
+                <p className="pt-1 text-center text-xs text-muted-foreground">+{codes.length - 12} more codes</p>
+              )}
             </div>
           </GlassCard>
         </Reveal>

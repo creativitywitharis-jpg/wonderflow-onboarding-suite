@@ -34,6 +34,7 @@ import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
 import { listCustomers } from "@/lib/customers";
 import { listInvoices, listExpenses } from "@/lib/finance";
+import { buildOpportunities, OPP_CATEGORIES, type Opportunity } from "@/lib/advisor";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -70,16 +71,6 @@ const initiatives = [
   { title: "Automate fulfillment", progress: 64, impact: 70, effort: 45, status: "In progress", plan: ["Integrate 3PL", "Auto-route orders", "SLA monitoring"] },
   { title: "Raise a seed round", progress: 5, impact: 90, effort: 85, status: "Exploring", plan: ["Tighten metrics story", "Build data room", "Warm-intro 12 funds"] },
 ];
-
-const opportunities = [
-  { title: "Raise prices 8% on hero SKUs", category: "Pricing", value: "+$96k / yr", conf: "High", effort: "Low" },
-  { title: "Upsell Growth plan to 84 power users", category: "Revenue", value: "+$22k MRR", conf: "High", effort: "Medium" },
-  { title: "Shift glass volume to Tidewater", category: "Cost", value: "+$42k / yr", conf: "High", effort: "Low" },
-  { title: "Enter the UK market", category: "Market", value: "+$180k / yr", conf: "Medium", effort: "High" },
-  { title: "Bundle serum + mist as a set", category: "Product", value: "+$14k / mo", conf: "Medium", effort: "Low" },
-  { title: "Win back 148 dormant customers", category: "Revenue", value: "+$31k", conf: "High", effort: "Low" },
-];
-const oppCategories = ["All", "Pricing", "Revenue", "Cost", "Market", "Product"];
 
 type Sev = "High" | "Medium" | "Low";
 const sevColor: Record<Sev, string> = { High: "oklch(0.68 0.16 25)", Medium: "oklch(0.84 0.14 84)", Low: "oklch(0.72 0.14 155)" };
@@ -437,17 +428,34 @@ function StrategyView() {
 }
 
 function OpportunitiesView() {
+  const { org } = useOrg();
   const [cat, setCat] = useState("All");
-  const filtered = opportunities.filter((o) => cat === "All" || o.category === cat);
+  const [opps, setOpps] = useState<Opportunity[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (org?.id) buildOpportunities(org.id).then((r) => alive && setOpps(r)).catch(() => alive && setOpps([]));
+    else setOpps([]);
+    return () => { alive = false; };
+  }, [org?.id]);
+
+  const filtered = (opps ?? []).filter((o) => cat === "All" || o.category === cat);
   return (
     <div className="space-y-5">
       <Reveal>
         <div className="flex flex-wrap gap-2">
-          {oppCategories.map((c) => (
+          {OPP_CATEGORIES.map((c) => (
             <button key={c} onClick={() => setCat(c)} className={cn("rounded-full border px-3 py-1.5 text-xs transition-colors", cat === c ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground hover:text-foreground")} style={cat === c ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>{c}</button>
           ))}
         </div>
       </Reveal>
+      {opps === null && <GlassCard className="p-8 text-center text-sm text-muted-foreground">Scanning your data for opportunities…</GlassCard>}
+      {opps !== null && filtered.length === 0 && (
+        <GlassCard className="p-8 text-center text-sm text-muted-foreground">
+          {(opps.length === 0)
+            ? "No opportunities surfaced yet — add customers, invoices and expenses and I'll spot where the money is."
+            : "No opportunities in this category right now."}
+        </GlassCard>
+      )}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {filtered.map((o, i) => (
           <Reveal key={o.title} delay={i * 50} className="h-full">

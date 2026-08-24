@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
+  Trash2,
   TrendingDown,
   TrendingUp,
   type LucideIcon,
@@ -35,6 +36,7 @@ import { askAI } from "@/lib/ai";
 import { listCustomers } from "@/lib/customers";
 import { listInvoices, listExpenses } from "@/lib/finance";
 import { buildOpportunities, buildRisks, buildPredictions, OPP_CATEGORIES, type Opportunity, type Prediction, type Risk, type Sev } from "@/lib/advisor";
+import { addMemory, deleteMemory, listMemory, MEMORY_CATEGORIES, type DbMemory } from "@/lib/memory";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -76,18 +78,6 @@ const decisions = [
 ];
 const decisionStatusColor: Record<string, string> = { Implemented: "oklch(0.72 0.14 155)", Monitoring: "oklch(0.84 0.14 84)", Paused: "oklch(0.7 0.02 250)" };
 
-type Memory = { category: string; text: string };
-const initialMemory: Memory[] = [
-  { category: "Business context", text: "DTC skincare brand, founder-led, ~2,841 customers, $1.01M ARR." },
-  { category: "Business context", text: "Core SKUs: Aurora Serum, Midnight Oil, Golden Hour Balm." },
-  { category: "Goals", text: "Reach $1.5M ARR by end of next year." },
-  { category: "Goals", text: "Improve gross margin from 68% to 72%." },
-  { category: "Preferences", text: "Prefers low-risk, high-confidence moves; cash-flow conscious." },
-  { category: "Preferences", text: "Wants weekly briefings, not daily noise." },
-  { category: "Learned", text: "Champions segment drives 61% of revenue and responds to VIP early access." },
-  { category: "Learned", text: "Referral is the biggest untapped growth lever (score 61)." },
-];
-const memoryCategories = ["Business context", "Goals", "Preferences", "Learned"];
 const memoryIcon: Record<string, LucideIcon> = { "Business context": Target, Goals: Rocket, Preferences: Sparkles, Learned: Lightbulb };
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -562,13 +552,30 @@ function DecisionsView() {
 }
 
 function MemoryView() {
-  const [mem, setMem] = useState<Memory[]>(initialMemory);
+  const { org } = useOrg();
+  const [mem, setMem] = useState<DbMemory[]>([]);
   const [text, setText] = useState("");
-  const [cat, setCat] = useState("Learned");
-  const add = () => {
-    const t = text.trim(); if (!t) return;
-    setMem((m) => [{ category: cat, text: t }, ...m]); setText("");
+  const [cat, setCat] = useState<string>("Learned");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (org?.id) setMem(await listMemory(org.id));
+  }, [org?.id]);
+  useEffect(() => { void load(); }, [load]);
+
+  const add = async () => {
+    const t = text.trim();
+    if (!t || !org || busy) return;
+    setBusy(true);
+    setNote(null);
+    const { error } = await addMemory(org.id, cat, t);
+    if (error) setNote("Couldn't save — the ai_memory table (migration 0024) may not be applied yet.");
+    else setText("");
+    await load();
+    setBusy(false);
   };
+  const remove = async (id: string) => { await deleteMemory(id); await load(); };
   return (
     <div className="space-y-5">
       <Reveal>
@@ -581,18 +588,19 @@ function MemoryView() {
               <p className="mt-2 text-sm leading-relaxed text-foreground/90">Everything I remember about your business — so every answer is personal. Teach me something and I'll factor it into future advice.</p>
               <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                 <select value={cat} onChange={(e) => setCat(e.target.value)} className="rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50">
-                  {memoryCategories.map((c) => <option key={c}>{c}</option>)}
+                  {MEMORY_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
                 </select>
                 <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="e.g. We're launching a men's line in Q1" className="min-w-0 flex-1 rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
-                <button onClick={add} className="flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}><Plus className="size-4" /> Teach</button>
+                <button onClick={add} disabled={busy || !text.trim()} className="flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}><Plus className="size-4" /> {busy ? "Saving…" : "Teach"}</button>
               </div>
+              {note && <p className="mt-2 text-xs text-gold">{note}</p>}
             </div>
           </div>
         </GlassCard>
       </Reveal>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {memoryCategories.map((c) => {
+        {MEMORY_CATEGORIES.map((c) => {
           const Icon = memoryIcon[c] ?? Sparkles;
           const items = mem.filter((m) => m.category === c);
           return (
@@ -600,9 +608,11 @@ function MemoryView() {
               <GlassCard className="h-full p-6">
                 <SectionLabel icon={Icon}>{c}</SectionLabel>
                 <ul className="mt-4 space-y-2">
-                  {items.map((m, i) => (
-                    <li key={i} className="flex items-start gap-2 rounded-xl border border-border bg-background/30 p-3 text-sm text-foreground/85">
-                      <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-gold" /> {m.text}
+                  {items.map((m) => (
+                    <li key={m.id} className="group flex items-start gap-2 rounded-xl border border-border bg-background/30 p-3 text-sm text-foreground/85">
+                      <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-gold" />
+                      <span className="min-w-0 flex-1">{m.text}</span>
+                      <button onClick={() => remove(m.id)} aria-label="Forget" className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-rose-300 group-hover:opacity-100"><Trash2 className="size-3.5" /></button>
                     </li>
                   ))}
                   {items.length === 0 && <li className="text-sm text-muted-foreground">Nothing yet.</li>}

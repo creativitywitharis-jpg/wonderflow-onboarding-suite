@@ -527,6 +527,14 @@ function FormEndpointCard() {
   <textarea name="message" placeholder="Message"></textarea>
   <button type="submit">Send</button>
 </form>`;
+  const productExample = `POST ${url}
+{ "type": "product", "name": "Aurora Serum", "sku": "SKU-1001",
+  "category": "Serums", "price": 68, "cost": 22,
+  "stock": 120, "reorder_point": 40 }`;
+  const supplierExample = `POST ${url}
+{ "type": "supplier", "name": "Northwind Supply",
+  "category": "Packaging", "country": "USA",
+  "email": "sales@northwind.co", "lead_time_days": 7, "spend": 42000 }`;
 
   const copy = (text: string, what: string) => {
     navigator.clipboard?.writeText(text).then(() => { setCopied(what); setTimeout(() => setCopied(null), 1600); }).catch(() => {});
@@ -579,7 +587,30 @@ function FormEndpointCard() {
               </div>
               <pre className="overflow-x-auto rounded-xl border border-border bg-background/40 p-3 font-mono text-[0.7rem] leading-relaxed text-foreground/80">{snippet}</pre>
             </div>
-            <p className="text-xs text-muted-foreground">Works with any tool that can POST a form — Webflow, WordPress, Framer, Typeform, Zapier/Make. Recognised fields: <span className="text-foreground/80">name, email, phone, company, message</span>.</p>
+            <p className="text-xs text-muted-foreground">Works with any tool that can POST a form — Webflow, WordPress, Framer, Typeform, Zapier/Make. Recognised fields: <span className="text-foreground/80">name, email, phone, company, message</span>. Add an <span className="text-foreground/80">amount</span> and it's logged as an order (rolling into loyalty).</p>
+
+            {/* Catalog sync docs */}
+            <div className="rounded-2xl border border-border bg-background/20 p-3">
+              <p className="text-[0.65rem] font-semibold uppercase tracking-wide text-gold">Push products &amp; suppliers</p>
+              <p className="mt-1 text-xs text-muted-foreground">Send the same endpoint a <span className="font-mono text-foreground/80">type</span> to sync your catalog from a store/Zapier/Make/n8n. Upserts by SKU/name, so repeat syncs update — not duplicate.</p>
+              <div className="mt-2 space-y-2">
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[0.6rem] uppercase tracking-wide text-muted-foreground">Product</span>
+                    <button onClick={() => copy(productExample, "prod")} className="flex items-center gap-1 rounded-lg border border-border px-2 py-0.5 text-[0.6rem] text-muted-foreground hover:text-foreground">{copied === "prod" ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3" />} {copied === "prod" ? "Copied" : "Copy"}</button>
+                  </div>
+                  <pre className="overflow-x-auto rounded-xl border border-border bg-background/40 p-3 font-mono text-[0.68rem] leading-relaxed text-foreground/80">{productExample}</pre>
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[0.6rem] uppercase tracking-wide text-muted-foreground">Supplier</span>
+                    <button onClick={() => copy(supplierExample, "sup")} className="flex items-center gap-1 rounded-lg border border-border px-2 py-0.5 text-[0.6rem] text-muted-foreground hover:text-foreground">{copied === "sup" ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3" />} {copied === "sup" ? "Copied" : "Copy"}</button>
+                  </div>
+                  <pre className="overflow-x-auto rounded-xl border border-border bg-background/40 p-3 font-mono text-[0.68rem] leading-relaxed text-foreground/80">{supplierExample}</pre>
+                </div>
+              </div>
+            </div>
+
             <div className="flex gap-2">
               <button onClick={generate} disabled={busy} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 hover:border-gold/40 disabled:opacity-60">Regenerate key</button>
               <button onClick={turnOff} disabled={busy} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-rose-300 disabled:opacity-60">Turn off</button>

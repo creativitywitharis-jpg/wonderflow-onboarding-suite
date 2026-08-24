@@ -7,6 +7,7 @@ import {
   Bot,
   Brain,
   Building2,
+  Check,
   Clock,
   DollarSign,
   Factory,
@@ -15,6 +16,7 @@ import {
   Home,
   MapPin,
   Package,
+  Pencil,
   Scale,
   Send,
   ShieldAlert,
@@ -155,6 +157,7 @@ type SuppliersState = {
   suppliers: Supplier[];
   loading: boolean;
   addSupplier: (s: NewSupplier) => Promise<void>;
+  editSupplier: (id: string, patch: Partial<NewSupplier>) => Promise<{ error: Error | null }>;
   importSuppliers: (rows: NewSupplier[]) => Promise<{ error: Error | null }>;
   setStatus: (id: string, status: Status) => Promise<void>;
   seed: () => Promise<void>;
@@ -213,6 +216,15 @@ function SuppliersProvider({ children }: { children: ReactNode }) {
     },
     [load],
   );
+  const editSupplier = useCallback(
+    async (id: string, patch: Partial<NewSupplier>) => {
+      const { error } = await updateSupplier(id, patch);
+      await load();
+      return { error };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [load],
+  );
   const importSuppliers = useCallback(
     async (rows: NewSupplier[]) => {
       if (!org) return { error: new Error("No active workspace.") };
@@ -234,7 +246,7 @@ function SuppliersProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <SuppliersCtx.Provider value={{ suppliers, loading, addSupplier, importSuppliers, setStatus, seed }}>
+    <SuppliersCtx.Provider value={{ suppliers, loading, addSupplier, editSupplier, importSuppliers, setStatus, seed }}>
       {children}
     </SuppliersCtx.Provider>
   );
@@ -576,8 +588,40 @@ function DatabaseView({ selectedId, onSelect }: { selectedId: string | null; onS
 
 function SupplierProfile({ s, onBack }: { s: Supplier; onBack: () => void }) {
   const { org } = useOrg();
+  const { editSupplier } = useSuppliersData();
   const [poBusy, setPoBusy] = useState(false);
   const [poDone, setPoDone] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editNote, setEditNote] = useState<string | null>(null);
+  const [ef, setEf] = useState({
+    name: s.name, category: s.category, country: s.country,
+    lead_time_days: String(s.leadTime), rating: String(s.rating), spend: String(s.spend), status: s.status as Status,
+  });
+  const openEdit = () => {
+    setEf({
+      name: s.name, category: s.category, country: s.country,
+      lead_time_days: String(s.leadTime), rating: String(s.rating), spend: String(s.spend), status: s.status,
+    });
+    setEditNote(null);
+    setEditing(true);
+  };
+  const saveEdit = async () => {
+    if (!ef.name.trim() || savingEdit) return;
+    setSavingEdit(true);
+    const { error } = await editSupplier(s.id, {
+      name: ef.name.trim(),
+      category: ef.category.trim() || null,
+      country: ef.country.trim() || null,
+      lead_time_days: Number(ef.lead_time_days) || 0,
+      rating: Number(ef.rating) || 0,
+      spend: Number(ef.spend) || 0,
+      status: ef.status,
+    });
+    setSavingEdit(false);
+    if (error) setEditNote("Couldn't save — please try again.");
+    else setEditing(false);
+  };
   const metrics = [
     { k: "Reliability", v: s.reliability },
     { k: "On-time", v: s.onTime },
@@ -615,6 +659,59 @@ function SupplierProfile({ s, onBack }: { s: Supplier; onBack: () => void }) {
               <FileText className="size-3.5" /> {poDone ? "Draft PO created ✓" : poBusy ? "Creating…" : "New purchase order"}
             </button>
             {poDone && <p className="mt-2 text-center text-[0.7rem] text-muted-foreground">Find it in the Orders tab to add items & send.</p>}
+
+            <button
+              onClick={editing ? () => setEditing(false) : openEdit}
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-full border border-border bg-glass px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground"
+            >
+              <Pencil className="size-3.5" /> {editing ? "Close editor" : "Edit details"}
+            </button>
+
+            {editing && (
+              <div className="mt-4 w-full space-y-2.5 border-t border-border pt-4 text-left">
+                <label className="block text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                  Name
+                  <input value={ef.name} onChange={(e) => setEf((f) => ({ ...f, name: e.target.value }))} className={cn(SUP_INPUT, "mt-1")} />
+                </label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Category
+                    <input value={ef.category} onChange={(e) => setEf((f) => ({ ...f, category: e.target.value }))} className={cn(SUP_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Country
+                    <input value={ef.country} onChange={(e) => setEf((f) => ({ ...f, country: e.target.value }))} className={cn(SUP_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Status
+                    <select value={ef.status} onChange={(e) => setEf((f) => ({ ...f, status: e.target.value as Status }))} className={cn(SUP_INPUT, "mt-1")}>
+                      {(["Preferred", "Active", "Review"] as Status[]).map((st) => <option key={st}>{st}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Rating (0–5)
+                    <input type="number" min={0} max={5} step="0.1" value={ef.rating} onChange={(e) => setEf((f) => ({ ...f, rating: e.target.value }))} className={cn(SUP_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                    Lead time (days)
+                    <input type="number" min={0} value={ef.lead_time_days} onChange={(e) => setEf((f) => ({ ...f, lead_time_days: e.target.value }))} className={cn(SUP_INPUT, "mt-1")} />
+                  </label>
+                  <label className="text-[0.65rem] uppercase tracking-wide text-gold">
+                    Annual spend ($)
+                    <input type="number" min={0} value={ef.spend} onChange={(e) => setEf((f) => ({ ...f, spend: e.target.value }))} className={cn(SUP_INPUT, "mt-1")} />
+                  </label>
+                </div>
+                {editNote && <p className="text-xs text-gold">{editNote}</p>}
+                <button
+                  onClick={saveEdit}
+                  disabled={!ef.name.trim() || savingEdit}
+                  className="flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+                  style={{ background: "var(--gradient-gold)" }}
+                >
+                  <Check className="size-3.5" /> {savingEdit ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            )}
           </GlassCard>
         </Reveal>
 

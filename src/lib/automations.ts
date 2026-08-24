@@ -104,6 +104,12 @@ export async function setAutomationEnabled(id: string, enabled: boolean) {
   return { error: error ? new Error(error.message) : null };
 }
 
+/** Update an existing rule's trigger/action/steps in place (RLS restricts to the owning org's members). */
+export async function updateAutomation(id: string, patch: Partial<NewAutomation>) {
+  const { data, error } = await automationsTable().update(patch).eq("id", id).select(COLS).single();
+  return { data: data as DbAutomation | null, error: error ? new Error(error.message) : null };
+}
+
 export async function deleteAutomation(id: string) {
   const { error } = await supabase.from("automations").delete().eq("id", id);
   return { error: error ? new Error(error.message) : null };

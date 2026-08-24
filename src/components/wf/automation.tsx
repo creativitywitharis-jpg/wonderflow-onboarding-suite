@@ -18,6 +18,7 @@ import {
   LayoutTemplate,
   Mail,
   MessageSquare,
+  Pencil,
   Plus,
   Send,
   ShoppingCart,
@@ -38,7 +39,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Bar, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
-import { createAutomation, deleteAutomation, insertAutomations, listAutomations, runAutomationNow, setAutomationEnabled, type ActionKey, type DbAutomation, type NewAutomation, type TriggerKey, type WorkflowStep } from "@/lib/automations";
+import { createAutomation, deleteAutomation, insertAutomations, listAutomations, runAutomationNow, setAutomationEnabled, updateAutomation, type ActionKey, type DbAutomation, type NewAutomation, type TriggerKey, type WorkflowStep } from "@/lib/automations";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -234,6 +235,35 @@ function draftsToSteps(drafts: StepDraft[]): WorkflowStep[] {
     return { kind: "action", action_key: sd.action_key, action_config };
   });
 }
+// Reverse of draftsToSteps, used to populate the editor from a saved rule. The
+// original unit chosen for a wait isn't stored (only hours), so pick whichever
+// unit gives the cleanest round number back.
+function stepsToDrafts(stepsIn: WorkflowStep[]): StepDraft[] {
+  return stepsIn.map((s) => {
+    const base = newStepDraft(s.kind);
+    if (s.kind === "wait") {
+      const h = s.hours;
+      let unit: WaitUnit = "hours";
+      let amount = h;
+      if (h > 0 && h % (24 * 365) === 0) { unit = "years"; amount = h / (24 * 365); }
+      else if (h > 0 && h % (24 * 30) === 0) { unit = "months"; amount = h / (24 * 30); }
+      else if (h > 0 && h % (24 * 7) === 0) { unit = "weeks"; amount = h / (24 * 7); }
+      else if (h > 0 && h % 24 === 0) { unit = "days"; amount = h / 24; }
+      else if (h < 1 / 60) { unit = "seconds"; amount = Math.round(h * 3600); }
+      else if (h < 1) { unit = "minutes"; amount = Math.round(h * 60 * 100) / 100; }
+      return { ...base, waitAmount: String(Math.round(amount * 1000) / 1000), waitUnit: unit };
+    }
+    if (s.kind === "condition") return { ...base, field: s.field, op: s.op, value: String(s.value) };
+    const cfg = s.action_config ?? {};
+    return {
+      ...base,
+      action_key: s.action_key,
+      prompt: typeof cfg.prompt === "string" ? cfg.prompt : "",
+      subject: typeof cfg.subject === "string" ? cfg.subject : "",
+      webhook_url: typeof cfg.webhook_url === "string" ? cfg.webhook_url : "",
+    };
+  });
+}
 
 const SAMPLE_AUTOMATIONS: NewAutomation[] = [
   { name: "Welcome new customers", trigger: triggerLabel("customer.created"), action: actionLabel("ai_draft_note"), trigger_key: "customer.created", action_key: "ai_draft_note", action_config: { prompt: "Write a warm, brief welcome note for this new customer." }, enabled: true },
@@ -252,6 +282,7 @@ function DashboardView() {
   const [form, setForm] = useState({ name: "", trigger_key: "order.created" as TriggerKey, action_key: "ai_draft_note" as ActionKey, prompt: "", webhook_url: "", subject: "" });
   const [multiStep, setMultiStep] = useState(false);
   const [steps, setSteps] = useState<StepDraft[]>([newStepDraft()]);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!org) {
@@ -283,45 +314,68 @@ function DashboardView() {
   const removeStep = (id: string) => setSteps((s) => s.filter((st) => st.id !== id));
   const updateStep = (id: string, patch: Partial<StepDraft>) => setSteps((s) => s.map((st) => (st.id === id ? { ...st, ...patch } : st)));
 
-  const submit = async () => {
-    if (!org || !form.name.trim() || busy) return;
-    setBusy(true);
-    if (multiStep) {
-      const built = draftsToSteps(steps);
-      await createAutomation(org.id, {
-        name: form.name.trim(),
-        trigger: triggerLabel(form.trigger_key),
-        action: `Multi-step workflow (${built.length} step${built.length === 1 ? "" : "s"})`,
-        trigger_key: form.trigger_key,
-        action_key: "ai_draft_note",
-        action_config: {},
-        steps: built,
-      });
-    } else {
-      const action_config =
-        form.action_key === "webhook" ? { webhook_url: form.webhook_url.trim() }
-        : form.action_key === "email_owner" ? { subject: form.subject.trim() || `Automation: ${form.name.trim()}` }
-        : form.action_key === "email_customer" ? { subject: form.subject.trim() || undefined, prompt: form.prompt.trim() || "Write a short, warm email to this customer for this event." }
-        : { prompt: form.prompt.trim() || "Draft a short, useful note for this event." };
-      await createAutomation(org.id, {
-        name: form.name.trim(),
-        trigger: triggerLabel(form.trigger_key),
-        action: actionLabel(form.action_key),
-        trigger_key: form.trigger_key,
-        action_key: form.action_key,
-        action_config,
-      });
-    }
-    setBusy(false);
+  const resetForm = () => {
     setForm({ name: "", trigger_key: "order.created", action_key: "ai_draft_note", prompt: "", webhook_url: "", subject: "" });
     setSteps([newStepDraft()]);
     setMultiStep(false);
+    setEditingId(null);
+  };
+
+  const submit = async () => {
+    if (!org || !form.name.trim() || busy) return;
+    setBusy(true);
+    const built = multiStep ? draftsToSteps(steps) : null;
+    const action_config = multiStep ? {} :
+      form.action_key === "webhook" ? { webhook_url: form.webhook_url.trim() }
+      : form.action_key === "email_owner" ? { subject: form.subject.trim() || `Automation: ${form.name.trim()}` }
+      : form.action_key === "email_customer" ? { subject: form.subject.trim() || undefined, prompt: form.prompt.trim() || "Write a short, warm email to this customer for this event." }
+      : { prompt: form.prompt.trim() || "Draft a short, useful note for this event." };
+    const payload: NewAutomation = {
+      name: form.name.trim(),
+      trigger: triggerLabel(form.trigger_key),
+      action: multiStep ? `Multi-step workflow (${built!.length} step${built!.length === 1 ? "" : "s"})` : actionLabel(form.action_key),
+      trigger_key: form.trigger_key,
+      action_key: multiStep ? "ai_draft_note" : form.action_key,
+      action_config,
+      steps: built,
+    };
+    if (editingId) await updateAutomation(editingId, payload);
+    else await createAutomation(org.id, payload);
+    setBusy(false);
+    resetForm();
     setAdding(false);
     await load();
   };
 
+  const openNew = () => {
+    if (adding && !editingId) { setAdding(false); return; }
+    resetForm();
+    setAdding(true);
+  };
+
+  const startEdit = (r: DbAutomation) => {
+    setEditingId(r.id);
+    setForm({
+      name: r.name,
+      trigger_key: r.trigger_key,
+      action_key: r.action_key,
+      prompt: typeof r.action_config?.prompt === "string" ? r.action_config.prompt : "",
+      webhook_url: typeof r.action_config?.webhook_url === "string" ? r.action_config.webhook_url : "",
+      subject: typeof r.action_config?.subject === "string" ? r.action_config.subject : "",
+    });
+    if (r.steps && r.steps.length > 0) {
+      setMultiStep(true);
+      setSteps(stepsToDrafts(r.steps));
+    } else {
+      setMultiStep(false);
+      setSteps([newStepDraft()]);
+    }
+    setAdding(true);
+  };
+
   const remove = async (r: DbAutomation) => {
     await deleteAutomation(r.id);
+    if (editingId === r.id) { resetForm(); setAdding(false); }
     await load();
   };
 
@@ -368,11 +422,14 @@ function DashboardView() {
         <GlassCard className="p-6">
           <div className="flex items-center justify-between">
             <SectionLabel icon={Workflow}>Automation rules</SectionLabel>
-            <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}><Plus className="size-3.5" /> New rule</button>
+            <button onClick={openNew} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}><Plus className="size-3.5" /> New rule</button>
           </div>
 
           {adding && (
             <div className="mt-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
+              {editingId && (
+                <p className="flex items-center gap-1.5 text-xs font-medium text-gold sm:col-span-2"><Pencil className="size-3.5" /> Editing rule</p>
+              )}
               <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Rule name *" className={`${AUTO_INPUT} sm:col-span-2`} />
               <label className="block text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">When…</span>
                 <select value={form.trigger_key} onChange={(e) => setForm((f) => ({ ...f, trigger_key: e.target.value as TriggerKey }))} className={AUTO_INPUT}>
@@ -484,8 +541,8 @@ function DashboardView() {
               )}
 
               <div className="flex gap-2 sm:col-span-2">
-                <button onClick={submit} disabled={busy || !form.name.trim()} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Create rule"}</button>
-                <button onClick={() => { setAdding(false); setMultiStep(false); setSteps([newStepDraft()]); }} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                <button onClick={submit} disabled={busy || !form.name.trim()} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : editingId ? "Save changes" : "Create rule"}</button>
+                <button onClick={() => { setAdding(false); resetForm(); }} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
               </div>
             </div>
           )}
@@ -501,7 +558,7 @@ function DashboardView() {
               </div>
             )}
             {rules.map((r) => (
-              <div key={r.id} className="group grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.6fr_auto_auto_auto]">
+              <div key={r.id} className="group grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.6fr_auto_auto_auto_auto]">
                 <div className="flex items-center gap-3">
                   <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass">{r.steps?.length ? <GitBranch className="size-4 text-gold" /> : <Workflow className="size-4 text-gold" />}</span>
                   <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{r.name}</p><p className="truncate text-xs text-muted-foreground">{r.trigger ?? "—"}{r.action ? ` → ${r.action}` : ""}</p></div>
@@ -512,6 +569,9 @@ function DashboardView() {
                 </button>
                 <button onClick={() => toggle(r)} className={cn("relative h-6 w-11 shrink-0 rounded-full border transition-colors", r.enabled ? "border-transparent" : "border-border bg-background/40")} style={r.enabled ? { background: "var(--gradient-gold)" } : undefined} aria-pressed={r.enabled} title={r.enabled ? "Enabled — click to pause" : "Paused — click to enable"}>
                   <span className="absolute top-0.5 size-5 rounded-full transition-all" style={{ left: r.enabled ? "1.375rem" : "0.125rem", background: r.enabled ? "oklch(0.2 0.02 70)" : "oklch(0.8 0.015 85)" }} />
+                </button>
+                <button onClick={() => startEdit(r)} aria-label="Edit rule" className="hidden size-7 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground opacity-0 transition-opacity hover:border-gold/40 hover:text-foreground group-hover:opacity-100 sm:grid">
+                  <Pencil className="size-3.5" />
                 </button>
                 <button onClick={() => remove(r)} aria-label="Delete rule" className="hidden size-7 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground opacity-0 transition-opacity hover:border-rose-400/50 hover:text-rose-300 group-hover:opacity-100 sm:grid">
                   <X className="size-3.5" />

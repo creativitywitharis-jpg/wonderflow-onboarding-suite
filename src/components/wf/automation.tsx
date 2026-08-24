@@ -205,14 +205,26 @@ const triggerLabel = (k: string) => TRIGGER_OPTS.find((t) => t.key === k)?.label
 const actionLabel = (k: string) => ACTION_OPTS.find((a) => a.key === k)?.label ?? k;
 
 type StepKind = "action" | "wait" | "condition";
-type StepDraft = { id: string; kind: StepKind; action_key: ActionKey; prompt: string; subject: string; webhook_url: string; hours: string; field: string; op: "<" | ">" | "=" | ">=" | "<="; value: string };
+type WaitUnit = "seconds" | "minutes" | "hours" | "days" | "weeks" | "months" | "years";
+const WAIT_UNITS: { key: WaitUnit; label: string; toHours: number }[] = [
+  { key: "seconds", label: "Seconds", toHours: 1 / 3600 },
+  { key: "minutes", label: "Minutes", toHours: 1 / 60 },
+  { key: "hours", label: "Hours", toHours: 1 },
+  { key: "days", label: "Days", toHours: 24 },
+  { key: "weeks", label: "Weeks", toHours: 24 * 7 },
+  { key: "months", label: "Months (~30d)", toHours: 24 * 30 },
+  { key: "years", label: "Years (~365d)", toHours: 24 * 365 },
+];
+const waitUnitHours = (unit: WaitUnit) => WAIT_UNITS.find((u) => u.key === unit)?.toHours ?? 1;
+
+type StepDraft = { id: string; kind: StepKind; action_key: ActionKey; prompt: string; subject: string; webhook_url: string; waitAmount: string; waitUnit: WaitUnit; field: string; op: "<" | ">" | "=" | ">=" | "<="; value: string };
 let stepSeq = 0;
 const newStepDraft = (kind: StepKind = "action"): StepDraft => ({
-  id: `s${++stepSeq}`, kind, action_key: "ai_draft_note", prompt: "", subject: "", webhook_url: "", hours: "24", field: "total", op: ">", value: "0",
+  id: `s${++stepSeq}`, kind, action_key: "ai_draft_note", prompt: "", subject: "", webhook_url: "", waitAmount: "1", waitUnit: "hours", field: "total", op: ">", value: "0",
 });
 function draftsToSteps(drafts: StepDraft[]): WorkflowStep[] {
   return drafts.map((sd) => {
-    if (sd.kind === "wait") return { kind: "wait", hours: Math.max(0, Number(sd.hours) || 0) };
+    if (sd.kind === "wait") return { kind: "wait", hours: Math.max(0, (Number(sd.waitAmount) || 0) * waitUnitHours(sd.waitUnit)) };
     if (sd.kind === "condition") return { kind: "condition", field: sd.field.trim() || "total", op: sd.op, value: Number(sd.value) || 0 };
     const action_config =
       sd.action_key === "webhook" ? { webhook_url: sd.webhook_url.trim() }
@@ -441,10 +453,13 @@ function DashboardView() {
                       )}
 
                       {sd.kind === "wait" && (
-                        <div className="mt-2 flex items-center gap-2">
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
                           <span className="text-xs text-muted-foreground">Wait</span>
-                          <input type="number" min={1} value={sd.hours} onChange={(e) => updateStep(sd.id, { hours: e.target.value })} className={cn(AUTO_INPUT, "w-24")} />
-                          <span className="text-xs text-muted-foreground">hours ({Math.round((Number(sd.hours) || 0) / 24 * 10) / 10} days) before continuing</span>
+                          <input type="number" min={0} step="any" value={sd.waitAmount} onChange={(e) => updateStep(sd.id, { waitAmount: e.target.value })} className={cn(AUTO_INPUT, "w-24")} />
+                          <select value={sd.waitUnit} onChange={(e) => updateStep(sd.id, { waitUnit: e.target.value as WaitUnit })} className="rounded-xl border border-border bg-background/40 px-2 py-2.5 text-sm text-foreground outline-none focus:border-gold/50">
+                            {WAIT_UNITS.map((u) => <option key={u.key} value={u.key}>{u.label}</option>)}
+                          </select>
+                          <span className="text-xs text-muted-foreground">before continuing (≈ {formatNum(Math.round((Number(sd.waitAmount) || 0) * waitUnitHours(sd.waitUnit) * 10) / 10)} hours)</span>
                         </div>
                       )}
 

@@ -147,6 +147,71 @@ Deno.serve(async (req: Request) => {
   const orgId = (org as { id?: string } | null)?.id;
   if (!orgId) return json({ error: "Invalid form key." }, 401);
 
+  // ── Catalog sync: type=product | type=supplier (from a store, Zapier, etc.)
+  // Upserts by sku/name so repeated syncs update rather than duplicate.
+  const entity = (pick(payload, ["type", "entity", "record", "object"]) || "").toLowerCase();
+  const num = (v: string) => {
+    const n = parseFloat(String(v).replace(/[^0-9.\-]/g, ""));
+    return isNaN(n) ? 0 : n;
+  };
+
+  if (entity === "product" || entity === "products") {
+    const name = pick(payload, ["name", "title", "product", "productname", "item"]);
+    if (!name) return json({ error: "Product needs a name." }, 400);
+    const sku = pick(payload, ["sku", "code", "barcode", "productcode"]);
+    const row = {
+      org_id: orgId,
+      name,
+      sku: sku || null,
+      category: pick(payload, ["category", "type", "group"]) || null,
+      price: num(pick(payload, ["price", "unitprice", "retail", "sellprice"])),
+      cost: num(pick(payload, ["cost", "unitcost", "cogs", "buyprice"])),
+      stock: num(pick(payload, ["stock", "quantity", "qty", "onhand", "inventory"])),
+      reorder_point: num(pick(payload, ["reorderpoint", "reorder", "min", "par"])),
+    };
+    let existingId: string | null = null;
+    if (sku) {
+      const { data } = await admin.from("products").select("id").eq("org_id", orgId).eq("sku", sku).maybeSingle();
+      existingId = (data as { id?: string } | null)?.id ?? null;
+    }
+    if (!existingId) {
+      const { data } = await admin.from("products").select("id").eq("org_id", orgId).ilike("name", name).maybeSingle();
+      existingId = (data as { id?: string } | null)?.id ?? null;
+    }
+    if (existingId) {
+      await admin.from("products").update(row).eq("id", existingId);
+      return json({ ok: true, type: "product", product_id: existingId, action: "updated" });
+    }
+    const { data: created, error } = await admin.from("products").insert(row).select("id").single();
+    if (error) return json({ error: "Could not save the product." }, 500);
+    return json({ ok: true, type: "product", product_id: (created as { id: string }).id, action: "created" });
+  }
+
+  if (entity === "supplier" || entity === "suppliers" || entity === "vendor") {
+    const name = pick(payload, ["name", "supplier", "suppliername", "vendor", "company"]);
+    if (!name) return json({ error: "Supplier needs a name." }, 400);
+    const row = {
+      org_id: orgId,
+      name,
+      category: pick(payload, ["category", "type", "group", "goods"]) || null,
+      country: pick(payload, ["country", "location", "region"]) || null,
+      contact_name: pick(payload, ["contact", "contactname", "rep", "person"]) || null,
+      email: pick(payload, ["email", "emailaddress"]) || null,
+      phone: pick(payload, ["phone", "tel", "telephone", "mobile"]) || null,
+      lead_time_days: Math.round(num(pick(payload, ["leadtime", "leadtimedays", "lead", "leaddays", "eta"]))) || 7,
+      spend: num(pick(payload, ["spend", "annualspend", "totalspend", "cost"])),
+    };
+    const { data: match } = await admin.from("suppliers").select("id").eq("org_id", orgId).ilike("name", name).maybeSingle();
+    const existingId = (match as { id?: string } | null)?.id ?? null;
+    if (existingId) {
+      await admin.from("suppliers").update(row).eq("id", existingId);
+      return json({ ok: true, type: "supplier", supplier_id: existingId, action: "updated" });
+    }
+    const { data: created, error } = await admin.from("suppliers").insert(row).select("id").single();
+    if (error) return json({ error: "Could not save the supplier." }, 500);
+    return json({ ok: true, type: "supplier", supplier_id: (created as { id: string }).id, action: "created" });
+  }
+
   // Map common field names.
   const first = pick(payload, ["firstname", "fname", "given"]);
   const last = pick(payload, ["lastname", "lname", "surname", "family"]);

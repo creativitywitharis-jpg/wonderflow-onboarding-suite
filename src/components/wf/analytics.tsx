@@ -33,6 +33,7 @@ import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { listCustomers, type DbCustomer } from "@/lib/customers";
 import { listOrders, type DbOrder } from "@/lib/orders";
+import { listInvoices, type DbInvoice } from "@/lib/finance";
 import { listProducts, type DbProduct } from "@/lib/products";
 import { listSuppliers, type DbSupplier } from "@/lib/suppliers";
 import { listCampaigns, type DbCampaign } from "@/lib/campaigns";
@@ -44,6 +45,7 @@ import { listCampaigns, type DbCampaign } from "@/lib/campaigns";
 const GOLD = "oklch(0.84 0.14 84)";
 const palette = [GOLD, "oklch(0.7 0.11 60)", "oklch(0.66 0.09 200)", "oklch(0.75 0.13 150)", "oklch(0.62 0.12 300)"];
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const plural = (n: number, word: string) => `${formatNum(n)} ${word}${n === 1 ? "" : "s"}`;
 
 /** Area chart with optional comparison (dashed) series. */
 function AreaChart({ data, compare, height = 176 }: { data: number[]; compare?: number[]; height?: number }) {
@@ -182,6 +184,7 @@ type AnalyticsData = {
   loading: boolean;
   revenue: number;
   ordersCount: number;
+  paidInvoicesCount: number;
   customersCount: number;
   aov: number;
   avgLtv: number;
@@ -216,23 +219,40 @@ function compute(
   products: DbProduct[],
   suppliers: DbSupplier[],
   campaigns: DbCampaign[],
+  invoices: DbInvoice[] = [],
 ): Omit<AnalyticsData, "loading"> {
   const now = new Date();
-  const revenue = orders.reduce((a, o) => a + Number(o.total), 0);
+  const orderRevenue = orders.reduce((a, o) => a + Number(o.total), 0);
   const ordersCount = orders.length;
+
+  // Paid invoices count as revenue too — so services businesses (invoice-based,
+  // no physical orders) aren't stuck at $0. Revenue + AOV blend both sources.
+  const paidInvoices = invoices.filter((i) => i.status === "paid");
+  const invoiceRevenue = paidInvoices.reduce((a, i) => a + Number(i.total), 0);
+  const revenue = orderRevenue + invoiceRevenue;
+  const transactions = ordersCount + paidInvoices.length;
 
   // channels, product revenue, units — from real orders + line items
   const channelCounts = new Map<string, number>();
   const prodRev = new Map<string, number>();
   let unitsSold30 = 0;
   const buckets = new Array(12).fill(0);
+  const bucketOf = (iso: string) => {
+    const d = new Date(iso);
+    const diff = (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
+    return diff >= 0 && diff < 12 ? 11 - diff : -1;
+  };
   for (const o of orders) {
     channelCounts.set(o.channel ?? "Other", (channelCounts.get(o.channel ?? "Other") ?? 0) + 1);
     for (const it of o.items ?? []) prodRev.set(it.name, (prodRev.get(it.name) ?? 0) + it.qty * it.price);
-    const d = new Date(o.created_at);
-    const diff = (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
-    if (diff >= 0 && diff < 12) buckets[11 - diff] += Number(o.total);
-    if (now.getTime() - d.getTime() < 30 * 864e5) for (const it of o.items ?? []) unitsSold30 += it.qty;
+    const b = bucketOf(o.created_at);
+    if (b >= 0) buckets[b] += Number(o.total);
+    if (now.getTime() - new Date(o.created_at).getTime() < 30 * 864e5) for (const it of o.items ?? []) unitsSold30 += it.qty;
+  }
+  // Fold paid-invoice revenue into the monthly trend by payment date.
+  for (const inv of paidInvoices) {
+    const b = bucketOf(inv.paid_at ?? inv.issue_date);
+    if (b >= 0) buckets[b] += Number(inv.total);
   }
 
   const tierCounts = new Map<string, number>();
@@ -249,8 +269,9 @@ function compute(
   return {
     revenue,
     ordersCount,
+    paidInvoicesCount: paidInvoices.length,
     customersCount: customers.length,
-    aov: ordersCount ? Math.round(revenue / ordersCount) : 0,
+    aov: transactions ? Math.round(revenue / transactions) : 0,
     avgLtv: customers.length ? Math.round(totalLtv / customers.length) : 0,
     inventoryValue: products.reduce((a, p) => a + p.stock * Number(p.price), 0),
     activeSKUs: products.length,
@@ -292,8 +313,9 @@ function AnalyticsProvider({ children }: { children: ReactNode }) {
       listProducts(org.id).catch(() => []),
       listSuppliers(org.id).catch(() => []),
       listCampaigns(org.id).catch(() => []),
-    ]).then(([c, o, p, s, cm]) => {
-      if (alive) setData({ loading: false, ...compute(c, o, p, s, cm) });
+      listInvoices(org.id).catch(() => []),
+    ]).then(([c, o, p, s, cm, inv]) => {
+      if (alive) setData({ loading: false, ...compute(c, o, p, s, cm, inv) });
     });
     return () => {
       alive = false;
@@ -318,10 +340,10 @@ function ExecutiveView() {
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Revenue (all orders)" value={a.revenue} prefix="$" icon={DollarSign} />
+        <StatTile label="Revenue" value={a.revenue} prefix="$" icon={DollarSign} />
         <StatTile label="Orders" value={a.ordersCount} icon={ShoppingCart} />
         <StatTile label="Customers" value={a.customersCount} icon={Users} />
-        <StatTile label="Avg order value" value={a.aov} prefix="$" icon={TrendingUp} />
+        <StatTile label="Avg value" value={a.aov} prefix="$" icon={TrendingUp} />
       </div>
 
       <Reveal>
@@ -331,7 +353,14 @@ function ExecutiveView() {
             <span className="orb grid size-11 shrink-0 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Brain className="size-5" stroke="oklch(0.2 0.02 70)" /></span>
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">What's happening</p>
-              <p className="mt-2 text-[0.95rem] leading-relaxed text-foreground/90">Across <span className="text-gold">{a.customersCount}</span> customers and <span className="text-gold">{a.ordersCount}</span> orders, you've booked <span className="text-gold">${formatNum(a.revenue)}</span> in revenue at a <span className="text-gold">${formatNum(a.aov)}</span> average order value{topSeg ? <>. Your largest segment is <span className="text-gold">{topSeg.label}</span> ({topSeg.share}% of customers)</> : null}.</p>
+              <p className="mt-2 text-[0.95rem] leading-relaxed text-foreground/90">
+                Across <span className="text-gold">{plural(a.customersCount, "customer")}</span> you've booked{" "}
+                <span className="text-gold">${formatNum(a.revenue)}</span> in revenue
+                {a.ordersCount > 0 && <> from <span className="text-gold">{plural(a.ordersCount, "order")}</span></>}
+                {a.paidInvoicesCount > 0 && <>{a.ordersCount > 0 ? " and " : " from "}<span className="text-gold">{plural(a.paidInvoicesCount, "paid invoice")}</span></>}
+                {a.revenue > 0 && <> at a <span className="text-gold">${formatNum(a.aov)}</span> average</>}
+                {topSeg ? <>. Your largest segment is <span className="text-gold">{topSeg.label}</span> ({topSeg.share}% of customers)</> : null}.
+              </p>
             </div>
           </div>
         </GlassCard>
@@ -361,9 +390,9 @@ function SalesView() {
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Revenue (all orders)" value={revenue} prefix="$" icon={DollarSign} />
+        <StatTile label="Revenue" value={revenue} prefix="$" icon={DollarSign} />
         <StatTile label="Orders" value={ordersCount} icon={ShoppingCart} />
-        <StatTile label="Avg order value" value={aov} prefix="$" icon={Activity} />
+        <StatTile label="Avg value" value={aov} prefix="$" icon={Activity} />
         <StatTile label="Units sold (30d)" value={unitsSold30} icon={Target} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">

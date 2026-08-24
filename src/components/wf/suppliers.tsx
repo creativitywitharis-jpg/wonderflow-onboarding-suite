@@ -34,6 +34,8 @@ import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { listProducts } from "@/lib/products";
 import { createSupplier, insertSuppliers, listSuppliers, updateSupplier, type NewSupplier } from "@/lib/suppliers";
+import { CsvImport } from "@/components/wf/CsvImport";
+import type { FieldSpec } from "@/lib/csv";
 import { createPurchaseOrder, listPurchaseOrders, updatePurchaseOrderStatus, type DbPurchaseOrder, type PoStatus } from "@/lib/purchase-orders";
 import { askAI } from "@/lib/ai";
 
@@ -153,6 +155,7 @@ type SuppliersState = {
   suppliers: Supplier[];
   loading: boolean;
   addSupplier: (s: NewSupplier) => Promise<void>;
+  importSuppliers: (rows: NewSupplier[]) => Promise<{ error: Error | null }>;
   setStatus: (id: string, status: Status) => Promise<void>;
   seed: () => Promise<void>;
 };
@@ -210,6 +213,16 @@ function SuppliersProvider({ children }: { children: ReactNode }) {
     },
     [load],
   );
+  const importSuppliers = useCallback(
+    async (rows: NewSupplier[]) => {
+      if (!org) return { error: new Error("No active workspace.") };
+      const { error } = await insertSuppliers(org.id, rows);
+      await load();
+      return { error };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
   const seed = useCallback(
     async () => {
       if (!org) return;
@@ -221,7 +234,7 @@ function SuppliersProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <SuppliersCtx.Provider value={{ suppliers, loading, addSupplier, setStatus, seed }}>
+    <SuppliersCtx.Provider value={{ suppliers, loading, addSupplier, importSuppliers, setStatus, seed }}>
       {children}
     </SuppliersCtx.Provider>
   );
@@ -459,9 +472,22 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
 
 const SUP_INPUT = "w-full rounded-xl border border-border bg-background/40 px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-gold/50";
 
+const SUPPLIER_IMPORT_FIELDS: FieldSpec[] = [
+  { key: "name", label: "Name", required: true, aliases: ["supplier", "supplier name", "vendor", "company"] },
+  { key: "category", label: "Category", aliases: ["type", "group", "goods"] },
+  { key: "country", label: "Country", aliases: ["location", "region"] },
+  { key: "contact_name", label: "Contact", aliases: ["contact", "contact name", "rep", "person"] },
+  { key: "email", label: "Email", aliases: ["email", "e-mail", "email address"] },
+  { key: "phone", label: "Phone", aliases: ["phone", "tel", "telephone", "mobile"] },
+  { key: "lead_time_days", label: "Lead time (days)", type: "number", aliases: ["lead", "lead time", "lead days", "eta"] },
+  { key: "spend", label: "Annual spend", type: "number", aliases: ["spend", "annual spend", "total spend", "cost"] },
+];
+
 function DatabaseView({ selectedId, onSelect }: { selectedId: string | null; onSelect: (id: string | null) => void }) {
-  const { suppliers, loading, addSupplier } = useSuppliersData();
+  const { org } = useOrg();
+  const { suppliers, loading, addSupplier, importSuppliers } = useSuppliersData();
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ name: "", category: "", country: "", lead_time_days: "7", rating: "4.0", status: "Active" as Status });
 
@@ -492,10 +518,16 @@ function DatabaseView({ selectedId, onSelect }: { selectedId: string | null; onS
       <GlassCard className="p-5 sm:p-6">
         <div className="mb-4 flex items-center justify-between">
           <SectionLabel icon={Building2}>Suppliers</SectionLabel>
-          <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
-            <Package className="size-3.5" /> New supplier
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setImporting(true)} className="rounded-full border border-border bg-glass px-4 py-2 text-xs text-foreground/85 transition-colors hover:border-gold/40">Import CSV</button>
+            <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
+              <Package className="size-3.5" /> New supplier
+            </button>
+          </div>
         </div>
+        {importing && org && (
+          <CsvImport entityLabel="suppliers" fields={SUPPLIER_IMPORT_FIELDS} orgId={org.id} onImport={(rows) => importSuppliers(rows as NewSupplier[])} onClose={() => setImporting(false)} />
+        )}
         {adding && (
           <div className="mb-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
             <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Supplier name *" className={SUP_INPUT} />

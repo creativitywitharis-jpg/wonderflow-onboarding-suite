@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.send-invoice]
 verify_jwt = true
+
+[functions.automation-tick]
+verify_jwt = false

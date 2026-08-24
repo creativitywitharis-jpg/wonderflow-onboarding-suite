@@ -20,6 +20,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Target,
+  TrendingDown,
   TrendingUp,
   Users,
   Wand2,
@@ -33,7 +34,7 @@ import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { listCustomers, type DbCustomer } from "@/lib/customers";
 import { listOrders, type DbOrder } from "@/lib/orders";
-import { listInvoices, type DbInvoice } from "@/lib/finance";
+import { listInvoices, listExpenses, type DbInvoice, type DbExpense } from "@/lib/finance";
 import { listProducts, type DbProduct } from "@/lib/products";
 import { listSuppliers, type DbSupplier } from "@/lib/suppliers";
 import { listCampaigns, type DbCampaign } from "@/lib/campaigns";
@@ -166,13 +167,6 @@ const retention = {
     { label: "Jun", cells: [100, 93, 0, 0, 0] },
   ],
 };
-const expenses = [
-  { label: "COGS", share: 32, color: palette[0] },
-  { label: "Marketing", share: 22, color: palette[1] },
-  { label: "Payroll", share: 26, color: palette[2] },
-  { label: "Ops", share: 12, color: palette[3] },
-  { label: "Other", share: 8, color: palette[4] },
-];
 
 /* ──────────────────────────────────────────────────────────────────────
  * Real analytics — derived from the org's own data
@@ -185,6 +179,11 @@ type AnalyticsData = {
   revenue: number;
   ordersCount: number;
   paidInvoicesCount: number;
+  outstanding: number;
+  expensesTotal: number;
+  netProfit: number;
+  expenseCategories: Share[];
+  expensesByMonth: number[];
   customersCount: number;
   aov: number;
   avgLtv: number;
@@ -220,6 +219,7 @@ function compute(
   suppliers: DbSupplier[],
   campaigns: DbCampaign[],
   invoices: DbInvoice[] = [],
+  expenses: DbExpense[] = [],
 ): Omit<AnalyticsData, "loading"> {
   const now = new Date();
   const orderRevenue = orders.reduce((a, o) => a + Number(o.total), 0);
@@ -255,6 +255,17 @@ function compute(
     if (b >= 0) buckets[b] += Number(inv.total);
   }
 
+  // Finances — real invoices + expenses.
+  const outstanding = invoices.filter((i) => i.status === "sent").reduce((a, i) => a + Number(i.total), 0);
+  const expensesTotal = expenses.reduce((a, e) => a + Number(e.amount || 0), 0);
+  const expCat = new Map<string, number>();
+  const expBuckets = new Array(12).fill(0);
+  for (const e of expenses) {
+    expCat.set(e.category ?? "Other", (expCat.get(e.category ?? "Other") ?? 0) + Number(e.amount || 0));
+    const b = bucketOf(e.date);
+    if (b >= 0) expBuckets[b] += Number(e.amount || 0);
+  }
+
   const tierCounts = new Map<string, number>();
   for (const c of customers) tierCounts.set(c.tier, (tierCounts.get(c.tier) ?? 0) + 1);
   const catCounts = new Map<string, number>();
@@ -270,6 +281,11 @@ function compute(
     revenue,
     ordersCount,
     paidInvoicesCount: paidInvoices.length,
+    outstanding,
+    expensesTotal,
+    netProfit: revenue - expensesTotal,
+    expenseCategories: toShares(expCat),
+    expensesByMonth: expBuckets,
     customersCount: customers.length,
     aov: transactions ? Math.round(revenue / transactions) : 0,
     avgLtv: customers.length ? Math.round(totalLtv / customers.length) : 0,
@@ -314,8 +330,9 @@ function AnalyticsProvider({ children }: { children: ReactNode }) {
       listSuppliers(org.id).catch(() => []),
       listCampaigns(org.id).catch(() => []),
       listInvoices(org.id).catch(() => []),
-    ]).then(([c, o, p, s, cm, inv]) => {
-      if (alive) setData({ loading: false, ...compute(c, o, p, s, cm, inv) });
+      listExpenses(org.id).catch(() => []),
+    ]).then(([c, o, p, s, cm, inv, ex]) => {
+      if (alive) setData({ loading: false, ...compute(c, o, p, s, cm, inv, ex) });
     });
     return () => {
       alive = false;
@@ -507,26 +524,37 @@ function MarketingView() {
 }
 
 function FinancialView() {
-  const cash = [220, 232, 228, 245, 258, 266, 274, 288, 296, 312, 328, 342];
+  const a = useAnalytics();
+  const netMargin = a.revenue > 0 ? Math.round((a.netProfit / a.revenue) * 100) : 0;
   const pnl = [
-    { label: "Revenue", value: 374, display: "$374k" },
-    { label: "Gross profit", value: 254, display: "$254k" },
-    { label: "Operating profit", value: 128, display: "$128k" },
-    { label: "Net profit", value: 96, display: "$96k" },
+    { label: "Revenue", value: Math.max(0, a.revenue), display: `$${formatNum(a.revenue)}` },
+    { label: "Expenses", value: Math.max(0, a.expensesTotal), display: `$${formatNum(a.expensesTotal)}` },
+    { label: "Net profit", value: Math.max(0, a.netProfit), display: `$${formatNum(a.netProfit)}` },
   ];
+  // Real monthly net = revenue − expenses per month.
+  const netByMonth = a.revenueByMonth.map((r, i) => r - (a.expensesByMonth[i] ?? 0));
+  const hasFin = a.revenue > 0 || a.expensesTotal > 0;
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Revenue (mo)" value={374200} prefix="$" delta="6.3%" icon={DollarSign} />
-        <StatTile label="Gross margin" value={68} suffix="%" delta="2 pts" icon={TrendingUp} />
-        <StatTile label="Net margin" value={26} suffix="%" delta="1.4 pts" icon={Target} />
-        <StatTile label="Cash on hand" value={342000} prefix="$" delta="4.9%" icon={Activity} />
+        <StatTile label="Revenue collected" value={a.revenue} prefix="$" icon={DollarSign} />
+        <StatTile label="Outstanding (AR)" value={a.outstanding} prefix="$" icon={Activity} />
+        <StatTile label="Expenses" value={a.expensesTotal} prefix="$" icon={TrendingDown} />
+        <StatTile label="Net margin" value={netMargin} suffix="%" positive={netMargin >= 0} icon={Target} />
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="P&L waterfall" icon={BarChart3}><HBars items={pnl} /></ChartCard>
-        <ChartCard title="Expense breakdown" icon={Layers}><div className="flex items-center gap-6"><Donut data={expenses} size={150} /><Legend items={expenses} /></div></ChartCard>
-      </div>
-      <ChartCard title="Cash position trend" icon={TrendingUp} right={<span className="text-xs text-muted-foreground">$K</span>}><AreaChart data={cash} /></ChartCard>
+      {!hasFin ? (
+        <GlassCard className="p-8 text-center text-sm text-muted-foreground">Add invoices and expenses in Finance and your P&L, expense mix and net trend will appear here.</GlassCard>
+      ) : (
+        <>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ChartCard title="Revenue vs expenses vs net" icon={BarChart3}><HBars items={pnl} /></ChartCard>
+            <ChartCard title="Expense breakdown" icon={Layers}>
+              {a.expenseCategories.length ? <div className="flex items-center gap-6"><Donut data={a.expenseCategories} size={150} /><Legend items={a.expenseCategories} /></div> : <p className="py-8 text-center text-sm text-muted-foreground">No expenses logged yet.</p>}
+            </ChartCard>
+          </div>
+          <ChartCard title="Net by month" icon={TrendingUp} right={<span className="text-xs text-muted-foreground">last 12 months</span>}><AreaChart data={netByMonth} /></ChartCard>
+        </>
+      )}
     </div>
   );
 }

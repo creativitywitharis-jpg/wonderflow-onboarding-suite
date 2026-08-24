@@ -143,11 +143,17 @@ function Legend({ items }: { items: { label: string; share: number; color: strin
   );
 }
 
-function ChartCard({ title, icon, children, className, right }: { title: string; icon: LucideIcon; children: ReactNode; className?: string; right?: ReactNode }) {
+function ChartCard({ title, icon, children, className, right, sample }: { title: string; icon: LucideIcon; children: ReactNode; className?: string; right?: ReactNode; sample?: boolean }) {
   return (
     <Reveal className="h-full">
       <GlassCard className={cn("flex h-full flex-col p-6", className)}>
-        <div className="flex items-baseline justify-between"><SectionLabel icon={icon}>{title}</SectionLabel>{right}</div>
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <SectionLabel icon={icon}>{title}</SectionLabel>
+            {sample && <span title="Illustrative — fills with real data as history accrues" className="rounded-full border border-border bg-glass px-2 py-0.5 text-[0.55rem] font-medium uppercase tracking-wide text-muted-foreground">Sample</span>}
+          </div>
+          {right}
+        </div>
         <div className="mt-5 flex-1">{children}</div>
       </GlassCard>
     </Reveal>
@@ -435,10 +441,10 @@ function CustomersView() {
         <StatTile label="Active segments" value={custSegments.length} icon={TrendingUp} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <ChartCard title="New customers / month" icon={TrendingUp}><AreaChart data={acquisition} /></ChartCard>
+        <ChartCard title="New customers / month" icon={TrendingUp} sample><AreaChart data={acquisition} /></ChartCard>
         <ChartCard title="Segments" icon={Users}><div className="flex items-center gap-6"><Donut data={custSegments} size={150} /><Legend items={custSegments} /></div></ChartCard>
       </div>
-      <ChartCard title="Cohort retention" icon={Layers} className="overflow-x-auto"><Heatmap rows={retention.rows} cols={retention.cols} /></ChartCard>
+      <ChartCard title="Cohort retention" icon={Layers} className="overflow-x-auto" sample><Heatmap rows={retention.rows} cols={retention.cols} /></ChartCard>
     </div>
   );
 }
@@ -458,7 +464,7 @@ function ProductsView() {
         <ChartCard title="Top products" icon={Package}><HBars items={topProducts} /></ChartCard>
         <ChartCard title="Sales by category" icon={Layers}><div className="flex items-center gap-6"><Donut data={categories} size={150} /><Legend items={categories} /></div></ChartCard>
       </div>
-      <ChartCard title="Units sold trend" icon={BarChart3}><Bars data={units} labels={["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"]} /></ChartCard>
+      <ChartCard title="Units sold trend" icon={BarChart3} sample><Bars data={units} labels={["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"]} /></ChartCard>
     </div>
   );
 }
@@ -475,7 +481,7 @@ function InventoryView() {
         <StatTile label="Units sold (30d)" value={unitsSold30} icon={TrendingUp} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <ChartCard title="Inventory value trend" icon={BarChart3} right={<span className="text-xs text-muted-foreground">$K</span>}><Bars data={value} labels={months} /></ChartCard>
+        <ChartCard title="Inventory value trend" icon={BarChart3} sample right={<span className="text-xs text-muted-foreground">$K</span>}><Bars data={value} labels={months} /></ChartCard>
         <ChartCard title="Stock by category" icon={Layers}><div className="flex items-center gap-6"><Donut data={categories} size={150} /><Legend items={categories} /></div></ChartCard>
       </div>
     </div>
@@ -495,7 +501,7 @@ function SuppliersView() {
       </div>
       <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
         <ChartCard title="Spend by category" icon={Globe}><div className="flex items-center gap-6"><Donut data={spendByCategory} size={150} /><Legend items={spendByCategory} /></div></ChartCard>
-        <ChartCard title="On-time delivery trend" icon={TrendingUp}><AreaChart data={onTime} /></ChartCard>
+        <ChartCard title="On-time delivery trend" icon={TrendingUp} sample><AreaChart data={onTime} /></ChartCard>
       </div>
       <ChartCard title="Top suppliers by spend" icon={Building2}><HBars items={topSuppliers} /></ChartCard>
     </div>
@@ -519,7 +525,7 @@ function MarketingView() {
         <ChartCard title="New customers by channel" icon={Globe}><div className="flex items-center gap-6"><Donut data={marketingChannels} size={150} /><Legend items={marketingChannels} /></div></ChartCard>
         <ChartCard title="Top campaigns by ROI" icon={Megaphone}><HBars items={campaigns} /></ChartCard>
       </div>
-      <ChartCard title="Blended ROAS trend" icon={TrendingUp}><Bars data={spendRev} labels={["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"]} /></ChartCard>
+      <ChartCard title="Blended ROAS trend" icon={TrendingUp} sample><Bars data={spendRev} labels={["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"]} /></ChartCard>
     </div>
   );
 }

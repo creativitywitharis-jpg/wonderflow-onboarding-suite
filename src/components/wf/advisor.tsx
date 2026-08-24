@@ -34,7 +34,7 @@ import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
 import { listCustomers } from "@/lib/customers";
 import { listInvoices, listExpenses } from "@/lib/finance";
-import { buildOpportunities, OPP_CATEGORIES, type Opportunity } from "@/lib/advisor";
+import { buildOpportunities, buildRisks, OPP_CATEGORIES, type Opportunity, type Risk, type Sev } from "@/lib/advisor";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -72,14 +72,7 @@ const initiatives = [
   { title: "Raise a seed round", progress: 5, impact: 90, effort: 85, status: "Exploring", plan: ["Tighten metrics story", "Build data room", "Warm-intro 12 funds"] },
 ];
 
-type Sev = "High" | "Medium" | "Low";
 const sevColor: Record<Sev, string> = { High: "oklch(0.68 0.16 25)", Medium: "oklch(0.84 0.14 84)", Low: "oklch(0.72 0.14 155)" };
-const risks = [
-  { title: "Solstice Freight reliability declining", category: "Supply chain", severity: "High" as Sev, likelihood: 68, trend: "up", mitigation: "Dual-source logistics" },
-  { title: "Customer concentration — top 5 = 31% revenue", category: "Revenue", severity: "Medium" as Sev, likelihood: 44, trend: "flat", mitigation: "Diversify acquisition" },
-  { title: "Two SKUs overstocked ($18k tied up)", category: "Inventory", severity: "Low" as Sev, likelihood: 30, trend: "down", mitigation: "Clearance promo" },
-  { title: "Rising CAC on paid social", category: "Growth", severity: "Medium" as Sev, likelihood: 52, trend: "up", mitigation: "Shift to referral & organic" },
-];
 
 const decisions = [
   { title: "Increased ad spend on referral channel", date: "Jul 28", status: "Implemented", impact: "+$14k", result: "ROAS 5.2x, on track" },
@@ -481,17 +474,31 @@ function OpportunitiesView() {
 }
 
 function RisksView() {
+  const { org } = useOrg();
   const trendIcon = (t: string) => (t === "up" ? TrendingUp : t === "down" ? TrendingDown : Activity);
+  const [data, setData] = useState<{ risks: Risk[]; score: number; high: number } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (org?.id) buildRisks(org.id).then((r) => alive && setData(r)).catch(() => alive && setData({ risks: [], score: 5, high: 0 }));
+    else setData({ risks: [], score: 5, high: 0 });
+    return () => { alive = false; };
+  }, [org?.id]);
+
+  const risks = data?.risks ?? [];
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile label="Portfolio risk score" value={26} suffix="/100" icon={ShieldCheck} />
-        <StatTile label="High-severity risks" value={1} icon={ShieldAlert} positive={false} />
-        <StatTile label="Mitigations in place" value={7} icon={CheckCircle2} />
+        <StatTile label="Portfolio risk score" value={data?.score ?? 0} suffix="/100" icon={ShieldCheck} positive={(data?.score ?? 0) < 40} />
+        <StatTile label="High-severity risks" value={data?.high ?? 0} icon={ShieldAlert} positive={(data?.high ?? 0) === 0} />
+        <StatTile label="Risks tracked" value={risks.length} icon={CheckCircle2} />
       </div>
       <Reveal>
         <GlassCard className="p-6">
           <SectionLabel icon={ShieldAlert}>Risk register</SectionLabel>
+          {data === null && <p className="mt-4 py-6 text-center text-sm text-muted-foreground">Scanning your data for risks…</p>}
+          {data !== null && risks.length === 0 && (
+            <p className="mt-4 py-6 text-center text-sm text-muted-foreground">No material risks detected. Add more data and I'll keep watch.</p>
+          )}
           <div className="mt-4 space-y-2">
             {risks.map((r) => {
               const T = trendIcon(r.trend);

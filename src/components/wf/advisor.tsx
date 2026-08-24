@@ -32,6 +32,8 @@ import { Brand } from "@/components/wf/Brand";
 import { Bar, Reveal, Ring, SectionLabel, Sparkline, StatTile, formatNum } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
+import { listCustomers } from "@/lib/customers";
+import { listInvoices, listExpenses } from "@/lib/finance";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -50,19 +52,7 @@ const views: { key: ViewKey; label: string; icon: LucideIcon }[] = [
   { key: "memory", label: "AI memory", icon: Database },
 ];
 
-const healthPillars = [
-  { label: "Financial", value: 88 },
-  { label: "Growth", value: 78 },
-  { label: "Operations", value: 82 },
-  { label: "Customers", value: 88 },
-  { label: "Resilience", value: 74 },
-];
 
-const decisionsToday = [
-  { t: "Approve the Q4 pricing increase (+8%)", d: "+$96k projected", icon: DollarSign },
-  { t: "Greenlight the referral program", d: "+220 referrals / mo", icon: Rocket },
-  { t: "Dual-source logistics off Solstice", d: "cuts a high risk", icon: ShieldAlert },
-];
 
 type Scenario = "Conservative" | "Base" | "Aggressive";
 const scenarioFactor: Record<Scenario, number> = { Conservative: 0.9, Base: 1, Aggressive: 1.12 };
@@ -127,14 +117,83 @@ const memoryIcon: Record<string, LucideIcon> = { "Business context": Target, Goa
  * Views
  * ─────────────────────────────────────────────────────────────────── */
 
+type Priority = { t: string; d: string; icon: LucideIcon };
+
 function OverviewView({ go }: { go: (v: ViewKey) => void }) {
+  const { org } = useOrg();
+  const [loading, setLoading] = useState(true);
+  const [m, setM] = useState({
+    revenueMtd: 0, outstanding: 0, unpaid: 0, expenses: 0, net: 0,
+    customers: 0, totalLtv: 0, avgHealth: 0, atRisk: 0, collectionRate: 0, hasData: false,
+  });
+  const [briefing, setBriefing] = useState<string | null>(null);
+  const [priorities, setPriorities] = useState<Priority[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    if (!org) return;
+    (async () => {
+      setLoading(true);
+      const [customers, invoices, expenses] = await Promise.all([
+        listCustomers(org.id).catch(() => []),
+        listInvoices(org.id).catch(() => []),
+        listExpenses(org.id).catch(() => []),
+      ]);
+      const period = new Date().toISOString().slice(0, 7);
+      const revenueMtd = invoices.filter((i) => i.status === "paid" && (i.paid_at ?? "").slice(0, 7) === period).reduce((a, i) => a + Number(i.total || 0), 0);
+      const paidTotal = invoices.filter((i) => i.status === "paid").reduce((a, i) => a + Number(i.total || 0), 0);
+      const unpaidList = invoices.filter((i) => i.status === "sent");
+      const outstanding = unpaidList.reduce((a, i) => a + Number(i.total || 0), 0);
+      const expensesTotal = expenses.reduce((a, e) => a + Number(e.amount || 0), 0);
+      const totalLtv = customers.reduce((a, c) => a + Number(c.ltv || 0), 0);
+      const avgHealth = customers.length ? Math.round(customers.reduce((a, c) => a + Number(c.health || 0), 0) / customers.length) : 0;
+      const atRisk = customers.filter((c) => c.tier === "At risk" || Number(c.health) < 50).length;
+      const upsell = customers.filter((c) => (c.tier === "Champion" || c.tier === "Loyal") && Number(c.health) >= 70);
+      const collectionRate = paidTotal + outstanding > 0 ? Math.round((paidTotal / (paidTotal + outstanding)) * 100) : 0;
+      const net = paidTotal - expensesTotal;
+      const hasData = customers.length > 0 || invoices.length > 0;
+
+      // Real, data-driven priorities.
+      const pr: Priority[] = [];
+      if (outstanding > 0) pr.push({ t: `Chase $${formatNum(outstanding)} across ${unpaidList.length} unpaid invoice${unpaidList.length === 1 ? "" : "s"}`, d: "collect cash", icon: DollarSign });
+      if (atRisk > 0) pr.push({ t: `${atRisk} customer${atRisk === 1 ? "" : "s"} slipping — reach out`, d: "retain", icon: ShieldAlert });
+      if (upsell.length > 0) pr.push({ t: `${upsell.length} account${upsell.length === 1 ? "" : "s"} ready for an upsell`, d: `$${formatNum(upsell.reduce((a, c) => a + Number(c.ltv || 0), 0))} in play`, icon: Rocket });
+      if (pr.length === 0 && hasData) pr.push({ t: "Book more work — pipeline is quiet", d: "grow", icon: TrendingUp });
+
+      if (!alive) return;
+      setM({ revenueMtd, outstanding, unpaid: unpaidList.length, expenses: expensesTotal, net, customers: customers.length, totalLtv, avgHealth, atRisk, collectionRate, hasData });
+      setPriorities(pr);
+      setLoading(false);
+
+      // Real AI briefing grounded in the numbers (skip if the workspace is empty).
+      if (!hasData) {
+        setBriefing(null);
+        return;
+      }
+      const snapshot = `Snapshot for ${org.name || "the business"}: ${customers.length} customers worth $${formatNum(totalLtv)} lifetime value, average customer health ${avgHealth}/100, ${atRisk} at-risk. Finance: $${formatNum(revenueMtd)} collected this month, $${formatNum(outstanding)} outstanding across ${unpaidList.length} unpaid invoices, $${formatNum(expensesTotal)} expenses, net $${formatNum(net)}. Collection rate ${collectionRate}%.`;
+      try {
+        const reply = await askAI(
+          [{ role: "user", content: `${snapshot}\n\nGive me a sharp 2–3 sentence daily CEO briefing. Lead with the single most important thing, cite the real numbers, and end with today's top priority. No greeting, no preamble.` }],
+          { id: org.id, name: org.name, industry: org.industry },
+        );
+        if (alive) setBriefing(reply);
+      } catch {
+        if (alive) setBriefing(`You're tracking ${customers.length} customers worth $${formatNum(totalLtv)}. $${formatNum(outstanding)} is outstanding and net is $${formatNum(net)} this period. Priority: ${pr[0]?.t ?? "keep the pipeline moving"}.`);
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+
+  const healthLabel = m.avgHealth >= 75 ? "Healthy & growing" : m.avgHealth >= 50 ? "Stable — room to improve" : m.customers === 0 ? "No data yet" : "Needs attention";
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Revenue (MTD)" value={412908} prefix="$" delta="12.4%" icon={DollarSign} />
-        <StatTile label="Cash runway" value={14.2} suffix=" mo" decimals={1} delta="1.2 mo" icon={Activity} />
-        <StatTile label="Growth rate" value={14} suffix="%" delta="2 pts" icon={TrendingUp} />
-        <StatTile label="Open risks" value={4} delta="1" positive={false} icon={ShieldAlert} />
+        <StatTile label="Revenue (MTD)" value={m.revenueMtd} prefix="$" icon={DollarSign} />
+        <StatTile label="Outstanding (AR)" value={m.outstanding} prefix="$" icon={Activity} />
+        <StatTile label="Customers" value={m.customers} icon={TrendingUp} />
+        <StatTile label="At-risk" value={m.atRisk} positive={m.atRisk === 0} icon={ShieldAlert} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
@@ -142,19 +201,17 @@ function OverviewView({ go }: { go: (v: ViewKey) => void }) {
           <GlassCard className="flex h-full flex-col p-6">
             <SectionLabel icon={Gauge}>Business Health Score</SectionLabel>
             <div className="mt-4 flex items-center gap-6">
-              <Ring value={84} size={128} label={<div><div className="text-3xl font-semibold tabular-nums gold-text">84</div><div className="text-[0.6rem] uppercase tracking-[0.2em] text-muted-foreground">/ 100</div></div>} />
+              <Ring value={m.avgHealth} size={128} label={<div><div className="text-3xl font-semibold tabular-nums gold-text">{m.avgHealth}</div><div className="text-[0.6rem] uppercase tracking-[0.2em] text-muted-foreground">/ 100</div></div>} />
               <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-2 text-sm font-semibold text-foreground"><TrendingUp className="size-4 text-gold" /> Healthy & growing</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">Strong financials and customers. Resilience is the area to shore up.</p>
+                <p className="flex items-center gap-2 text-sm font-semibold text-foreground"><TrendingUp className="size-4 text-gold" /> {healthLabel}</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">Based on your customers' average health across the book.</p>
               </div>
             </div>
             <div className="mt-5 grid grid-cols-2 gap-x-5 gap-y-3">
-              {healthPillars.map((p) => (
-                <div key={p.label}>
-                  <div className="flex items-baseline justify-between text-xs"><span className="text-foreground/80">{p.label}</span><span className="tabular-nums text-gold">{p.value}</span></div>
-                  <div className="mt-1.5"><Bar value={p.value} /></div>
-                </div>
-              ))}
+              <div><div className="flex items-baseline justify-between text-xs"><span className="text-foreground/80">Total LTV</span><span className="tabular-nums text-gold">${formatNum(m.totalLtv)}</span></div><div className="mt-1.5"><Bar value={Math.min(100, m.avgHealth)} /></div></div>
+              <div><div className="flex items-baseline justify-between text-xs"><span className="text-foreground/80">Collection rate</span><span className="tabular-nums text-gold">{m.collectionRate}%</span></div><div className="mt-1.5"><Bar value={m.collectionRate} /></div></div>
+              <div><div className="flex items-baseline justify-between text-xs"><span className="text-foreground/80">Net (period)</span><span className="tabular-nums text-gold">${formatNum(m.net)}</span></div><div className="mt-1.5"><Bar value={m.net >= 0 ? 80 : 20} /></div></div>
+              <div><div className="flex items-baseline justify-between text-xs"><span className="text-foreground/80">At-risk</span><span className="tabular-nums text-gold">{m.atRisk}</span></div><div className="mt-1.5"><Bar value={m.customers ? Math.round((m.atRisk / m.customers) * 100) : 0} /></div></div>
             </div>
           </GlassCard>
         </Reveal>
@@ -167,21 +224,23 @@ function OverviewView({ go }: { go: (v: ViewKey) => void }) {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Daily CEO briefing</p>
                 <p className="mt-2 text-[0.95rem] leading-relaxed text-foreground/90">
-                  Good morning. You have a world-class consultant on call. The business is <span className="text-gold">healthy (84)</span> and
-                  pacing 12% ahead. I've prioritized <span className="text-gold">3 decisions</span> today worth a combined <span className="text-gold">+$96k</span> —
-                  and flagged one supply risk to close.
+                  {!m.hasData
+                    ? "Add customers and invoices and I'll brief you here every day — grounded in your real numbers."
+                    : briefing ?? (loading ? "Reading your business…" : "Preparing your briefing…")}
                 </p>
               </div>
             </div>
-            <div className="relative mt-5 space-y-2">
-              {decisionsToday.map((d) => (
-                <button key={d.t} onClick={() => go("strategy")} className="lift flex w-full items-center gap-3 rounded-2xl border border-border bg-background/30 p-3 text-left hover:border-gold/40">
-                  <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-border bg-glass"><d.icon className="size-4 text-gold" /></span>
-                  <span className="flex-1 text-sm text-foreground/85">{d.t}</span>
-                  <span className="shrink-0 text-xs text-gold">{d.d}</span>
-                </button>
-              ))}
-            </div>
+            {priorities.length > 0 && (
+              <div className="relative mt-5 space-y-2">
+                {priorities.map((d) => (
+                  <button key={d.t} onClick={() => go("chat")} className="lift flex w-full items-center gap-3 rounded-2xl border border-border bg-background/30 p-3 text-left hover:border-gold/40">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-border bg-glass"><d.icon className="size-4 text-gold" /></span>
+                    <span className="flex-1 text-sm text-foreground/85">{d.t}</span>
+                    <span className="shrink-0 text-xs text-gold">{d.d}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <button onClick={() => go("chat")} className="lift relative mt-4 flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110" style={{ background: "var(--gradient-gold)" }}>
               <MessageSquare className="size-4" stroke="oklch(0.2 0.02 70)" /> Ask your advisor anything
             </button>

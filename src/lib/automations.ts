@@ -3,6 +3,14 @@ import { supabase } from "./supabase";
 export type TriggerKey = "order.created" | "customer.created" | "manual";
 export type ActionKey = "ai_draft_note" | "email_owner" | "email_customer" | "webhook";
 
+// A multi-step workflow, run in order. `action` steps reuse the same 4 action
+// types as a simple rule; `wait` pauses the sequence (resumed later — see
+// automation_runs); `condition` stops the sequence if the check fails.
+export type WorkflowStep =
+  | { kind: "action"; action_key: ActionKey; action_config?: Record<string, unknown> }
+  | { kind: "wait"; hours: number }
+  | { kind: "condition"; field: string; op: ">" | "<" | "=" | ">=" | "<="; value: number };
+
 export type DbAutomation = {
   id: string;
   name: string;
@@ -11,6 +19,7 @@ export type DbAutomation = {
   trigger_key: TriggerKey;
   action_key: ActionKey;
   action_config: Record<string, unknown>;
+  steps: WorkflowStep[] | null;
   enabled: boolean;
   runs: number;
   last_run: string | null;
@@ -24,10 +33,16 @@ export type NewAutomation = {
   trigger_key?: TriggerKey;
   action_key?: ActionKey;
   action_config?: Record<string, unknown>;
+  steps?: WorkflowStep[] | null;
   enabled?: boolean;
 };
 
-const COLS = "id,name,trigger,action,trigger_key,action_key,action_config,enabled,runs,last_run,created_at";
+const COLS = "id,name,trigger,action,trigger_key,action_key,action_config,steps,enabled,runs,last_run,created_at";
+
+// `steps` ships in migration 0026 and isn't in the generated Database types
+// until Lovable regenerates them, so reach the table through an untyped handle.
+// Runtime behaviour is unchanged once types regenerate.
+const automationsTable = () => (supabase as unknown as { from: (t: string) => any }).from("automations");
 
 /** WonderFlow events. A subset (TriggerKey) can drive automations; all of them
  *  fan out to subscribed outbound webhooks. */
@@ -49,8 +64,7 @@ export async function fireAutomationEvent(
 
 /** All automations for an org, newest first (RLS-scoped to members). */
 export async function listAutomations(orgId: string): Promise<DbAutomation[]> {
-  const { data, error } = await supabase
-    .from("automations")
+  const { data, error } = await automationsTable()
     .select(COLS)
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
@@ -59,18 +73,15 @@ export async function listAutomations(orgId: string): Promise<DbAutomation[]> {
 }
 
 export async function createAutomation(orgId: string, a: NewAutomation) {
-  const { data, error } = await supabase
-    .from("automations")
-    .insert({ org_id: orgId, ...a, action_config: (a.action_config ?? {}) as never })
+  const { data, error } = await automationsTable()
+    .insert({ org_id: orgId, ...a, action_config: a.action_config ?? {} })
     .select(COLS)
     .single();
   return { data: data as DbAutomation | null, error: error ? new Error(error.message) : null };
 }
 
 export async function insertAutomations(orgId: string, rows: NewAutomation[]) {
-  const { error } = await supabase
-    .from("automations")
-    .insert(rows.map((r) => ({ org_id: orgId, ...r, action_config: (r.action_config ?? {}) as never })));
+  const { error } = await automationsTable().insert(rows.map((r) => ({ org_id: orgId, ...r, action_config: r.action_config ?? {} })));
   return { error: error ? new Error(error.message) : null };
 }
 

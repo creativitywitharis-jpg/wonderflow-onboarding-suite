@@ -1,15 +1,31 @@
-// Shared automation execution — used by both `run-automations` (user-triggered)
-// and `inbound` (website/form-triggered). Given an event, finds the org's
-// enabled automations whose trigger matches and runs each action.
+// Shared automation execution — used by both `run-automations` (user-triggered),
+// `inbound` (website/form-triggered), and `automation-tick` (external scheduler).
+// Given an event, finds the org's enabled automations whose trigger matches and
+// runs each one — either a single action (legacy) or an ordered multi-step
+// workflow (steps: action / wait / condition).
 //   ai_draft_note   → Claude drafts a note, stored as a customer interaction (internal only)
 //   email_owner     → emails the org owner via Resend (no-op if unconfigured)
 //   email_customer  → Claude drafts + Resend actually SENDS an email to the customer
 //   webhook         → POSTs the payload to a configured URL
+//
+// Multi-step workflows: a `wait` step pauses the sequence by writing a row to
+// automation_runs (resume_at = now + hours) instead of blocking the function.
+// It's picked back up two ways — whichever happens first:
+//   1. Piggybacked at the top of every runAutomations call for that org (so
+//      normal day-to-day activity naturally flushes due steps), or
+//   2. The public automation-tick endpoint, which any external scheduler
+//      (Zapier/n8n/GitHub Actions/cron) can ping to flush due steps org-wide —
+//      useful for a dormant org where nothing else would trigger a check.
 
 // deno-lint-ignore no-explicit-any
 type Admin = any;
 type Payload = Record<string, unknown>;
 export type AutomationResult = { id: string; action: string; ok: boolean; detail?: string };
+
+export type WorkflowStep =
+  | { kind: "action"; action_key: string; action_config?: Record<string, unknown> }
+  | { kind: "wait"; hours: number }
+  | { kind: "condition"; field: string; op: ">" | "<" | "=" | ">=" | "<="; value: number };
 
 // System prompt keeps the automation's output a clean, usable note — without it,
 // Claude (reasonably) treats the call like a chat and adds meta-commentary
@@ -59,6 +75,163 @@ function customerEmailHtml(orgName: string, bodyText: string): string {
   </div></body></html>`;
 }
 
+/** Run one action (used both by legacy single-action rules and each 'action' step in a workflow). */
+async function runAction(
+  admin: Admin,
+  orgId: string,
+  event: string,
+  payload: Payload,
+  automationName: string,
+  actionKey: string,
+  config: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: string }> {
+  try {
+    if (actionKey === "webhook") {
+      const url = (config.webhook_url as string) ?? "";
+      if (!url) return { ok: false, detail: "no webhook_url" };
+      const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event, payload, automation: automationName }) });
+      return { ok: r.ok, detail: `webhook ${r.status}` };
+    }
+
+    if (actionKey === "email_owner") {
+      const resendKey = Deno.env.get("RESEND_API_KEY");
+      if (!resendKey) return { ok: false, detail: "email not configured" };
+      const { data: owner } = await admin.from("memberships").select("profiles(email,full_name)").eq("org_id", orgId).eq("role", "owner").maybeSingle();
+      const email = (owner as { profiles?: { email?: string } } | null)?.profiles?.email;
+      if (!email) return { ok: false, detail: "no owner email" };
+      const from = Deno.env.get("EMAIL_FROM") || "WonderFlow OS <onboarding@resend.dev>";
+      const subject = (config.subject as string) || `Automation: ${automationName}`;
+      const r = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from, to: [email], subject, html: `<p>Your automation <b>${automationName}</b> fired on <b>${event}</b>.</p><pre>${JSON.stringify(payload, null, 2)}</pre>` }),
+      });
+      return { ok: r.ok, detail: `email ${r.status}` };
+    }
+
+    if (actionKey === "email_customer") {
+      const resendKey = Deno.env.get("RESEND_API_KEY");
+      const customerId = (payload.customer_id as string) ?? null;
+      if (!resendKey) return { ok: false, detail: "email not configured" };
+      if (!customerId) return { ok: false, detail: "no customer on this event" };
+      const { data: cust } = await admin.from("customers").select("name,email").eq("id", customerId).maybeSingle();
+      const custEmail = (cust as { email?: string } | null)?.email;
+      const custName = (cust as { name?: string } | null)?.name ?? "there";
+      if (!custEmail) return { ok: false, detail: "customer has no email on file" };
+      const { data: org } = await admin.from("organizations").select("name").eq("id", orgId).maybeSingle();
+      const orgName = (org as { name?: string } | null)?.name ?? "Your business";
+      const basePrompt = (config.prompt as string) || "Write a short, warm email to this customer for this event.";
+      const body = await claudeDraft(`${basePrompt}\n\nCustomer name: ${custName}\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`, EMAIL_SYSTEM);
+      if (!body) return { ok: false, detail: "AI unavailable" };
+      const from = Deno.env.get("EMAIL_FROM") || "WonderFlow OS <onboarding@resend.dev>";
+      const subject = (config.subject as string) || `A message from ${orgName}`;
+      const r = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from, to: [custEmail], subject, html: customerEmailHtml(orgName, body) }),
+      });
+      if (r.ok) await admin.from("interactions").insert({ org_id: orgId, customer_id: customerId, channel: "email", body: `📧 ${automationName} — sent to ${custEmail}: ${body}` });
+      return { ok: r.ok, detail: `email ${r.status}` };
+    }
+
+    // Default: ai_draft_note
+    const basePrompt = (config.prompt as string) || "Draft a short, friendly, actionable note for this business event.";
+    const draft = await claudeDraft(`${basePrompt}\n\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`);
+    if (!draft) return { ok: false, detail: "AI unavailable" };
+    const customerId = (payload.customer_id as string) ?? null;
+    await admin.from("interactions").insert({ org_id: orgId, customer_id: customerId, channel: "note", body: `🤖 ${automationName}: ${draft}` });
+    return { ok: true, detail: "note drafted" };
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : "action error" };
+  }
+}
+
+function evalCondition(payload: Payload, step: { field: string; op: string; value: number }): boolean {
+  const raw = payload[step.field];
+  const n = typeof raw === "number" ? raw : parseFloat(String(raw ?? ""));
+  if (isNaN(n)) return false;
+  switch (step.op) {
+    case ">": return n > step.value;
+    case "<": return n < step.value;
+    case ">=": return n >= step.value;
+    case "<=": return n <= step.value;
+    case "=": return n === step.value;
+    default: return false;
+  }
+}
+
+/**
+ * Run a workflow's steps in order starting at `startIndex`. Stops (without
+ * error) if a condition fails. Pauses — writing an automation_runs row and
+ * returning `paused: true` — when it hits a `wait` step; the caller is
+ * responsible for NOT treating a pause as a failure.
+ */
+async function runStepSequence(
+  admin: Admin,
+  orgId: string,
+  automation: { id: string; name: string },
+  event: string,
+  payload: Payload,
+  steps: WorkflowStep[],
+  startIndex: number,
+): Promise<{ ok: boolean; detail: string; paused?: boolean }> {
+  for (let i = startIndex; i < steps.length; i++) {
+    const step = steps[i];
+    if (step.kind === "wait") {
+      const resumeAt = new Date(Date.now() + Math.max(0, step.hours) * 3600_000).toISOString();
+      await admin.from("automation_runs").insert({
+        org_id: orgId,
+        automation_id: automation.id,
+        event,
+        payload,
+        step_index: i + 1,
+        status: "waiting",
+        resume_at: resumeAt,
+      });
+      return { ok: true, detail: `paused — resumes in ${step.hours}h (step ${i + 2}/${steps.length})`, paused: true };
+    }
+    if (step.kind === "condition") {
+      if (!evalCondition(payload, step)) {
+        return { ok: true, detail: `stopped — condition not met at step ${i + 1}` };
+      }
+      continue;
+    }
+    // action step
+    const res = await runAction(admin, orgId, event, payload, automation.name, step.action_key, step.action_config ?? {});
+    if (!res.ok) return { ok: false, detail: `step ${i + 1} failed: ${res.detail}` };
+  }
+  return { ok: true, detail: "workflow completed" };
+}
+
+/**
+ * Resume any workflow steps whose wait has elapsed. Org-scoped when called as
+ * a piggyback from a real event; org-agnostic (all orgs) when called from the
+ * automation-tick endpoint. Capped per call to keep each invocation fast.
+ */
+export async function resumeDueRuns(admin: Admin, orgId?: string): Promise<number> {
+  let query = admin.from("automation_runs").select("*").eq("status", "waiting").lte("resume_at", new Date().toISOString()).limit(50);
+  if (orgId) query = query.eq("org_id", orgId);
+  const { data } = await query;
+  const runs = (data as Array<Record<string, unknown>>) ?? [];
+  let processed = 0;
+  for (const run of runs) {
+    const runId = run.id as string;
+    const runOrgId = run.org_id as string;
+    try {
+      const { data: auto } = await admin.from("automations").select("id,name,enabled,steps").eq("id", run.automation_id).maybeSingle();
+      const automation = auto as { id: string; name: string; enabled: boolean; steps: WorkflowStep[] | null } | null;
+      if (automation?.enabled && automation.steps?.length) {
+        await runStepSequence(admin, runOrgId, automation, run.event as string, (run.payload as Payload) ?? {}, automation.steps, run.step_index as number);
+      }
+    } catch {
+      // never let one bad run block the batch
+    }
+    await admin.from("automation_runs").update({ status: "done" }).eq("id", runId);
+    processed++;
+  }
+  return processed;
+}
+
 export async function runAutomations(
   admin: Admin,
   orgId: string,
@@ -66,6 +239,11 @@ export async function runAutomations(
   payload: Payload,
   opts: { automationId?: string } = {},
 ): Promise<AutomationResult[]> {
+  // Piggyback: flush any of this org's workflow steps that came due, so a
+  // 'wait' step resolves the next time anything happens for this org, without
+  // needing a dedicated scheduler.
+  await resumeDueRuns(admin, orgId).catch(() => 0);
+
   let query = admin.from("automations").select("*").eq("org_id", orgId).eq("enabled", true);
   if (opts.automationId) query = query.eq("id", opts.automationId);
   else query = query.eq("trigger_key", event);
@@ -76,91 +254,26 @@ export async function runAutomations(
 
   for (const a of automations) {
     const id = a.id as string;
-    const actionKey = (a.action_key as string) ?? "ai_draft_note";
-    const config = (a.action_config as Record<string, unknown>) ?? {};
+    const steps = (a.steps as WorkflowStep[] | null) ?? null;
     let ok = false;
     let detail = "";
-    try {
-      if (actionKey === "webhook") {
-        const url = (config.webhook_url as string) ?? "";
-        if (url) {
-          const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event, payload, automation: a.name }) });
-          ok = r.ok;
-          detail = `webhook ${r.status}`;
-        } else detail = "no webhook_url";
-      } else if (actionKey === "email_owner") {
-        const resendKey = Deno.env.get("RESEND_API_KEY");
-        if (!resendKey) {
-          detail = "email not configured";
-        } else {
-          const { data: owner } = await admin
-            .from("memberships").select("profiles(email,full_name)").eq("org_id", orgId).eq("role", "owner").maybeSingle();
-          const email = (owner as { profiles?: { email?: string } } | null)?.profiles?.email;
-          if (email) {
-            const from = Deno.env.get("EMAIL_FROM") || "WonderFlow OS <onboarding@resend.dev>";
-            const subject = (config.subject as string) || `Automation: ${a.name}`;
-            const r = await fetch("https://api.resend.com/emails", {
-              method: "POST",
-              headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ from, to: [email], subject, html: `<p>Your automation <b>${a.name}</b> fired on <b>${event}</b>.</p><pre>${JSON.stringify(payload, null, 2)}</pre>` }),
-            });
-            ok = r.ok;
-            detail = `email ${r.status}`;
-          } else detail = "no owner email";
-        }
-      } else if (actionKey === "email_customer") {
-        const resendKey = Deno.env.get("RESEND_API_KEY");
-        const customerId = (payload.customer_id as string) ?? null;
-        if (!resendKey) {
-          detail = "email not configured";
-        } else if (!customerId) {
-          detail = "no customer on this event";
-        } else {
-          const { data: cust } = await admin.from("customers").select("name,email").eq("id", customerId).maybeSingle();
-          const custEmail = (cust as { email?: string } | null)?.email;
-          const custName = (cust as { name?: string } | null)?.name ?? "there";
-          if (!custEmail) {
-            detail = "customer has no email on file";
-          } else {
-            const { data: org } = await admin.from("organizations").select("name").eq("id", orgId).maybeSingle();
-            const orgName = (org as { name?: string } | null)?.name ?? "Your business";
-            const basePrompt = (config.prompt as string) || "Write a short, warm email to this customer for this event.";
-            const body = await claudeDraft(
-              `${basePrompt}\n\nCustomer name: ${custName}\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`,
-              EMAIL_SYSTEM,
-            );
-            if (body) {
-              const from = Deno.env.get("EMAIL_FROM") || "WonderFlow OS <onboarding@resend.dev>";
-              const subject = (config.subject as string) || `A message from ${orgName}`;
-              const r = await fetch("https://api.resend.com/emails", {
-                method: "POST",
-                headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ from, to: [custEmail], subject, html: customerEmailHtml(orgName, body) }),
-              });
-              ok = r.ok;
-              detail = `email ${r.status}`;
-              if (ok) {
-                await admin.from("interactions").insert({ org_id: orgId, customer_id: customerId, channel: "email", body: `📧 ${a.name} — sent to ${custEmail}: ${body}` });
-              }
-            } else detail = "AI unavailable";
-          }
-        }
-      } else {
-        const basePrompt = (config.prompt as string) || "Draft a short, friendly, actionable note for this business event.";
-        const draft = await claudeDraft(`${basePrompt}\n\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`);
-        if (draft) {
-          const customerId = (payload.customer_id as string) ?? null;
-          await admin.from("interactions").insert({ org_id: orgId, customer_id: customerId, channel: "note", body: `🤖 ${a.name}: ${draft}` });
-          ok = true;
-          detail = "note drafted";
-        } else detail = "AI unavailable";
-      }
-    } catch (e) {
-      detail = e instanceof Error ? e.message : "action error";
+    let actionLabel = (a.action_key as string) ?? "ai_draft_note";
+
+    if (steps && steps.length > 0) {
+      actionLabel = "workflow";
+      const res = await runStepSequence(admin, orgId, { id, name: a.name as string }, event, payload, steps, 0);
+      ok = res.ok;
+      detail = res.detail;
+    } else {
+      const actionKey = (a.action_key as string) ?? "ai_draft_note";
+      const config = (a.action_config as Record<string, unknown>) ?? {};
+      const res = await runAction(admin, orgId, event, payload, a.name as string, actionKey, config);
+      ok = res.ok;
+      detail = res.detail;
     }
 
     await admin.from("automations").update({ runs: ((a.runs as number) ?? 0) + 1, last_run: new Date().toISOString() }).eq("id", id);
-    results.push({ id, action: actionKey, ok, detail });
+    results.push({ id, action: actionLabel, ok, detail });
   }
 
   return results;

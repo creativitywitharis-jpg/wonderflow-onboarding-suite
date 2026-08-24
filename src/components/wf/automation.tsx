@@ -38,7 +38,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Bar, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
-import { createAutomation, insertAutomations, listAutomations, runAutomationNow, setAutomationEnabled, type ActionKey, type DbAutomation, type NewAutomation, type TriggerKey } from "@/lib/automations";
+import { createAutomation, deleteAutomation, insertAutomations, listAutomations, runAutomationNow, setAutomationEnabled, type ActionKey, type DbAutomation, type NewAutomation, type TriggerKey, type WorkflowStep } from "@/lib/automations";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -204,6 +204,25 @@ const ACTION_OPTS: { key: ActionKey; label: string; sends?: boolean }[] = [
 const triggerLabel = (k: string) => TRIGGER_OPTS.find((t) => t.key === k)?.label ?? k;
 const actionLabel = (k: string) => ACTION_OPTS.find((a) => a.key === k)?.label ?? k;
 
+type StepKind = "action" | "wait" | "condition";
+type StepDraft = { id: string; kind: StepKind; action_key: ActionKey; prompt: string; subject: string; webhook_url: string; hours: string; field: string; op: "<" | ">" | "=" | ">=" | "<="; value: string };
+let stepSeq = 0;
+const newStepDraft = (kind: StepKind = "action"): StepDraft => ({
+  id: `s${++stepSeq}`, kind, action_key: "ai_draft_note", prompt: "", subject: "", webhook_url: "", hours: "24", field: "total", op: ">", value: "0",
+});
+function draftsToSteps(drafts: StepDraft[]): WorkflowStep[] {
+  return drafts.map((sd) => {
+    if (sd.kind === "wait") return { kind: "wait", hours: Math.max(0, Number(sd.hours) || 0) };
+    if (sd.kind === "condition") return { kind: "condition", field: sd.field.trim() || "total", op: sd.op, value: Number(sd.value) || 0 };
+    const action_config =
+      sd.action_key === "webhook" ? { webhook_url: sd.webhook_url.trim() }
+      : sd.action_key === "email_owner" ? { subject: sd.subject.trim() || undefined }
+      : sd.action_key === "email_customer" ? { subject: sd.subject.trim() || undefined, prompt: sd.prompt.trim() || undefined }
+      : { prompt: sd.prompt.trim() || undefined };
+    return { kind: "action", action_key: sd.action_key, action_config };
+  });
+}
+
 const SAMPLE_AUTOMATIONS: NewAutomation[] = [
   { name: "Welcome new customers", trigger: triggerLabel("customer.created"), action: actionLabel("ai_draft_note"), trigger_key: "customer.created", action_key: "ai_draft_note", action_config: { prompt: "Write a warm, brief welcome note for this new customer." }, enabled: true },
   { name: "New order → AI summary", trigger: triggerLabel("order.created"), action: actionLabel("ai_draft_note"), trigger_key: "order.created", action_key: "ai_draft_note", action_config: { prompt: "Summarize this new order in one line and suggest one relevant upsell." }, enabled: true },
@@ -219,6 +238,8 @@ function DashboardView() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", trigger_key: "order.created" as TriggerKey, action_key: "ai_draft_note" as ActionKey, prompt: "", webhook_url: "", subject: "" });
+  const [multiStep, setMultiStep] = useState(false);
+  const [steps, setSteps] = useState<StepDraft[]>([newStepDraft()]);
 
   const load = useCallback(async () => {
     if (!org) {
@@ -246,25 +267,49 @@ function DashboardView() {
     await setAutomationEnabled(r.id, !r.enabled);
     await load();
   };
+  const addStep = (kind: StepKind) => setSteps((s) => [...s, newStepDraft(kind)]);
+  const removeStep = (id: string) => setSteps((s) => s.filter((st) => st.id !== id));
+  const updateStep = (id: string, patch: Partial<StepDraft>) => setSteps((s) => s.map((st) => (st.id === id ? { ...st, ...patch } : st)));
+
   const submit = async () => {
     if (!org || !form.name.trim() || busy) return;
     setBusy(true);
-    const action_config =
-      form.action_key === "webhook" ? { webhook_url: form.webhook_url.trim() }
-      : form.action_key === "email_owner" ? { subject: form.subject.trim() || `Automation: ${form.name.trim()}` }
-      : form.action_key === "email_customer" ? { subject: form.subject.trim() || undefined, prompt: form.prompt.trim() || "Write a short, warm email to this customer for this event." }
-      : { prompt: form.prompt.trim() || "Draft a short, useful note for this event." };
-    await createAutomation(org.id, {
-      name: form.name.trim(),
-      trigger: triggerLabel(form.trigger_key),
-      action: actionLabel(form.action_key),
-      trigger_key: form.trigger_key,
-      action_key: form.action_key,
-      action_config,
-    });
+    if (multiStep) {
+      const built = draftsToSteps(steps);
+      await createAutomation(org.id, {
+        name: form.name.trim(),
+        trigger: triggerLabel(form.trigger_key),
+        action: `Multi-step workflow (${built.length} step${built.length === 1 ? "" : "s"})`,
+        trigger_key: form.trigger_key,
+        action_key: "ai_draft_note",
+        action_config: {},
+        steps: built,
+      });
+    } else {
+      const action_config =
+        form.action_key === "webhook" ? { webhook_url: form.webhook_url.trim() }
+        : form.action_key === "email_owner" ? { subject: form.subject.trim() || `Automation: ${form.name.trim()}` }
+        : form.action_key === "email_customer" ? { subject: form.subject.trim() || undefined, prompt: form.prompt.trim() || "Write a short, warm email to this customer for this event." }
+        : { prompt: form.prompt.trim() || "Draft a short, useful note for this event." };
+      await createAutomation(org.id, {
+        name: form.name.trim(),
+        trigger: triggerLabel(form.trigger_key),
+        action: actionLabel(form.action_key),
+        trigger_key: form.trigger_key,
+        action_key: form.action_key,
+        action_config,
+      });
+    }
     setBusy(false);
     setForm({ name: "", trigger_key: "order.created", action_key: "ai_draft_note", prompt: "", webhook_url: "", subject: "" });
+    setSteps([newStepDraft()]);
+    setMultiStep(false);
     setAdding(false);
+    await load();
+  };
+
+  const remove = async (r: DbAutomation) => {
+    await deleteAutomation(r.id);
     await load();
   };
 
@@ -322,33 +367,110 @@ function DashboardView() {
                   {TRIGGER_OPTS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
                 </select>
               </label>
-              <label className="block text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">Do…</span>
-                <select value={form.action_key} onChange={(e) => setForm((f) => ({ ...f, action_key: e.target.value as ActionKey }))} className={AUTO_INPUT}>
-                  {ACTION_OPTS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
-                </select>
+              {!multiStep && (
+                <label className="block text-xs"><span className="mb-1 block uppercase tracking-wide text-muted-foreground">Do…</span>
+                  <select value={form.action_key} onChange={(e) => setForm((f) => ({ ...f, action_key: e.target.value as ActionKey }))} className={AUTO_INPUT}>
+                    {ACTION_OPTS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+                  </select>
+                </label>
+              )}
+              <label className={cn("flex cursor-pointer items-center gap-2 text-xs", multiStep ? "sm:col-span-2" : "")}>
+                <input type="checkbox" checked={multiStep} onChange={(e) => setMultiStep(e.target.checked)} className="size-4 accent-[oklch(0.84_0.14_84)]" />
+                <span className={multiStep ? "text-gold" : "text-muted-foreground"}>Multi-step workflow — sequence actions, add waits &amp; conditions</span>
               </label>
-              {form.action_key === "ai_draft_note" && (
-                <input value={form.prompt} onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))} placeholder="AI instruction (optional)" className={`${AUTO_INPUT} sm:col-span-2`} />
-              )}
-              {form.action_key === "webhook" && (
-                <input value={form.webhook_url} onChange={(e) => setForm((f) => ({ ...f, webhook_url: e.target.value }))} placeholder="Webhook URL (https://…)" className={`${AUTO_INPUT} sm:col-span-2`} />
-              )}
-              {form.action_key === "email_owner" && (
-                <input value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} placeholder="Email subject (optional)" className={`${AUTO_INPUT} sm:col-span-2`} />
-              )}
-              {form.action_key === "email_customer" && (
+
+              {!multiStep && (
                 <>
-                  <div className="flex items-start gap-2 rounded-xl border border-gold/25 bg-gold/5 p-3 text-xs text-foreground/85 sm:col-span-2">
-                    <Mail className="mt-0.5 size-3.5 shrink-0 text-gold" />
-                    This sends a real email to the customer's inbox as soon as the trigger fires — no review step. Test with "Run now" on a customer whose email you control first.
-                  </div>
-                  <input value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} placeholder="Email subject (optional)" className={AUTO_INPUT} />
-                  <input value={form.prompt} onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))} placeholder="What should the email say? (optional)" className={AUTO_INPUT} />
+                  {form.action_key === "ai_draft_note" && (
+                    <input value={form.prompt} onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))} placeholder="AI instruction (optional)" className={`${AUTO_INPUT} sm:col-span-2`} />
+                  )}
+                  {form.action_key === "webhook" && (
+                    <input value={form.webhook_url} onChange={(e) => setForm((f) => ({ ...f, webhook_url: e.target.value }))} placeholder="Webhook URL (https://…)" className={`${AUTO_INPUT} sm:col-span-2`} />
+                  )}
+                  {form.action_key === "email_owner" && (
+                    <input value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} placeholder="Email subject (optional)" className={`${AUTO_INPUT} sm:col-span-2`} />
+                  )}
+                  {form.action_key === "email_customer" && (
+                    <>
+                      <div className="flex items-start gap-2 rounded-xl border border-gold/25 bg-gold/5 p-3 text-xs text-foreground/85 sm:col-span-2">
+                        <Mail className="mt-0.5 size-3.5 shrink-0 text-gold" />
+                        This sends a real email to the customer's inbox as soon as the trigger fires — no review step. Test with "Run now" on a customer whose email you control first.
+                      </div>
+                      <input value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} placeholder="Email subject (optional)" className={AUTO_INPUT} />
+                      <input value={form.prompt} onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))} placeholder="What should the email say? (optional)" className={AUTO_INPUT} />
+                    </>
+                  )}
                 </>
               )}
+
+              {multiStep && (
+                <div className="space-y-2.5 rounded-xl border border-border bg-background/20 p-3 sm:col-span-2">
+                  <div className="flex items-start gap-2 rounded-xl border border-gold/25 bg-gold/5 p-3 text-xs text-foreground/85">
+                    <GitBranch className="mt-0.5 size-3.5 shrink-0 text-gold" />
+                    Steps run in order. A <b>wait</b> pauses the rest of the flow and resumes later on its own — no need to keep this open. A failed <b>condition</b> stops the flow there.
+                  </div>
+                  {steps.map((sd, i) => (
+                    <div key={sd.id} className="rounded-xl border border-border bg-background/30 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted-foreground">Step {i + 1}</span>
+                        <div className="flex items-center gap-2">
+                          <select value={sd.kind} onChange={(e) => updateStep(sd.id, { kind: e.target.value as StepKind })} className="rounded-lg border border-border bg-background/40 px-2 py-1 text-xs text-foreground outline-none focus:border-gold/50">
+                            <option value="action">Action</option>
+                            <option value="wait">Wait</option>
+                            <option value="condition">Condition</option>
+                          </select>
+                          <button onClick={() => removeStep(sd.id)} disabled={steps.length === 1} title="Remove step" className="grid size-7 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300 disabled:opacity-40"><X className="size-3.5" /></button>
+                        </div>
+                      </div>
+
+                      {sd.kind === "action" && (
+                        <div className="mt-2 space-y-2">
+                          <select value={sd.action_key} onChange={(e) => updateStep(sd.id, { action_key: e.target.value as ActionKey })} className={AUTO_INPUT}>
+                            {ACTION_OPTS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+                          </select>
+                          {sd.action_key === "webhook" && (
+                            <input value={sd.webhook_url} onChange={(e) => updateStep(sd.id, { webhook_url: e.target.value })} placeholder="Webhook URL (https://…)" className={AUTO_INPUT} />
+                          )}
+                          {(sd.action_key === "email_owner" || sd.action_key === "email_customer") && (
+                            <input value={sd.subject} onChange={(e) => updateStep(sd.id, { subject: e.target.value })} placeholder="Email subject (optional)" className={AUTO_INPUT} />
+                          )}
+                          {(sd.action_key === "ai_draft_note" || sd.action_key === "email_customer") && (
+                            <input value={sd.prompt} onChange={(e) => updateStep(sd.id, { prompt: e.target.value })} placeholder={sd.action_key === "email_customer" ? "What should the email say? (optional)" : "AI instruction (optional)"} className={AUTO_INPUT} />
+                          )}
+                        </div>
+                      )}
+
+                      {sd.kind === "wait" && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Wait</span>
+                          <input type="number" min={1} value={sd.hours} onChange={(e) => updateStep(sd.id, { hours: e.target.value })} className={cn(AUTO_INPUT, "w-24")} />
+                          <span className="text-xs text-muted-foreground">hours ({Math.round((Number(sd.hours) || 0) / 24 * 10) / 10} days) before continuing</span>
+                        </div>
+                      )}
+
+                      {sd.kind === "condition" && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Only continue if</span>
+                          <input value={sd.field} onChange={(e) => updateStep(sd.id, { field: e.target.value })} placeholder="field (e.g. total)" className={cn(AUTO_INPUT, "w-36")} />
+                          <select value={sd.op} onChange={(e) => updateStep(sd.id, { op: e.target.value as StepDraft["op"] })} className="rounded-xl border border-border bg-background/40 px-2 py-2.5 text-sm text-foreground outline-none focus:border-gold/50">
+                            {[">", "<", "=", ">=", "<="].map((o) => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                          <input type="number" value={sd.value} onChange={(e) => updateStep(sd.id, { value: e.target.value })} className={cn(AUTO_INPUT, "w-24")} />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => addStep("action")} className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40"><Plus className="size-3.5" /> Action</button>
+                    <button onClick={() => addStep("wait")} className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40"><Timer className="size-3.5" /> Wait</button>
+                    <button onClick={() => addStep("condition")} className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40"><Split className="size-3.5" /> Condition</button>
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-2 sm:col-span-2">
                 <button onClick={submit} disabled={busy || !form.name.trim()} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Create rule"}</button>
-                <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                <button onClick={() => { setAdding(false); setMultiStep(false); setSteps([newStepDraft()]); }} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
               </div>
             </div>
           )}
@@ -364,9 +486,9 @@ function DashboardView() {
               </div>
             )}
             {rules.map((r) => (
-              <div key={r.id} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.6fr_auto_auto]">
+              <div key={r.id} className="group grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.6fr_auto_auto_auto]">
                 <div className="flex items-center gap-3">
-                  <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass"><Workflow className="size-4 text-gold" /></span>
+                  <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass">{r.steps?.length ? <GitBranch className="size-4 text-gold" /> : <Workflow className="size-4 text-gold" />}</span>
                   <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{r.name}</p><p className="truncate text-xs text-muted-foreground">{r.trigger ?? "—"}{r.action ? ` → ${r.action}` : ""}</p></div>
                 </div>
                 <span className="hidden text-xs text-muted-foreground sm:block">{formatNum(r.runs)} runs</span>
@@ -375,6 +497,9 @@ function DashboardView() {
                 </button>
                 <button onClick={() => toggle(r)} className={cn("relative h-6 w-11 shrink-0 rounded-full border transition-colors", r.enabled ? "border-transparent" : "border-border bg-background/40")} style={r.enabled ? { background: "var(--gradient-gold)" } : undefined} aria-pressed={r.enabled} title={r.enabled ? "Enabled — click to pause" : "Paused — click to enable"}>
                   <span className="absolute top-0.5 size-5 rounded-full transition-all" style={{ left: r.enabled ? "1.375rem" : "0.125rem", background: r.enabled ? "oklch(0.2 0.02 70)" : "oklch(0.8 0.015 85)" }} />
+                </button>
+                <button onClick={() => remove(r)} aria-label="Delete rule" className="hidden size-7 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground opacity-0 transition-opacity hover:border-rose-400/50 hover:text-rose-300 group-hover:opacity-100 sm:grid">
+                  <X className="size-3.5" />
                 </button>
               </div>
             ))}

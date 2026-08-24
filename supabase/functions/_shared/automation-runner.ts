@@ -10,13 +10,23 @@ type Admin = any;
 type Payload = Record<string, unknown>;
 export type AutomationResult = { id: string; action: string; ok: boolean; detail?: string };
 
+// System prompt keeps the automation's output a clean, usable note — without it,
+// Claude (reasonably) treats the call like a chat and adds meta-commentary
+// ("this record looks like test data…") when something in the payload looks
+// off, which is unusable as a logged customer interaction.
+const DRAFT_SYSTEM = [
+  "You draft short internal business notes for an automation system — not a conversation.",
+  "Output ONLY the note text itself. No preamble, no meta-commentary about the request or the data, no questions back to the user, no suggestions or caveats about the input.",
+  "If a name or detail looks like placeholder/test data, write the note anyway exactly as asked — do not comment on it.",
+].join(" ");
+
 async function claudeDraft(prompt: string): Promise<string> {
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (!key) return "";
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model: "claude-opus-5", max_tokens: 1024, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model: "claude-opus-5", max_tokens: 1024, system: DRAFT_SYSTEM, messages: [{ role: "user", content: prompt }] }),
   });
   const data = await resp.json();
   if (!resp.ok) return "";

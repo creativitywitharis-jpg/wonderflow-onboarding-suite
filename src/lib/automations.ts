@@ -1,7 +1,7 @@
 import { supabase } from "./supabase";
 
 export type TriggerKey = "order.created" | "customer.created" | "manual";
-export type ActionKey = "ai_draft_note" | "email_owner" | "webhook";
+export type ActionKey = "ai_draft_note" | "email_owner" | "email_customer" | "webhook";
 
 export type DbAutomation = {
   id: string;

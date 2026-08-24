@@ -167,9 +167,10 @@ const TRIGGER_OPTS: { key: TriggerKey; label: string }[] = [
   { key: "customer.created", label: "A new customer is added" },
   { key: "manual", label: "Manually (run on demand)" },
 ];
-const ACTION_OPTS: { key: ActionKey; label: string }[] = [
-  { key: "ai_draft_note", label: "Draft an AI note" },
+const ACTION_OPTS: { key: ActionKey; label: string; sends?: boolean }[] = [
+  { key: "ai_draft_note", label: "Draft an AI note (internal only)" },
   { key: "email_owner", label: "Email the owner" },
+  { key: "email_customer", label: "Email the customer", sends: true },
   { key: "webhook", label: "Call a webhook" },
 ];
 const triggerLabel = (k: string) => TRIGGER_OPTS.find((t) => t.key === k)?.label ?? k;
@@ -223,6 +224,7 @@ function DashboardView() {
     const action_config =
       form.action_key === "webhook" ? { webhook_url: form.webhook_url.trim() }
       : form.action_key === "email_owner" ? { subject: form.subject.trim() || `Automation: ${form.name.trim()}` }
+      : form.action_key === "email_customer" ? { subject: form.subject.trim() || undefined, prompt: form.prompt.trim() || "Write a short, warm email to this customer for this event." }
       : { prompt: form.prompt.trim() || "Draft a short, useful note for this event." };
     await createAutomation(org.id, {
       name: form.name.trim(),
@@ -305,6 +307,16 @@ function DashboardView() {
               )}
               {form.action_key === "email_owner" && (
                 <input value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} placeholder="Email subject (optional)" className={`${AUTO_INPUT} sm:col-span-2`} />
+              )}
+              {form.action_key === "email_customer" && (
+                <>
+                  <div className="flex items-start gap-2 rounded-xl border border-gold/25 bg-gold/5 p-3 text-xs text-foreground/85 sm:col-span-2">
+                    <Mail className="mt-0.5 size-3.5 shrink-0 text-gold" />
+                    This sends a real email to the customer's inbox as soon as the trigger fires — no review step. Test with "Run now" on a customer whose email you control first.
+                  </div>
+                  <input value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} placeholder="Email subject (optional)" className={AUTO_INPUT} />
+                  <input value={form.prompt} onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))} placeholder="What should the email say? (optional)" className={AUTO_INPUT} />
+                </>
               )}
               <div className="flex gap-2 sm:col-span-2">
                 <button onClick={submit} disabled={busy || !form.name.trim()} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Create rule"}</button>

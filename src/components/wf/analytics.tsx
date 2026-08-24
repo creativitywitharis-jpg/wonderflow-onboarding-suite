@@ -32,6 +32,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Donut, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
+import { askAI } from "@/lib/ai";
 import { listCustomers, type DbCustomer } from "@/lib/customers";
 import { listOrders, type DbOrder } from "@/lib/orders";
 import { listInvoices, listExpenses, type DbInvoice, type DbExpense } from "@/lib/finance";
@@ -563,24 +564,45 @@ const reportTypes = ["Executive summary", "Monthly business review", "Sales deep
 const periods = ["This month", "Last month", "This quarter", "Year to date"];
 
 function ReportView() {
+  const a = useAnalytics();
+  const { org } = useOrg();
   const [type, setType] = useState(reportTypes[0]);
   const [period, setPeriod] = useState(periods[0]);
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<{ title: string; body: string[] } | null>(null);
-  const generate = () => {
-    setBusy(true); setReport(null);
-    window.setTimeout(() => {
+
+  const generate = async () => {
+    setBusy(true);
+    setReport(null);
+    const netMargin = a.revenue > 0 ? Math.round((a.netProfit / a.revenue) * 100) : 0;
+    const seg = a.custSegments[0];
+    const snapshot = [
+      `Business: ${org?.name || "the business"}${org?.industry ? ` (${org.industry})` : ""}. Report window: ${period}.`,
+      `Revenue collected $${formatNum(a.revenue)} across ${a.ordersCount} orders + ${a.paidInvoicesCount} paid invoices (avg $${formatNum(a.aov)}).`,
+      `Outstanding AR $${formatNum(a.outstanding)}. Expenses $${formatNum(a.expensesTotal)}, net profit $${formatNum(a.netProfit)} (${netMargin}% margin).`,
+      `${a.customersCount} customers, avg LTV $${formatNum(a.avgLtv)}${seg ? `, largest segment ${seg.label} (${seg.share}%)` : ""}.`,
+      a.topProducts.length ? `Top products: ${a.topProducts.map((p) => p.label).join(", ")}.` : "",
+      a.salesChannels.length ? `Channels: ${a.salesChannels.map((c) => `${c.label} ${c.share}%`).join(", ")}.` : "",
+    ].filter(Boolean).join(" ");
+
+    try {
+      const reply = await askAI(
+        [{ role: "user", content: `${snapshot}\n\nWrite a "${type}" for ${period} as 3–4 short paragraphs: (1) headline performance citing the real numbers, (2) what's driving it (segments/channels/products), (3) any risk or gap, (4) one or two concrete recommendations. Be specific and concise. No headings, no preamble.` }],
+        { id: org?.id, name: org?.name, industry: org?.industry },
+      );
+      const body = reply.split(/\n{2,}/).map((p) => p.replace(/\n/g, " ").trim()).filter(Boolean);
+      setReport({ title: `${type} — ${period}`, body: body.length ? body : [reply] });
+    } catch {
       setReport({
         title: `${type} — ${period}`,
         body: [
-          `Overall, the business is healthy and growing. Revenue reached $374k (${period.toLowerCase()}), up 6.3% with a 68% gross margin and 26% net margin.`,
-          `Growth is led by the Champions segment and the Online store channel (58% of sales). New customer acquisition rose 18%, while churn held at a low 2.4%.`,
-          `Operationally, fulfilment is at 97% on-time and inventory turnover improved to 5.4x. One supply risk (Solstice Freight) is being mitigated via dual-sourcing.`,
-          `Recommendation: pursue the referral engine and an 8% price increase on hero SKUs — combined projected lift of +9% MRR at low risk.`,
+          `Revenue collected is $${formatNum(a.revenue)} with $${formatNum(a.outstanding)} still outstanding; expenses are $${formatNum(a.expensesTotal)}, leaving net $${formatNum(a.netProfit)} (${netMargin}% margin).`,
+          `You're tracking ${a.customersCount} customer${a.customersCount === 1 ? "" : "s"}${seg ? `, led by the ${seg.label} segment (${seg.share}%)` : ""}.`,
+          `AI narrative is unavailable right now — this is a summary of your live numbers.`,
         ],
       });
-      setBusy(false);
-    }, 1400);
+    }
+    setBusy(false);
   };
   return (
     <div className="grid gap-4 lg:grid-cols-[20rem_1fr]">
@@ -604,7 +626,7 @@ function ReportView() {
         <GlassCard className="flex min-h-[26rem] flex-col p-6">
           <div className="flex items-center justify-between">
             <SectionLabel icon={FileText}>Report</SectionLabel>
-            {report && !busy && <button className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 hover:border-gold/40"><Download className="size-3.5" /> Export</button>}
+            {report && !busy && <button onClick={() => window.print()} className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 hover:border-gold/40"><Download className="size-3.5" /> Export</button>}
           </div>
           <div className="mt-5 flex-1">
             {busy && <div className="typing flex items-center gap-1 py-4"><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /></div>}

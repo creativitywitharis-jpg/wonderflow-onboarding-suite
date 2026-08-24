@@ -39,7 +39,7 @@ export type NewAutomation = {
 
 const COLS = "id,name,trigger,action,trigger_key,action_key,action_config,steps,enabled,runs,last_run,created_at";
 
-// `steps` ships in migration 0026 and isn't in the generated Database types
+// `steps` ships in migration 0027 and isn't in the generated Database types
 // until Lovable regenerates them, so reach the table through an untyped handle.
 // Runtime behaviour is unchanged once types regenerate.
 const automationsTable = () => (supabase as unknown as { from: (t: string) => any }).from("automations");

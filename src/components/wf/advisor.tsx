@@ -37,6 +37,7 @@ import { listCustomers } from "@/lib/customers";
 import { listInvoices, listExpenses } from "@/lib/finance";
 import { buildOpportunities, buildRisks, buildPredictions, OPP_CATEGORIES, type Opportunity, type Prediction, type Risk, type Sev } from "@/lib/advisor";
 import { addMemory, deleteMemory, listMemory, MEMORY_CATEGORIES, type DbMemory } from "@/lib/memory";
+import { addDecision, deleteDecision, listDecisions, setDecisionStatus, DECISION_STATUSES, type DbDecision, type DecisionStatus } from "@/lib/decisions";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -69,13 +70,6 @@ const initiatives = [
 
 const sevColor: Record<Sev, string> = { High: "oklch(0.68 0.16 25)", Medium: "oklch(0.84 0.14 84)", Low: "oklch(0.72 0.14 155)" };
 
-const decisions = [
-  { title: "Increased ad spend on referral channel", date: "Jul 28", status: "Implemented", impact: "+$14k", result: "ROAS 5.2x, on track" },
-  { title: "Renegotiated packaging with Northwind", date: "Jul 21", status: "Implemented", impact: "-9% COGS", result: "Saving $3.1k/mo" },
-  { title: "Paused underperforming SMS campaign", date: "Jul 14", status: "Monitoring", impact: "neutral", result: "Reallocated to email" },
-  { title: "Hired a part-time ops lead", date: "Jul 2", status: "Monitoring", impact: "+capacity", result: "Fulfillment SLA improving" },
-  { title: "Delayed wholesale expansion", date: "Jun 20", status: "Paused", impact: "risk-off", result: "Revisit in Q4" },
-];
 const decisionStatusColor: Record<string, string> = { Implemented: "oklch(0.72 0.14 155)", Monitoring: "oklch(0.84 0.14 84)", Paused: "oklch(0.7 0.02 250)" };
 
 const memoryIcon: Record<string, LucideIcon> = { "Business context": Target, Goals: Rocket, Preferences: Sparkles, Learned: Lightbulb };
@@ -521,27 +515,80 @@ function RisksView() {
 }
 
 function DecisionsView() {
+  const { org } = useOrg();
+  const [items, setItems] = useState<DbDecision[] | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [form, setForm] = useState({ title: "", status: "Monitoring" as DecisionStatus, impact: "", result: "" });
+
+  const load = useCallback(async () => {
+    if (org?.id) setItems(await listDecisions(org.id));
+    else setItems([]);
+  }, [org?.id]);
+  useEffect(() => { void load(); }, [load]);
+
+  const add = async () => {
+    if (!org || !form.title.trim() || busy) return;
+    setBusy(true);
+    setNote(null);
+    const { error } = await addDecision(org.id, { title: form.title, status: form.status, impact: form.impact.trim() || null, result: form.result.trim() || null });
+    if (error) setNote("Couldn't save — the decisions table (migration 0025) may not be applied yet.");
+    else { setForm({ title: "", status: "Monitoring", impact: "", result: "" }); setAdding(false); }
+    await load();
+    setBusy(false);
+  };
+  const changeStatus = async (id: string, status: DecisionStatus) => { await setDecisionStatus(id, status); await load(); };
+  const remove = async (id: string) => { await deleteDecision(id); await load(); };
+
+  const list = items ?? [];
   return (
     <Reveal>
       <GlassCard className="p-6">
         <div className="flex items-center justify-between">
           <SectionLabel icon={History}>Decision history</SectionLabel>
-          <span className="text-xs text-muted-foreground">a journal of what you decided & why</span>
+          <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}><Plus className="size-3.5" /> Log a decision</button>
         </div>
+
+        {adding && (
+          <div className="mt-4 space-y-2.5 rounded-2xl border border-border bg-background/30 p-4">
+            <input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="What did you decide? *" className="w-full rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
+            <div className="grid gap-2.5 sm:grid-cols-2">
+              <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as DecisionStatus }))} className="rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50">
+                {DECISION_STATUSES.map((s) => <option key={s}>{s}</option>)}
+              </select>
+              <input value={form.impact} onChange={(e) => setForm((f) => ({ ...f, impact: e.target.value }))} placeholder="Expected impact (e.g. +$5k/mo)" className="rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
+            </div>
+            <input value={form.result} onChange={(e) => setForm((f) => ({ ...f, result: e.target.value }))} placeholder="Rationale / outcome so far" className="w-full rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
+            <div className="flex gap-2">
+              <button onClick={add} disabled={busy || !form.title.trim()} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Save decision"}</button>
+              <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+            </div>
+          </div>
+        )}
+        {note && <p className="mt-3 text-xs text-gold">{note}</p>}
+
         <div className="mt-5 space-y-0">
-          {decisions.map((d, i) => (
-            <div key={d.title} className="flex gap-4">
+          {items === null && <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>}
+          {items !== null && list.length === 0 && !adding && (
+            <p className="py-8 text-center text-sm text-muted-foreground">No decisions logged yet. Record the calls you make and track how they play out.</p>
+          )}
+          {list.map((d, i) => (
+            <div key={d.id} className="group flex gap-4">
               <div className="flex flex-col items-center">
                 <span className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-glass"><CheckCircle2 className="size-4" style={{ color: decisionStatusColor[d.status] }} /></span>
-                {i < decisions.length - 1 && <span className="my-1 w-px flex-1 bg-border" />}
+                {i < list.length - 1 && <span className="my-1 w-px flex-1 bg-border" />}
               </div>
-              <div className="pb-6">
+              <div className="flex-1 pb-6">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-sm font-medium text-foreground">{d.title}</p>
-                  <span className="rounded-full px-2 py-0.5 text-[0.6rem] font-medium" style={{ color: decisionStatusColor[d.status], background: `color-mix(in oklch, ${decisionStatusColor[d.status]} 14%, transparent)` }}>{d.status}</span>
+                  <select value={d.status} onChange={(e) => changeStatus(d.id, e.target.value as DecisionStatus)} className="rounded-full border-0 px-2 py-0.5 text-[0.6rem] font-medium outline-none" style={{ color: decisionStatusColor[d.status], background: `color-mix(in oklch, ${decisionStatusColor[d.status]} 14%, transparent)` }}>
+                    {DECISION_STATUSES.map((s) => <option key={s} value={s} className="bg-background text-foreground">{s}</option>)}
+                  </select>
+                  <button onClick={() => remove(d.id)} aria-label="Delete" className="ml-auto text-muted-foreground opacity-0 transition-opacity hover:text-rose-300 group-hover:opacity-100"><Trash2 className="size-3.5" /></button>
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground"><Clock className="mr-1 inline size-3" />{d.date} · impact {d.impact}</p>
-                <p className="mt-1.5 text-sm text-foreground/80">{d.result}</p>
+                <p className="mt-1 text-xs text-muted-foreground"><Clock className="mr-1 inline size-3" />{d.decided_at}{d.impact ? ` · impact ${d.impact}` : ""}</p>
+                {d.result && <p className="mt-1.5 text-sm text-foreground/80">{d.result}</p>}
               </div>
             </div>
           ))}

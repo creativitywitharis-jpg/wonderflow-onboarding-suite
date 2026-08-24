@@ -38,6 +38,7 @@ import { listInvoices, listExpenses } from "@/lib/finance";
 import { buildOpportunities, buildRisks, buildPredictions, OPP_CATEGORIES, type Opportunity, type Prediction, type Risk, type Sev } from "@/lib/advisor";
 import { addMemory, deleteMemory, listMemory, MEMORY_CATEGORIES, type DbMemory } from "@/lib/memory";
 import { addDecision, deleteDecision, listDecisions, setDecisionStatus, DECISION_STATUSES, type DbDecision, type DecisionStatus } from "@/lib/decisions";
+import { addInitiative, deleteInitiative, listInitiatives, progressOf, updateInitiative, INITIATIVE_STATUSES, type DbInitiative, type InitiativeStatus, type Step } from "@/lib/initiatives";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -60,13 +61,6 @@ const views: { key: ViewKey; label: string; icon: LucideIcon }[] = [
 
 type Scenario = "Conservative" | "Base" | "Aggressive";
 const scenarioFactor: Record<Scenario, number> = { Conservative: 0.9, Base: 1, Aggressive: 1.12 };
-
-const initiatives = [
-  { title: "Launch referral engine", progress: 35, impact: 88, effort: 40, status: "In progress", plan: ["Design reward tiers", "Build referral tracking", "Seed with Champions", "Measure & iterate"] },
-  { title: "Expand into wholesale", progress: 12, impact: 82, effort: 78, status: "Planning", plan: ["Validate 5 target accounts", "Build wholesale pricing", "Hire a partnerships lead"] },
-  { title: "Automate fulfillment", progress: 64, impact: 70, effort: 45, status: "In progress", plan: ["Integrate 3PL", "Auto-route orders", "SLA monitoring"] },
-  { title: "Raise a seed round", progress: 5, impact: 90, effort: 85, status: "Exploring", plan: ["Tighten metrics story", "Build data room", "Warm-intro 12 funds"] },
-];
 
 const sevColor: Record<Sev, string> = { High: "oklch(0.68 0.16 25)", Medium: "oklch(0.84 0.14 84)", Low: "oklch(0.72 0.14 155)" };
 
@@ -363,51 +357,143 @@ function PredictionsView() {
 }
 
 function StrategyView() {
-  const [selected, setSelected] = useState(initiatives[0].title);
-  const cur = initiatives.find((x) => x.title === selected) ?? initiatives[0];
-  return (
-    <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
-      <Reveal>
-        <GlassCard className="p-6">
-          <SectionLabel icon={Compass}>Strategic initiatives</SectionLabel>
-          <div className="mt-4 space-y-2">
-            {initiatives.map((s) => (
-              <button key={s.title} onClick={() => setSelected(s.title)} className={cn("w-full rounded-2xl border p-4 text-left transition-colors", s.title === selected ? "border-gold/40 bg-glass" : "border-border bg-background/30 hover:border-gold/30")}>
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-foreground">{s.title}</p>
-                  <span className="rounded-full bg-glass px-2 py-0.5 text-[0.65rem] text-muted-foreground">{s.status}</span>
-                </div>
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="flex-1"><Bar value={s.progress} /></div>
-                  <span className="text-xs tabular-nums text-gold">{s.progress}%</span>
-                </div>
-                <div className="mt-2 flex gap-4 text-[0.7rem] text-muted-foreground"><span>Impact {s.impact}</span><span>Effort {s.effort}</span></div>
-              </button>
-            ))}
-          </div>
-        </GlassCard>
-      </Reveal>
+  const { org } = useOrg();
+  const [items, setItems] = useState<DbInitiative[] | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [form, setForm] = useState({ title: "", impact: 70, effort: 40, steps: "" });
+  const [stepText, setStepText] = useState("");
 
-      <Reveal delay={80}>
-        <GlassCard className="glass-strong sticky top-6 overflow-hidden p-6">
-          <div className="veil pointer-events-none absolute inset-0 opacity-50" />
-          <div className="relative">
-            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-gold"><BrainCircuit className="size-3.5" /> AI strategy plan</p>
-            <h3 className="mt-3 text-lg font-semibold" style={{ fontFamily: "var(--font-display)" }}>{cur.title}</h3>
-            <ol className="mt-4 space-y-3">
-              {cur.plan.map((step, i) => (
-                <li key={step} className="flex items-start gap-3">
-                  <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-[0.65rem] font-semibold text-primary-foreground" style={{ background: "var(--gradient-gold)" }}>{i + 1}</span>
-                  <span className="text-sm text-foreground/85">{step}</span>
-                </li>
-              ))}
-            </ol>
-            <button className="mt-5 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
-              <Rocket className="size-4" /> Commit to this plan
-            </button>
-          </div>
-        </GlassCard>
-      </Reveal>
+  const load = useCallback(async () => {
+    if (!org?.id) { setItems([]); return; }
+    const rows = await listInitiatives(org.id);
+    setItems(rows);
+    setSelected((s) => s ?? rows[0]?.id ?? null);
+  }, [org?.id]);
+  useEffect(() => { void load(); }, [load]);
+
+  const list = items ?? [];
+  const cur = list.find((x) => x.id === selected) ?? list[0] ?? null;
+
+  const add = async () => {
+    if (!org || !form.title.trim() || busy) return;
+    setBusy(true);
+    setNote(null);
+    const steps: Step[] = form.steps.split("\n").map((t) => t.trim()).filter(Boolean).map((text) => ({ text, done: false }));
+    const { data, error } = await addInitiative(org.id, { title: form.title, impact: form.impact, effort: form.effort, steps });
+    if (error) setNote("Couldn't save — the initiatives table (migration 0026) may not be applied yet.");
+    else { setForm({ title: "", impact: 70, effort: 40, steps: "" }); setAdding(false); if (data) setSelected(data.id); }
+    await load();
+    setBusy(false);
+  };
+  const toggleStep = async (init: DbInitiative, idx: number) => {
+    const steps = init.steps.map((s, i) => (i === idx ? { ...s, done: !s.done } : s));
+    setItems((prev) => (prev ? prev.map((x) => (x.id === init.id ? { ...x, steps } : x)) : prev));
+    await updateInitiative(init.id, { steps });
+  };
+  const addStep = async (init: DbInitiative) => {
+    const t = stepText.trim();
+    if (!t) return;
+    const steps = [...init.steps, { text: t, done: false }];
+    setStepText("");
+    setItems((prev) => (prev ? prev.map((x) => (x.id === init.id ? { ...x, steps } : x)) : prev));
+    await updateInitiative(init.id, { steps });
+  };
+  const changeStatus = async (init: DbInitiative, status: InitiativeStatus) => {
+    setItems((prev) => (prev ? prev.map((x) => (x.id === init.id ? { ...x, status } : x)) : prev));
+    await updateInitiative(init.id, { status });
+  };
+  const remove = async (id: string) => { await deleteInitiative(id); setSelected(null); await load(); };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}><Plus className="size-3.5" /> New initiative</button>
+      </div>
+      {adding && (
+        <Reveal>
+          <GlassCard className="space-y-2.5 p-5">
+            <input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Initiative name (e.g. Land 5 retainer clients) *" className="w-full rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
+            <div className="grid gap-2.5 sm:grid-cols-2">
+              <label className="text-xs text-muted-foreground">Impact (0–100)<input type="number" min={0} max={100} value={form.impact} onChange={(e) => setForm((f) => ({ ...f, impact: Number(e.target.value) }))} className="mt-1 w-full rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" /></label>
+              <label className="text-xs text-muted-foreground">Effort (0–100)<input type="number" min={0} max={100} value={form.effort} onChange={(e) => setForm((f) => ({ ...f, effort: Number(e.target.value) }))} className="mt-1 w-full rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" /></label>
+            </div>
+            <label className="block text-xs text-muted-foreground">Plan — one step per line<textarea value={form.steps} onChange={(e) => setForm((f) => ({ ...f, steps: e.target.value }))} rows={4} placeholder={"Draft the offer\nBuild a target list\nBook 10 intro calls"} className="mt-1 w-full rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" /></label>
+            <div className="flex gap-2">
+              <button onClick={add} disabled={busy || !form.title.trim()} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Create initiative"}</button>
+              <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+            </div>
+          </GlassCard>
+        </Reveal>
+      )}
+      {note && <p className="text-xs text-gold">{note}</p>}
+
+      {items !== null && list.length === 0 && !adding && (
+        <GlassCard className="p-8 text-center text-sm text-muted-foreground">No initiatives yet. Add your first strategic bet and track it to done.</GlassCard>
+      )}
+
+      {list.length > 0 && (
+        <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+          <Reveal>
+            <GlassCard className="p-6">
+              <SectionLabel icon={Compass}>Strategic initiatives</SectionLabel>
+              <div className="mt-4 space-y-2">
+                {list.map((s) => {
+                  const prog = progressOf(s.steps);
+                  return (
+                    <button key={s.id} onClick={() => setSelected(s.id)} className={cn("w-full rounded-2xl border p-4 text-left transition-colors", s.id === cur?.id ? "border-gold/40 bg-glass" : "border-border bg-background/30 hover:border-gold/30")}>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground">{s.title}</p>
+                        <span className="shrink-0 rounded-full bg-glass px-2 py-0.5 text-[0.65rem] text-muted-foreground">{s.status}</span>
+                      </div>
+                      <div className="mt-3 flex items-center gap-3">
+                        <div className="flex-1"><Bar value={prog} /></div>
+                        <span className="text-xs tabular-nums text-gold">{prog}%</span>
+                      </div>
+                      <div className="mt-2 flex gap-4 text-[0.7rem] text-muted-foreground"><span>Impact {s.impact}</span><span>Effort {s.effort}</span></div>
+                    </button>
+                  );
+                })}
+              </div>
+            </GlassCard>
+          </Reveal>
+
+          {cur && (
+            <Reveal delay={80}>
+              <GlassCard className="glass-strong sticky top-6 overflow-hidden p-6">
+                <div className="veil pointer-events-none absolute inset-0 opacity-50" />
+                <div className="relative">
+                  <div className="flex items-center justify-between">
+                    <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-gold"><BrainCircuit className="size-3.5" /> Strategy plan</p>
+                    <button onClick={() => remove(cur.id)} aria-label="Delete initiative" className="text-muted-foreground hover:text-rose-300"><Trash2 className="size-3.5" /></button>
+                  </div>
+                  <h3 className="mt-3 text-lg font-semibold" style={{ fontFamily: "var(--font-display)" }}>{cur.title}</h3>
+                  <select value={cur.status} onChange={(e) => changeStatus(cur, e.target.value as InitiativeStatus)} className="mt-2 rounded-full border border-border bg-background/40 px-3 py-1 text-xs text-foreground outline-none focus:border-gold/50">
+                    {INITIATIVE_STATUSES.map((s) => <option key={s}>{s}</option>)}
+                  </select>
+                  <ol className="mt-4 space-y-2.5">
+                    {cur.steps.map((step, i) => (
+                      <li key={i}>
+                        <button onClick={() => toggleStep(cur, i)} className="flex w-full items-start gap-3 text-left">
+                          <span className={cn("mt-0.5 grid size-6 shrink-0 place-items-center rounded-full border text-[0.65rem] font-semibold transition-colors", step.done ? "border-transparent text-primary-foreground" : "border-border text-muted-foreground")} style={step.done ? { background: "var(--gradient-gold)" } : undefined}>{step.done ? <CheckCircle2 className="size-3.5" /> : i + 1}</span>
+                          <span className={cn("text-sm", step.done ? "text-muted-foreground line-through" : "text-foreground/85")}>{step.text}</span>
+                        </button>
+                      </li>
+                    ))}
+                    {cur.steps.length === 0 && <li className="text-sm text-muted-foreground">No steps yet — add the first below.</li>}
+                  </ol>
+                  <div className="mt-4 flex gap-2">
+                    <input value={stepText} onChange={(e) => setStepText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addStep(cur)} placeholder="Add a step…" className="min-w-0 flex-1 rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
+                    <button onClick={() => addStep(cur)} className="rounded-xl border border-gold/30 bg-glass px-3 py-2 text-xs font-semibold text-foreground/85 hover:border-gold/60"><Plus className="size-4" /></button>
+                  </div>
+                </div>
+              </GlassCard>
+            </Reveal>
+          )}
+        </div>
+      )}
     </div>
   );
 }

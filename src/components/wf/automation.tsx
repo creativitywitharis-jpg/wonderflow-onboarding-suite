@@ -27,6 +27,7 @@ import {
   Users,
   Wand2,
   Workflow,
+  X,
   XCircle,
   Zap,
   type LucideIcon,
@@ -128,29 +129,56 @@ function Connector() {
   );
 }
 
-function BranchConnector() {
-  return (
-    <svg viewBox="0 0 200 40" className="h-10 w-full" preserveAspectRatio="none" aria-hidden>
-      <path d="M100 0 L100 14 Q100 20 60 20 L20 20 Q10 20 10 28 L10 40" fill="none" stroke="oklch(0.84 0.14 84 / 0.4)" strokeWidth="1.5" />
-      <path d="M100 0 L100 14 Q100 20 140 20 L180 20 Q190 20 190 28 L190 40" fill="none" stroke="oklch(0.84 0.14 84 / 0.4)" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function Node({ kind, icon: Icon, title, subtitle }: { kind: BlockKind; icon: LucideIcon; title: string; subtitle: string }) {
+function Node({
+  kind,
+  icon: Icon,
+  title,
+  subtitle,
+  selected,
+  onSelect,
+  onRemove,
+}: {
+  kind: BlockKind;
+  icon: LucideIcon;
+  title: string;
+  subtitle: string;
+  selected?: boolean;
+  onSelect?: () => void;
+  onRemove?: () => void;
+}) {
   const color = kindColor[kind];
+  const interactive = !!onSelect;
   return (
-    <div className="lift relative w-full max-w-sm rounded-2xl border bg-background/50 p-4 backdrop-blur" style={{ borderColor: `color-mix(in oklch, ${color} 40%, var(--color-border))` }}>
+    <div
+      onClick={onSelect}
+      className={cn(
+        "group lift relative w-full max-w-sm rounded-2xl border bg-background/50 p-4 backdrop-blur transition-shadow",
+        interactive && "cursor-pointer",
+      )}
+      style={{
+        borderColor: selected ? color : `color-mix(in oklch, ${color} 40%, var(--color-border))`,
+        boxShadow: selected ? `0 0 0 2px color-mix(in oklch, ${color} 55%, transparent)` : undefined,
+      }}
+    >
       <span className="absolute left-0 top-4 h-8 w-1 rounded-r" style={{ background: color }} />
       <div className="flex items-center gap-3 pl-2">
         <span className="grid size-9 shrink-0 place-items-center rounded-xl" style={{ background: `color-mix(in oklch, ${color} 16%, transparent)` }}>
           <Icon className="size-4" style={{ color }} />
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-[0.65rem] uppercase tracking-wide" style={{ color }}>{kind}</p>
           <p className="truncate text-sm font-medium text-foreground">{title}</p>
           <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
         </div>
+        {onRemove && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            aria-label="Remove"
+            className="shrink-0 rounded-lg p-1 text-muted-foreground opacity-0 transition-opacity hover:text-rose-300 group-hover:opacity-100"
+          >
+            <X className="size-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -357,25 +385,48 @@ function DashboardView() {
   );
 }
 
+type CanvasBlock = { id: string; kind: BlockKind; label: string; icon: LucideIcon; subtitle: string };
+let blockSeq = 0;
+const newBlockId = () => `b${++blockSeq}`;
+
+const DEFAULT_CANVAS: CanvasBlock[] = [
+  { id: newBlockId(), kind: "trigger", label: "Stock below reorder point", icon: Boxes, subtitle: "Trigger" },
+  { id: newBlockId(), kind: "decision", label: "AI checks demand forecast", icon: Brain, subtitle: "Decision" },
+  { id: newBlockId(), kind: "action", label: "Create purchase order", icon: FileText, subtitle: "Action" },
+  { id: newBlockId(), kind: "action", label: "Notify supplier & Slack", icon: Bell, subtitle: "Action" },
+];
+
 function BuilderView() {
-  const [extraActions, setExtraActions] = useState<{ label: string; icon: LucideIcon }[]>([]);
-  const addAction = (label: string, icon: LucideIcon) => setExtraActions((a) => [...a, { label, icon }]);
+  const [blocks, setBlocks] = useState<CanvasBlock[]>(DEFAULT_CANVAS);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const addBlock = (kind: BlockKind, label: string, icon: LucideIcon) => {
+    const block: CanvasBlock = { id: newBlockId(), kind, label, icon, subtitle: kind === "trigger" ? "Trigger" : kind === "decision" ? "Decision" : "Action" };
+    setBlocks((bs) => (kind === "trigger" ? [block, ...bs.filter((b) => b.kind !== "trigger")] : [...bs, block]));
+    setSelected(block.id);
+  };
+  const removeBlock = (id: string) => {
+    setBlocks((bs) => bs.filter((b) => b.id !== id));
+    setSelected((s) => (s === id ? null : s));
+  };
+  const clearCanvas = () => { setBlocks([]); setSelected(null); };
+
   return (
     <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
       {/* palette */}
       <Reveal>
         <GlassCard className="p-5">
           <p className="text-sm font-semibold">Blocks</p>
-          <p className="mt-1 text-xs text-muted-foreground">Click an action to add it to the flow.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Click a block to add it to the flow below. Click a block on the canvas to select it; hover it to remove.</p>
           {(["trigger", "decision", "action"] as BlockKind[]).map((kind) => (
             <div key={kind} className="mt-4">
-              <p className="mb-2 text-[0.65rem] uppercase tracking-wide" style={{ color: kindColor[kind] }}>{kind}s</p>
+              <p className="mb-2 text-[0.65rem] uppercase tracking-wide" style={{ color: kindColor[kind] }}>{kind}s{kind === "trigger" ? " (one active)" : ""}</p>
               <div className="space-y-1.5">
                 {palette.filter((b) => b.kind === kind).map((b) => (
-                  <button key={b.label} onClick={() => kind === "action" && addAction(b.label, b.icon)} className={cn("flex w-full items-center gap-2.5 rounded-xl border border-border bg-background/30 px-3 py-2 text-left text-sm text-foreground/85 transition-colors", kind === "action" ? "hover:border-gold/40 hover:text-foreground" : "opacity-90")}>
+                  <button key={b.label} onClick={() => addBlock(kind, b.label, b.icon)} className="flex w-full items-center gap-2.5 rounded-xl border border-border bg-background/30 px-3 py-2 text-left text-sm text-foreground/85 transition-colors hover:border-gold/40 hover:text-foreground">
                     <b.icon className="size-4" style={{ color: kindColor[b.kind] }} />
                     <span className="flex-1 truncate">{b.label}</span>
-                    {kind === "action" && <Plus className="size-3.5 text-muted-foreground" />}
+                    <Plus className="size-3.5 text-muted-foreground" />
                   </button>
                 ))}
               </div>
@@ -387,31 +438,24 @@ function BuilderView() {
       {/* canvas */}
       <Reveal delay={80}>
         <GlassCard className="p-6">
-          <div className="flex items-center justify-between">
-            <SectionLabel icon={GitBranch}>Low-stock auto-reorder</SectionLabel>
-            <button className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}><Zap className="size-3.5" /> Activate</button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <SectionLabel icon={GitBranch}>Workflow sandbox</SectionLabel>
+            <div className="flex gap-2">
+              <button onClick={clearCanvas} disabled={blocks.length === 0} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40">Clear</button>
+              <button title="This canvas is a visual sandbox — build & run real automations from the Dashboard tab" className="flex items-center gap-2 rounded-full border border-gold/30 bg-glass px-4 py-2 text-xs font-semibold text-foreground/85 transition-colors hover:border-gold/60"><Zap className="size-3.5 text-gold" /> Preview only</button>
+            </div>
           </div>
 
           <div className="mt-6 flex flex-col items-center">
-            <Node kind="trigger" icon={Boxes} title="Stock below reorder point" subtitle="Trigger · inventory" />
-            <Connector />
-            <Node kind="decision" icon={Brain} title="AI checks demand forecast" subtitle="Decision · is demand rising?" />
-            <BranchConnector />
-            <div className="grid w-full gap-4 sm:grid-cols-2">
-              <div className="flex flex-col items-center gap-0">
-                <span className="mb-2 rounded-full px-2 py-0.5 text-[0.6rem] font-medium text-emerald-300" style={{ background: "oklch(0.72 0.14 155 / 14%)" }}>If rising</span>
-                <Node kind="action" icon={FileText} title="Create purchase order" subtitle="Action · Northwind Supply" />
-                <Connector />
-                <Node kind="action" icon={Bell} title="Notify supplier & Slack" subtitle="Action · #ops channel" />
-                {extraActions.map((a, i) => (
-                  <div key={i} className="flex w-full flex-col items-center"><Connector /><Node kind="action" icon={a.icon} title={a.label} subtitle="Action · added" /></div>
-                ))}
+            {blocks.length === 0 && (
+              <p className="py-10 text-center text-sm text-muted-foreground">Empty canvas — click a block on the left to start building.</p>
+            )}
+            {blocks.map((b, i) => (
+              <div key={b.id} className="flex w-full flex-col items-center">
+                {i > 0 && <Connector />}
+                <Node kind={b.kind} icon={b.icon} title={b.label} subtitle={b.subtitle} selected={selected === b.id} onSelect={() => setSelected((s) => (s === b.id ? null : b.id))} onRemove={() => removeBlock(b.id)} />
               </div>
-              <div className="flex flex-col items-center">
-                <span className="mb-2 rounded-full px-2 py-0.5 text-[0.6rem] font-medium text-muted-foreground" style={{ background: "oklch(0.7 0.02 250 / 14%)" }}>If flat</span>
-                <Node kind="action" icon={Timer} title="Add to watchlist" subtitle="Action · recheck in 3 days" />
-              </div>
-            </div>
+            ))}
           </div>
         </GlassCard>
       </Reveal>

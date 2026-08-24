@@ -34,7 +34,7 @@ import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
 import { listCustomers } from "@/lib/customers";
 import { listInvoices, listExpenses } from "@/lib/finance";
-import { buildOpportunities, buildRisks, OPP_CATEGORIES, type Opportunity, type Risk, type Sev } from "@/lib/advisor";
+import { buildOpportunities, buildRisks, buildPredictions, OPP_CATEGORIES, type Opportunity, type Prediction, type Risk, type Sev } from "@/lib/advisor";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -57,13 +57,6 @@ const views: { key: ViewKey; label: string; icon: LucideIcon }[] = [
 
 type Scenario = "Conservative" | "Base" | "Aggressive";
 const scenarioFactor: Record<Scenario, number> = { Conservative: 0.9, Base: 1, Aggressive: 1.12 };
-
-const predictions = [
-  { k: "Revenue next quarter", base: 1320000, prefix: "$", dir: 1, conf: 86, trend: [58, 62, 60, 66, 70, 74, 82] },
-  { k: "Customers (end of Q)", base: 3480, dir: 1, conf: 82, trend: [22, 30, 37, 46, 55, 64, 74] },
-  { k: "Cash runway", base: 14.2, suffix: " mo", decimals: 1, dir: 1, conf: 91, trend: [10, 11, 11, 12, 13, 13, 14] },
-  { k: "Projected churn", base: 3.2, suffix: "%", decimals: 1, dir: -1, conf: 79, trend: [5, 4.6, 4.2, 3.9, 3.6, 3.4, 3.2] },
-];
 
 const initiatives = [
   { title: "Launch referral engine", progress: 35, impact: 88, effort: 40, status: "In progress", plan: ["Design reward tiers", "Build referral tracking", "Seed with Champions", "Measure & iterate"] },
@@ -326,16 +319,25 @@ function ChatView() {
 }
 
 function PredictionsView() {
+  const { org } = useOrg();
   const [scenario, setScenario] = useState<Scenario>("Base");
   const factor = scenarioFactor[scenario];
   const value = (base: number, dir: number) => (dir >= 0 ? base * factor : base / factor);
+  const [preds, setPreds] = useState<Prediction[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (org?.id) buildPredictions(org.id).then((r) => alive && setPreds(r)).catch(() => alive && setPreds([]));
+    else setPreds([]);
+    return () => { alive = false; };
+  }, [org?.id]);
+  const hasData = (preds ?? []).some((p) => p.base !== 0);
   return (
     <div className="space-y-5">
       <Reveal>
         <GlassCard className="flex flex-wrap items-center justify-between gap-3 p-5">
           <div className="flex items-center gap-3">
             <span className="orb grid size-9 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Sparkles className="size-4" stroke="oklch(0.2 0.02 70)" /></span>
-            <p className="text-sm text-foreground/85">AI forecast · next 90 days · updated nightly</p>
+            <p className="text-sm text-foreground/85">Projected at your current run-rate · sharpens as history builds</p>
           </div>
           <div className="flex gap-1.5">
             {(Object.keys(scenarioFactor) as Scenario[]).map((s) => (
@@ -345,27 +347,33 @@ function PredictionsView() {
         </GlassCard>
       </Reveal>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        {predictions.map((p, i) => (
-          <Reveal key={p.k} delay={i * 60}>
-            <GlassCard className="p-6">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{p.k}</p>
-                  <p className="mt-2 text-3xl font-semibold tabular-nums">
-                    {p.prefix}{formatNum(value(p.base, p.dir), p.decimals ?? 0)}{p.suffix}
-                  </p>
+      {preds === null && <GlassCard className="p-8 text-center text-sm text-muted-foreground">Building your projections…</GlassCard>}
+      {preds !== null && !hasData && (
+        <GlassCard className="p-8 text-center text-sm text-muted-foreground">Record some paid invoices and expenses, and I'll project your revenue, cash and collections here.</GlassCard>
+      )}
+      {hasData && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {(preds ?? []).map((p, i) => (
+            <Reveal key={p.k} delay={i * 60}>
+              <GlassCard className="p-6">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{p.k}</p>
+                    <p className="mt-2 text-3xl font-semibold tabular-nums">
+                      {p.prefix}{formatNum(value(p.base, p.dir), p.decimals ?? 0)}{p.suffix}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground"><Gauge className="size-3.5 text-gold" /> {p.conf}%</div>
+                    <p className="text-[0.6rem] uppercase tracking-wide text-muted-foreground">confidence</p>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground"><Gauge className="size-3.5 text-gold" /> {p.conf}%</div>
-                  <p className="text-[0.6rem] uppercase tracking-wide text-muted-foreground">confidence</p>
-                </div>
-              </div>
-              <div className="mt-3"><Sparkline data={p.trend} id={`pred-${i}`} /></div>
-            </GlassCard>
-          </Reveal>
-        ))}
-      </div>
+                <div className="mt-3"><Sparkline data={p.trend} id={`pred-${i}`} /></div>
+              </GlassCard>
+            </Reveal>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

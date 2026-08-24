@@ -85,6 +85,60 @@ export type Database = {
           },
         ]
       }
+      automation_runs: {
+        Row: {
+          automation_id: string
+          created_at: string
+          event: string
+          id: string
+          org_id: string
+          payload: Json
+          resume_at: string
+          status: string
+          step_index: number
+          updated_at: string
+        }
+        Insert: {
+          automation_id: string
+          created_at?: string
+          event: string
+          id?: string
+          org_id: string
+          payload?: Json
+          resume_at: string
+          status?: string
+          step_index?: number
+          updated_at?: string
+        }
+        Update: {
+          automation_id?: string
+          created_at?: string
+          event?: string
+          id?: string
+          org_id?: string
+          payload?: Json
+          resume_at?: string
+          status?: string
+          step_index?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automation_runs_automation_id_fkey"
+            columns: ["automation_id"]
+            isOneToOne: false
+            referencedRelation: "automations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automation_runs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       automations: {
         Row: {
           action: string | null
@@ -98,6 +152,7 @@ export type Database = {
           name: string
           org_id: string
           runs: number
+          steps: Json | null
           trigger: string | null
           trigger_key: string
           updated_at: string
@@ -114,6 +169,7 @@ export type Database = {
           name: string
           org_id: string
           runs?: number
+          steps?: Json | null
           trigger?: string | null
           trigger_key?: string
           updated_at?: string
@@ -130,6 +186,7 @@ export type Database = {
           name?: string
           org_id?: string
           runs?: number
+          steps?: Json | null
           trigger?: string | null
           trigger_key?: string
           updated_at?: string

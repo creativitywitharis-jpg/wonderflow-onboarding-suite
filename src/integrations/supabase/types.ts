@@ -85,6 +85,57 @@ export type Database = {
           },
         ]
       }
+      automation_executions: {
+        Row: {
+          automation_id: string | null
+          automation_name: string
+          created_at: string
+          detail: string | null
+          duration_ms: number | null
+          event: string
+          id: string
+          ok: boolean
+          org_id: string
+        }
+        Insert: {
+          automation_id?: string | null
+          automation_name: string
+          created_at?: string
+          detail?: string | null
+          duration_ms?: number | null
+          event: string
+          id?: string
+          ok?: boolean
+          org_id: string
+        }
+        Update: {
+          automation_id?: string | null
+          automation_name?: string
+          created_at?: string
+          detail?: string | null
+          duration_ms?: number | null
+          event?: string
+          id?: string
+          ok?: boolean
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automation_executions_automation_id_fkey"
+            columns: ["automation_id"]
+            isOneToOne: false
+            referencedRelation: "automations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automation_executions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       automation_runs: {
         Row: {
           automation_id: string

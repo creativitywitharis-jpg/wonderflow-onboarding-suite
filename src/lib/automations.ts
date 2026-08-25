@@ -1,6 +1,6 @@
 import { supabase } from "./supabase";
 
-export type TriggerKey = "order.created" | "customer.created" | "manual";
+export type TriggerKey = "order.created" | "customer.created" | "invoice.paid" | "manual";
 export type ActionKey = "ai_draft_note" | "email_owner" | "email_customer" | "webhook";
 
 // A multi-step workflow, run in order. `action` steps reuse the same 4 action
@@ -44,9 +44,9 @@ const COLS = "id,name,trigger,action,trigger_key,action_key,action_config,steps,
 // Runtime behaviour is unchanged once types regenerate.
 const automationsTable = () => (supabase as unknown as { from: (t: string) => any }).from("automations");
 
-/** WonderFlow events. A subset (TriggerKey) can drive automations; all of them
- *  fan out to subscribed outbound webhooks. */
-export type WfEvent = TriggerKey | "invoice.paid";
+/** WonderFlow events — all of them can drive automations and fan out to
+ *  subscribed outbound webhooks. */
+export type WfEvent = TriggerKey;
 
 /** Fire an event so the engine runs any matching automations AND delivers to
  *  subscribed outbound webhooks. Best-effort + non-blocking. */

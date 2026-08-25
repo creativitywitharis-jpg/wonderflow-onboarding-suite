@@ -195,6 +195,7 @@ const AUTO_INPUT = "w-full rounded-xl border border-border bg-background/40 px-3
 const TRIGGER_OPTS: { key: TriggerKey; label: string }[] = [
   { key: "order.created", label: "A new order is created" },
   { key: "customer.created", label: "A new customer is added" },
+  { key: "invoice.paid", label: "An invoice is paid" },
   { key: "manual", label: "Manually (run on demand)" },
 ];
 const ACTION_OPTS: { key: ActionKey; label: string; sends?: boolean }[] = [
@@ -690,7 +691,7 @@ const CREATOR_SCHEMA_PROMPT = `You are generating a WonderFlow automation workfl
 
 {
   "name": "short rule name (a few words)",
-  "trigger_key": "order.created" | "customer.created" | "manual",
+  "trigger_key": "order.created" | "customer.created" | "invoice.paid" | "manual",
   "steps": [
     { "kind": "action", "action_key": "ai_draft_note", "action_config": { "prompt": "what the AI should write" } }
     | { "kind": "action", "action_key": "email_owner", "action_config": { "subject": "email subject" } }
@@ -701,7 +702,7 @@ const CREATOR_SCHEMA_PROMPT = `You are generating a WonderFlow automation workfl
   ]
 }
 
-Rules: trigger_key must be one of the 3 listed (use "manual" if nothing else fits). Use "wait" for any delay described (convert to hours — e.g. "1 week" = 168, "3 days" = 72, "30 seconds" = 0.0083). Use "condition" only for a numeric threshold on the trigger's payload (e.g. order total). Keep steps to what's actually needed — 1 to 5 steps. Every action needs a sensible action_config for its type. Describe this automation: `;
+Rules: trigger_key must be one of the 4 listed (use "manual" if nothing else fits). Use "wait" for any delay described (convert to hours — e.g. "1 week" = 168, "3 days" = 72, "30 seconds" = 0.0083). Use "condition" only for a numeric threshold on the trigger's payload (e.g. order total). Keep steps to what's actually needed — 1 to 5 steps. Every action needs a sensible action_config for its type. Describe this automation: `;
 
 type ParsedStep =
   | { kind: "action"; action_key: ActionKey; action_config?: Record<string, unknown> }
@@ -715,7 +716,7 @@ function parseWorkflowJson(raw: string): ParsedWorkflow {
   if (!obj || typeof obj !== "object") throw new Error("Not a JSON object");
   const steps = Array.isArray(obj.steps) ? obj.steps : [];
   if (steps.length === 0) throw new Error("No steps returned");
-  const validTriggers: TriggerKey[] = ["order.created", "customer.created", "manual"];
+  const validTriggers: TriggerKey[] = ["order.created", "customer.created", "invoice.paid", "manual"];
   const validActions: ActionKey[] = ["ai_draft_note", "email_owner", "email_customer", "webhook"];
   return {
     name: typeof obj.name === "string" && obj.name.trim() ? obj.name.trim() : "AI-generated automation",

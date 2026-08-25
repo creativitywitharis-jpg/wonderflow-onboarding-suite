@@ -188,14 +188,6 @@ function historyTimeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-const runsSeries = [180, 210, 195, 240, 268, 255, 290, 312, 305, 340, 358, 382];
-const topAutomations = [
-  { label: "Abandoned cart recovery", value: 340 },
-  { label: "New customer welcome", value: 142 },
-  { label: "Low-stock auto-reorder", value: 128 },
-  { label: "Refund approval flow", value: 54 },
-];
-
 /* ──────────────────────────────────────────────────────────────────────
  * Builder pieces
  * ─────────────────────────────────────────────────────────────────── */
@@ -1125,7 +1117,7 @@ function HistoryView() {
 
 function AnalyticsBars({ data }: { data: number[] }) {
   const { ref, inView } = useInView();
-  const max = Math.max(...data);
+  const max = Math.max(1, ...data);
   return (
     <div ref={ref} className="flex items-end gap-1.5" style={{ height: 160 }}>
       {data.map((v, i) => (
@@ -1138,20 +1130,59 @@ function AnalyticsBars({ data }: { data: number[] }) {
 }
 
 function AnalyticsView() {
-  const maxTop = Math.max(...topAutomations.map((t) => t.value));
+  const { org } = useOrg();
+  const [log, setLog] = useState<DbExecution[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (org?.id) listExecutions(org.id, 500).then((r) => alive && setLog(r)).catch(() => alive && setLog([]));
+    else setLog([]);
+    return () => { alive = false; };
+  }, [org?.id]);
+
+  if (log === null) return <GlassCard className="p-10 text-center text-sm text-muted-foreground">Loading…</GlassCard>;
+  if (log.length === 0) {
+    return (
+      <GlassCard className="p-10 text-center text-sm text-muted-foreground">
+        No executions logged yet — run an automation (Dashboard → Run, or let one fire naturally) and analytics builds up here.
+      </GlassCard>
+    );
+  }
+
+  const total = log.length;
+  const failed = log.filter((e) => !e.ok).length;
+  const successRate = Math.round(((total - failed) / total) * 1000) / 10;
+  const durations = log.map((e) => e.duration_ms).filter((d): d is number => d != null);
+  const avgRunSec = durations.length ? Math.round((durations.reduce((a, d) => a + d, 0) / durations.length / 1000) * 10) / 10 : 0;
+
+  // Runs per day, last 14 days.
+  const days = 14;
+  const buckets = new Array(days).fill(0);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  for (const e of log) {
+    const d = new Date(e.created_at); d.setHours(0, 0, 0, 0);
+    const diff = Math.round((today.getTime() - d.getTime()) / 864e5);
+    if (diff >= 0 && diff < days) buckets[days - 1 - diff]++;
+  }
+
+  // Top automations by run count.
+  const counts = new Map<string, number>();
+  for (const e of log) counts.set(e.automation_name, (counts.get(e.automation_name) ?? 0) + 1);
+  const topAutomations = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([label, value]) => ({ label, value }));
+  const maxTop = Math.max(1, ...topAutomations.map((t) => t.value));
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Total runs (mo)" value={3482} delta="14%" icon={Zap} />
-        <StatTile label="Time saved (mo)" value={186} suffix=" hrs" delta="22 hrs" icon={Timer} />
-        <StatTile label="Success rate" value={98.2} suffix="%" decimals={1} delta="0.4 pts" icon={CheckCircle2} />
-        <StatTile label="Avg run time" value={1.8} suffix="s" decimals={1} delta="0.3s" positive icon={Clock} />
+        <StatTile label="Total runs" value={total} icon={Zap} />
+        <StatTile label="Failed runs" value={failed} positive={failed === 0} icon={XCircle} />
+        <StatTile label="Success rate" value={successRate} suffix="%" decimals={1} positive={successRate >= 90} icon={CheckCircle2} />
+        <StatTile label="Avg run time" value={avgRunSec} suffix="s" decimals={1} icon={Clock} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
         <Reveal className="h-full">
           <GlassCard className="flex h-full flex-col p-6">
-            <div className="flex items-baseline justify-between"><SectionLabel icon={BarChart3}>Runs per month</SectionLabel><span className="text-xs text-muted-foreground">Last 12 months</span></div>
-            <div className="mt-6"><AnalyticsBars data={runsSeries} /></div>
+            <div className="flex items-baseline justify-between"><SectionLabel icon={BarChart3}>Runs per day</SectionLabel><span className="text-xs text-muted-foreground">Last 14 days</span></div>
+            <div className="mt-6"><AnalyticsBars data={buckets} /></div>
           </GlassCard>
         </Reveal>
         <Reveal className="h-full" delay={80}>

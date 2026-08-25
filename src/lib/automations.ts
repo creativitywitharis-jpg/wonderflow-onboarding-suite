@@ -9,7 +9,8 @@ export type ActionKey = "ai_draft_note" | "email_owner" | "email_customer" | "we
 export type WorkflowStep =
   | { kind: "action"; action_key: ActionKey; action_config?: Record<string, unknown> }
   | { kind: "wait"; hours: number }
-  | { kind: "condition"; field: string; op: ">" | "<" | "=" | ">=" | "<="; value: number };
+  | { kind: "condition"; field: string; op: ">" | "<" | "=" | ">=" | "<="; value: number }
+  | { kind: "approval"; note?: string };
 
 export type DbAutomation = {
   id: string;
@@ -113,4 +114,60 @@ export async function updateAutomation(id: string, patch: Partial<NewAutomation>
 export async function deleteAutomation(id: string) {
   const { error } = await supabase.from("automations").delete().eq("id", id);
   return { error: error ? new Error(error.message) : null };
+}
+
+// ── Approval steps ─────────────────────────────────────────────────────────
+// A multi-step workflow can pause on an "approval" step (see WorkflowStep) —
+// these are queued in automation_runs and resolved here, one at a time, by an
+// org member. Ships in migration 0028; reach automation_runs untyped until
+// Lovable regenerates DB types.
+const runsTable = () => (supabase as unknown as { from: (t: string) => any }).from("automation_runs");
+
+export type ApprovalRun = {
+  id: string;
+  automation_id: string;
+  event: string;
+  payload: Record<string, unknown>;
+  note: string | null;
+  status: "pending_approval" | "approved" | "rejected";
+  created_at: string;
+  resolved_at: string | null;
+  automations: { name: string } | null;
+};
+
+const APPROVAL_COLS = "id,automation_id,event,payload,note,status,created_at,resolved_at,automations(name)";
+
+/** Runs currently awaiting a human decision, oldest first (first in, first reviewed). */
+export async function listPendingApprovals(orgId: string): Promise<ApprovalRun[]> {
+  const { data, error } = await runsTable()
+    .select(APPROVAL_COLS)
+    .eq("org_id", orgId)
+    .eq("status", "pending_approval")
+    .order("created_at", { ascending: true });
+  if (error) return [];
+  return (data as ApprovalRun[]) ?? [];
+}
+
+/** Recently resolved approvals (approved or rejected), newest first — for the stats + "just resolved" list. */
+export async function listResolvedApprovals(orgId: string, limit = 20): Promise<ApprovalRun[]> {
+  const { data, error } = await runsTable()
+    .select(APPROVAL_COLS)
+    .eq("org_id", orgId)
+    .in("status", ["approved", "rejected"])
+    .order("resolved_at", { ascending: false })
+    .limit(limit);
+  if (error) return [];
+  return (data as ApprovalRun[]) ?? [];
+}
+
+/** Approve or reject a paused run. Approving continues the workflow (which may pause again). */
+export async function resolveApproval(runId: string, approve: boolean): Promise<{ ok: boolean; detail?: string; error?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke("resolve-automation-approval", { body: { runId, approve } });
+    if (error) return { ok: false, error: error.message };
+    if (data?.error) return { ok: false, error: data.error as string };
+    return { ok: !!data?.ok, detail: data?.detail as string | undefined };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "failed" };
+  }
 }

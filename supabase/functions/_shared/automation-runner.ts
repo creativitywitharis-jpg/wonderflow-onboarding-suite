@@ -16,6 +16,9 @@
 //   2. The public automation-tick endpoint, which any external scheduler
 //      (Zapier/n8n/GitHub Actions/cron) can ping to flush due steps org-wide —
 //      useful for a dormant org where nothing else would trigger a check.
+// An `approval` step pauses the same way, but resumes only on a human decision
+// (Approve/Reject in Automation → Approval center) via resolveApprovalRun —
+// never on a timer.
 
 // deno-lint-ignore no-explicit-any
 type Admin = any;
@@ -25,7 +28,8 @@ export type AutomationResult = { id: string; action: string; ok: boolean; detail
 export type WorkflowStep =
   | { kind: "action"; action_key: string; action_config?: Record<string, unknown> }
   | { kind: "wait"; hours: number }
-  | { kind: "condition"; field: string; op: ">" | "<" | "=" | ">=" | "<="; value: number };
+  | { kind: "condition"; field: string; op: ">" | "<" | "=" | ">=" | "<="; value: number }
+  | { kind: "approval"; note?: string };
 
 // System prompt keeps the automation's output a clean, usable note — without it,
 // Claude (reasonably) treats the call like a chat and adds meta-commentary
@@ -196,6 +200,19 @@ async function runStepSequence(
       }
       continue;
     }
+    if (step.kind === "approval") {
+      await admin.from("automation_runs").insert({
+        org_id: orgId,
+        automation_id: automation.id,
+        event,
+        payload,
+        step_index: i + 1,
+        status: "pending_approval",
+        resume_at: new Date().toISOString(),
+        note: step.note ?? null,
+      });
+      return { ok: true, detail: `awaiting approval (step ${i + 2}/${steps.length})`, paused: true };
+    }
     // action step
     const res = await runAction(admin, orgId, event, payload, automation.name, step.action_key, step.action_config ?? {});
     if (!res.ok) return { ok: false, detail: `step ${i + 1} failed: ${res.detail}` };
@@ -230,6 +247,38 @@ export async function resumeDueRuns(admin: Admin, orgId?: string): Promise<numbe
     processed++;
   }
   return processed;
+}
+
+/**
+ * Resolve a run paused on an `approval` step. Rejecting stops the workflow
+ * permanently. Approving continues the sequence from where it paused — which
+ * may itself hit another wait/approval/condition and pause again (a new
+ * automation_runs row), or run to completion.
+ */
+export async function resolveApprovalRun(
+  admin: Admin,
+  runId: string,
+  approve: boolean,
+  resolvedBy: string | null,
+): Promise<{ ok: boolean; detail: string }> {
+  const { data: runRow } = await admin.from("automation_runs").select("*").eq("id", runId).maybeSingle();
+  const run = runRow as Record<string, unknown> | null;
+  if (!run) return { ok: false, detail: "run not found" };
+  if (run.status !== "pending_approval") return { ok: false, detail: `already resolved (status: ${run.status})` };
+
+  if (!approve) {
+    await admin.from("automation_runs").update({ status: "rejected", resolved_by: resolvedBy, resolved_at: new Date().toISOString() }).eq("id", runId);
+    return { ok: true, detail: "rejected" };
+  }
+
+  const { data: autoRow } = await admin.from("automations").select("id,name,enabled,steps").eq("id", run.automation_id).maybeSingle();
+  const automation = autoRow as { id: string; name: string; enabled: boolean; steps: WorkflowStep[] | null } | null;
+  let result: { ok: boolean; detail: string } = { ok: true, detail: "workflow completed" };
+  if (automation?.enabled && automation.steps?.length) {
+    result = await runStepSequence(admin, run.org_id as string, automation, run.event as string, (run.payload as Payload) ?? {}, automation.steps, run.step_index as number);
+  }
+  await admin.from("automation_runs").update({ status: "approved", resolved_by: resolvedBy, resolved_at: new Date().toISOString() }).eq("id", runId);
+  return result;
 }
 
 export async function runAutomations(

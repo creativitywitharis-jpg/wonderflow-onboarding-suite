@@ -40,7 +40,7 @@ import { Bar, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
-import { createAutomation, deleteAutomation, insertAutomations, listAutomations, runAutomationNow, setAutomationEnabled, updateAutomation, type ActionKey, type DbAutomation, type NewAutomation, type TriggerKey, type WorkflowStep } from "@/lib/automations";
+import { createAutomation, deleteAutomation, insertAutomations, listAutomations, listPendingApprovals, listResolvedApprovals, resolveApproval, runAutomationNow, setAutomationEnabled, updateAutomation, type ActionKey, type ApprovalRun, type DbAutomation, type NewAutomation, type TriggerKey, type WorkflowStep } from "@/lib/automations";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -164,13 +164,6 @@ const templates: Template[] = [
   },
 ];
 
-const seedApprovals = [
-  { title: "Reorder 120 units of Golden Hour Balm", detail: "$5,040 to Northwind Supply · stock in 3 days", from: "Low-stock auto-reorder", icon: FileText },
-  { title: "Issue refund to Sam Idris", detail: "$142 · order #10422 · defective item", from: "Refund approval flow", icon: DollarSign },
-  { title: "Send win-back offer to 148 dormant customers", detail: "20% off · projected +$31k", from: "Churn-risk alert", icon: Mail },
-  { title: "Increase referral ad budget by $500", detail: "ROAS 5.2x · projected +$2.6k", from: "Growth optimizer", icon: Zap },
-];
-
 const historyLog = [
   { name: "Abandoned cart recovery", trigger: "Cart abandoned", status: "success", dur: "1.2s", time: "3m ago" },
   { name: "Low-stock auto-reorder", trigger: "Stock < reorder point", status: "approval", dur: "—", time: "12m ago" },
@@ -281,7 +274,7 @@ const ACTION_OPTS: { key: ActionKey; label: string; sends?: boolean }[] = [
 const triggerLabel = (k: string) => TRIGGER_OPTS.find((t) => t.key === k)?.label ?? k;
 const actionLabel = (k: string) => ACTION_OPTS.find((a) => a.key === k)?.label ?? k;
 
-type StepKind = "action" | "wait" | "condition";
+type StepKind = "action" | "wait" | "condition" | "approval";
 type WaitUnit = "seconds" | "minutes" | "hours" | "days" | "weeks" | "months" | "years";
 const WAIT_UNITS: { key: WaitUnit; label: string; toHours: number }[] = [
   { key: "seconds", label: "Seconds", toHours: 1 / 3600 },
@@ -294,17 +287,18 @@ const WAIT_UNITS: { key: WaitUnit; label: string; toHours: number }[] = [
 ];
 const waitUnitHours = (unit: WaitUnit) => WAIT_UNITS.find((u) => u.key === unit)?.toHours ?? 1;
 
-type StepDraft = { id: string; kind: StepKind; action_key: ActionKey; prompt: string; subject: string; webhook_url: string; waitAmount: string; waitUnit: WaitUnit; field: string; op: "<" | ">" | "=" | ">=" | "<="; value: string };
+type StepDraft = { id: string; kind: StepKind; action_key: ActionKey; prompt: string; subject: string; webhook_url: string; waitAmount: string; waitUnit: WaitUnit; field: string; op: "<" | ">" | "=" | ">=" | "<="; value: string; note: string };
 // A rule handed off from the AI creator into the Dashboard's create form.
 type PrefillDraft = { name: string; trigger_key: TriggerKey; steps: StepDraft[] };
 let stepSeq = 0;
 const newStepDraft = (kind: StepKind = "action"): StepDraft => ({
-  id: `s${++stepSeq}`, kind, action_key: "ai_draft_note", prompt: "", subject: "", webhook_url: "", waitAmount: "1", waitUnit: "hours", field: "total", op: ">", value: "0",
+  id: `s${++stepSeq}`, kind, action_key: "ai_draft_note", prompt: "", subject: "", webhook_url: "", waitAmount: "1", waitUnit: "hours", field: "total", op: ">", value: "0", note: "",
 });
 function draftsToSteps(drafts: StepDraft[]): WorkflowStep[] {
   return drafts.map((sd) => {
     if (sd.kind === "wait") return { kind: "wait", hours: Math.max(0, (Number(sd.waitAmount) || 0) * waitUnitHours(sd.waitUnit)) };
     if (sd.kind === "condition") return { kind: "condition", field: sd.field.trim() || "total", op: sd.op, value: Number(sd.value) || 0 };
+    if (sd.kind === "approval") return { kind: "approval", note: sd.note.trim() || undefined };
     const action_config =
       sd.action_key === "webhook" ? { webhook_url: sd.webhook_url.trim() }
       : sd.action_key === "email_owner" ? { subject: sd.subject.trim() || undefined }
@@ -335,6 +329,7 @@ function stepsToDrafts(stepsIn: WorkflowStep[]): StepDraft[] {
     const base = newStepDraft(s.kind);
     if (s.kind === "wait") return { ...base, ...hoursToDraft(s.hours) };
     if (s.kind === "condition") return { ...base, field: s.field, op: s.op, value: String(s.value) };
+    if (s.kind === "approval") return { ...base, note: s.note ?? "" };
     const cfg = s.action_config ?? {};
     return {
       ...base,
@@ -580,6 +575,7 @@ function DashboardView({ prefill, onConsumePrefill }: { prefill: PrefillDraft | 
                             <option value="action">Action</option>
                             <option value="wait">Wait</option>
                             <option value="condition">Condition</option>
+                            <option value="approval">Approval</option>
                           </select>
                           <button onClick={() => removeStep(sd.id)} disabled={steps.length === 1} title="Remove step" className="grid size-7 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300 disabled:opacity-40"><X className="size-3.5" /></button>
                         </div>
@@ -623,12 +619,20 @@ function DashboardView({ prefill, onConsumePrefill }: { prefill: PrefillDraft | 
                           <input type="number" value={sd.value} onChange={(e) => updateStep(sd.id, { value: e.target.value })} className={cn(AUTO_INPUT, "w-24")} />
                         </div>
                       )}
+
+                      {sd.kind === "approval" && (
+                        <div className="mt-2 space-y-1.5">
+                          <input value={sd.note} onChange={(e) => updateStep(sd.id, { note: e.target.value })} placeholder="What should the approver decide on? (optional)" className={AUTO_INPUT} />
+                          <p className="text-[0.7rem] text-muted-foreground">Pauses here until someone approves or rejects it in the Approval center. Approving continues to the next step; rejecting stops the workflow.</p>
+                        </div>
+                      )}
                     </div>
                   ))}
                   <div className="flex flex-wrap gap-2">
                     <button onClick={() => addStep("action")} className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40"><Plus className="size-3.5" /> Action</button>
                     <button onClick={() => addStep("wait")} className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40"><Timer className="size-3.5" /> Wait</button>
                     <button onClick={() => addStep("condition")} className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40"><Split className="size-3.5" /> Condition</button>
+                    <button onClick={() => addStep("approval")} className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40"><ClipboardCheck className="size-3.5" /> Approval</button>
                   </div>
                 </div>
               )}
@@ -773,15 +777,17 @@ const CREATOR_SCHEMA_PROMPT = `You are generating a WonderFlow automation workfl
     | { "kind": "action", "action_key": "webhook", "action_config": { "webhook_url": "https://..." } }
     | { "kind": "wait", "hours": <number> }
     | { "kind": "condition", "field": "total", "op": ">" | "<" | "=" | ">=" | "<=", "value": <number> }
+    | { "kind": "approval", "note": "what the approver should decide on" }
   ]
 }
 
-Rules: trigger_key must be one of the 4 listed (use "manual" if nothing else fits). Use "wait" for any delay described (convert to hours — e.g. "1 week" = 168, "3 days" = 72, "30 seconds" = 0.0083). Use "condition" only for a numeric threshold on the trigger's payload (e.g. order total). Keep steps to what's actually needed — 1 to 5 steps. Every action needs a sensible action_config for its type. Describe this automation: `;
+Rules: trigger_key must be one of the 4 listed (use "manual" if nothing else fits). Use "wait" for any delay described (convert to hours — e.g. "1 week" = 168, "3 days" = 72, "30 seconds" = 0.0083). Use "condition" only for a numeric threshold on the trigger's payload (e.g. order total). Use "approval" when the description asks for a human to review/approve/sign off before continuing (e.g. "ask me before...", "route for approval"). Keep steps to what's actually needed — 1 to 5 steps. Every action needs a sensible action_config for its type. Describe this automation: `;
 
 type ParsedStep =
   | { kind: "action"; action_key: ActionKey; action_config?: Record<string, unknown> }
   | { kind: "wait"; hours: number }
-  | { kind: "condition"; field: string; op: "<" | ">" | "=" | ">=" | "<="; value: number };
+  | { kind: "condition"; field: string; op: "<" | ">" | "=" | ">=" | "<="; value: number }
+  | { kind: "approval"; note?: string };
 type ParsedWorkflow = { name: string; trigger_key: TriggerKey; steps: ParsedStep[] };
 
 function parseWorkflowJson(raw: string): ParsedWorkflow {
@@ -798,6 +804,7 @@ function parseWorkflowJson(raw: string): ParsedWorkflow {
     steps: steps.map((s: Record<string, unknown>): ParsedStep => {
       if (s.kind === "wait") return { kind: "wait", hours: Math.max(1 / 3600, Number(s.hours) || 1) };
       if (s.kind === "condition") return { kind: "condition", field: typeof s.field === "string" ? s.field : "total", op: (["<", ">", "=", ">=", "<="].includes(s.op as string) ? s.op : ">") as "<" | ">" | "=" | ">=" | "<=", value: Number(s.value) || 0 };
+      if (s.kind === "approval") return { kind: "approval", note: typeof s.note === "string" ? s.note : undefined };
       const action_key = validActions.includes(s.action_key as ActionKey) ? (s.action_key as ActionKey) : "ai_draft_note";
       return { kind: "action", action_key, action_config: (s.action_config as Record<string, unknown>) ?? {} };
     }),
@@ -808,6 +815,7 @@ const stepKindMeta: Record<StepKind, { icon: LucideIcon; label: string }> = {
   action: { icon: Send, label: "action" },
   wait: { icon: Timer, label: "wait" },
   condition: { icon: Split, label: "condition" },
+  approval: { icon: ClipboardCheck, label: "approval" },
 };
 const actionKindMeta: Record<ActionKey, { icon: LucideIcon; label: string }> = {
   ai_draft_note: { icon: FileText, label: "Draft an AI note" },
@@ -822,6 +830,7 @@ function describeParsedStep(s: ParsedStep): { icon: LucideIcon; kind: BlockKind;
     return { icon: Timer, kind: "action", title: `Wait ${label}`, subtitle: "wait · pauses the sequence" };
   }
   if (s.kind === "condition") return { icon: Split, kind: "decision", title: `If ${s.field} ${s.op} ${s.value}`, subtitle: "condition · stops if false" };
+  if (s.kind === "approval") return { icon: ClipboardCheck, kind: "decision", title: s.note ? `Approve: ${s.note}` : "Wait for approval", subtitle: "approval · pauses for a human decision" };
   const m = actionKindMeta[s.action_key];
   const cfg = s.action_config ?? {};
   const detail = typeof cfg.subject === "string" && cfg.subject ? cfg.subject : typeof cfg.prompt === "string" && cfg.prompt ? cfg.prompt.slice(0, 40) : typeof cfg.webhook_url === "string" ? cfg.webhook_url : "";
@@ -857,6 +866,7 @@ function CreatorView({ onBuild }: { onBuild: (draft: PrefillDraft) => void }) {
       const base = newStepDraft(s.kind);
       if (s.kind === "wait") return { ...base, ...hoursToDraft(s.hours) };
       if (s.kind === "condition") return { ...base, field: s.field, op: s.op, value: String(s.value) };
+      if (s.kind === "approval") return { ...base, note: s.note ?? "" };
       const cfg = s.action_config ?? {};
       return {
         ...base,
@@ -976,42 +986,85 @@ function TemplatesView({ goToDashboard }: { goToDashboard: () => void }) {
   );
 }
 
+// A short, human-readable summary of what a paused run is waiting on, built
+// from its trigger event + payload (real data, not a canned description).
+function approvalSummary(a: ApprovalRun): string {
+  const p = a.payload ?? {};
+  const name = typeof p.customer_name === "string" ? p.customer_name : typeof p.name === "string" ? p.name : null;
+  const total = typeof p.total === "number" ? p.total : Number(p.total) || null;
+  const bits = [triggerLabel(a.event as TriggerKey)];
+  if (name) bits.push(name);
+  if (total) bits.push(`$${formatNum(total)}`);
+  return bits.join(" · ");
+}
+
 function ApprovalsView() {
-  const [items, setItems] = useState(seedApprovals);
-  const [resolved, setResolved] = useState<{ title: string; ok: boolean }[]>([]);
-  const resolve = (title: string, ok: boolean) => {
-    setItems((its) => its.filter((i) => i.title !== title));
-    setResolved((r) => [{ title, ok }, ...r]);
+  const { org } = useOrg();
+  const [pending, setPending] = useState<ApprovalRun[] | null>(null);
+  const [resolvedRecent, setResolvedRecent] = useState<ApprovalRun[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!org) { setPending([]); return; }
+    const [p, r] = await Promise.all([listPendingApprovals(org.id), listResolvedApprovals(org.id, 20)]);
+    setPending(p);
+    setResolvedRecent(r);
+  }, [org?.id]);
+  useEffect(() => { void load(); }, [load]);
+
+  const resolve = async (a: ApprovalRun, approve: boolean) => {
+    setBusyId(a.id);
+    setError(null);
+    const res = await resolveApproval(a.id, approve);
+    if (!res.ok) setError(res.error ?? "Couldn't resolve this — the approval_steps migration (0028) may not be applied yet.");
+    setBusyId(null);
+    await load();
   };
+
+  const items = pending ?? [];
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const approvedToday = resolvedRecent.filter((r) => r.status === "approved" && (r.resolved_at ?? "").slice(0, 10) === todayStr).length;
+  const responseTimes = resolvedRecent.filter((r) => r.resolved_at).map((r) => (new Date(r.resolved_at!).getTime() - new Date(r.created_at).getTime()) / 60000);
+  const avgResponseMin = responseTimes.length ? Math.round((responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length) * 10) / 10 : 0;
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-3">
         <StatTile label="Pending approvals" value={items.length} icon={ClipboardCheck} />
-        <StatTile label="Approved today" value={resolved.filter((r) => r.ok).length + 6} icon={CheckCircle2} />
-        <StatTile label="Avg response" value={4} suffix=" min" icon={Timer} />
+        <StatTile label="Approved today" value={approvedToday} icon={CheckCircle2} />
+        <StatTile label="Avg response" value={avgResponseMin} suffix=" min" icon={Timer} />
       </div>
+      {error && <p className="rounded-xl border border-border bg-glass px-3 py-2 text-xs text-rose-300">{error}</p>}
       <Reveal>
         <GlassCard className="p-6">
           <SectionLabel icon={ClipboardCheck}>Waiting for you</SectionLabel>
           <div className="mt-4 space-y-2">
-            {items.map((a) => (
-              <div key={a.title} className="flex flex-wrap items-center gap-4 rounded-2xl border border-border bg-background/30 p-4">
-                <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-glass"><a.icon className="size-4 text-gold" /></span>
-                <div className="min-w-0 flex-1"><p className="text-sm font-medium text-foreground">{a.title}</p><p className="text-xs text-muted-foreground">{a.detail} · <span className="text-gold">{a.from}</span></p></div>
+            {pending === null && <p className="py-10 text-center text-sm text-muted-foreground">Loading…</p>}
+            {pending !== null && items.map((a) => (
+              <div key={a.id} className="flex flex-wrap items-center gap-4 rounded-2xl border border-border bg-background/30 p-4">
+                <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-glass"><ClipboardCheck className="size-4 text-gold" /></span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">{a.note || "Approval needed"}</p>
+                  <p className="text-xs text-muted-foreground">{approvalSummary(a)} · <span className="text-gold">{a.automations?.name ?? "Automation"}</span></p>
+                </div>
                 <div className="flex gap-2">
-                  <button onClick={() => resolve(a.title, false)} className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300">Reject</button>
-                  <button onClick={() => resolve(a.title, true)} className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}><CheckCircle2 className="size-3.5" /> Approve</button>
+                  <button onClick={() => resolve(a, false)} disabled={busyId === a.id} className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300 disabled:opacity-50">Reject</button>
+                  <button onClick={() => resolve(a, true)} disabled={busyId === a.id} className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}><CheckCircle2 className="size-3.5" /> {busyId === a.id ? "Working…" : "Approve"}</button>
                 </div>
               </div>
             ))}
-            {items.length === 0 && <p className="py-10 text-center text-sm text-muted-foreground">All caught up — nothing needs your approval. 🎉</p>}
+            {pending !== null && items.length === 0 && <p className="py-10 text-center text-sm text-muted-foreground">All caught up — nothing needs your approval. 🎉</p>}
           </div>
-          {resolved.length > 0 && (
+          {resolvedRecent.length > 0 && (
             <div className="mt-5 border-t border-border pt-4">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Just resolved</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Recently resolved</p>
               <div className="mt-2 space-y-1">
-                {resolved.map((r, i) => (
-                  <p key={i} className="flex items-center gap-2 text-sm text-foreground/80">{r.ok ? <CheckCircle2 className="size-3.5 text-emerald-400" /> : <XCircle className="size-3.5 text-rose-300" />} {r.title} — <span className={r.ok ? "text-emerald-300" : "text-rose-300"}>{r.ok ? "approved" : "rejected"}</span></p>
+                {resolvedRecent.slice(0, 8).map((r) => (
+                  <p key={r.id} className="flex items-center gap-2 text-sm text-foreground/80">
+                    {r.status === "approved" ? <CheckCircle2 className="size-3.5 text-emerald-400" /> : <XCircle className="size-3.5 text-rose-300" />}
+                    {r.note || r.automations?.name || "Automation"} — <span className={r.status === "approved" ? "text-emerald-300" : "text-rose-300"}>{r.status}</span>
+                  </p>
                 ))}
               </div>
             </div>

@@ -39,6 +39,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Bar, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
+import { askAI } from "@/lib/ai";
 import { createAutomation, deleteAutomation, insertAutomations, listAutomations, runAutomationNow, setAutomationEnabled, updateAutomation, type ActionKey, type DbAutomation, type NewAutomation, type TriggerKey, type WorkflowStep } from "@/lib/automations";
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -219,6 +220,8 @@ const WAIT_UNITS: { key: WaitUnit; label: string; toHours: number }[] = [
 const waitUnitHours = (unit: WaitUnit) => WAIT_UNITS.find((u) => u.key === unit)?.toHours ?? 1;
 
 type StepDraft = { id: string; kind: StepKind; action_key: ActionKey; prompt: string; subject: string; webhook_url: string; waitAmount: string; waitUnit: WaitUnit; field: string; op: "<" | ">" | "=" | ">=" | "<="; value: string };
+// A rule handed off from the AI creator into the Dashboard's create form.
+type PrefillDraft = { name: string; trigger_key: TriggerKey; steps: StepDraft[] };
 let stepSeq = 0;
 const newStepDraft = (kind: StepKind = "action"): StepDraft => ({
   id: `s${++stepSeq}`, kind, action_key: "ai_draft_note", prompt: "", subject: "", webhook_url: "", waitAmount: "1", waitUnit: "hours", field: "total", op: ">", value: "0",
@@ -238,21 +241,24 @@ function draftsToSteps(drafts: StepDraft[]): WorkflowStep[] {
 // Reverse of draftsToSteps, used to populate the editor from a saved rule. The
 // original unit chosen for a wait isn't stored (only hours), so pick whichever
 // unit gives the cleanest round number back.
+// Picks the cleanest wait unit back from stored hours (used both when loading a
+// saved rule for editing, and when the AI creator hands off a generated wait step).
+function hoursToDraft(h: number): { waitAmount: string; waitUnit: WaitUnit } {
+  let unit: WaitUnit = "hours";
+  let amount = h;
+  if (h > 0 && h % (24 * 365) === 0) { unit = "years"; amount = h / (24 * 365); }
+  else if (h > 0 && h % (24 * 30) === 0) { unit = "months"; amount = h / (24 * 30); }
+  else if (h > 0 && h % (24 * 7) === 0) { unit = "weeks"; amount = h / (24 * 7); }
+  else if (h > 0 && h % 24 === 0) { unit = "days"; amount = h / 24; }
+  else if (h < 1 / 60) { unit = "seconds"; amount = Math.round(h * 3600); }
+  else if (h < 1) { unit = "minutes"; amount = Math.round(h * 60 * 100) / 100; }
+  return { waitAmount: String(Math.round(amount * 1000) / 1000), waitUnit: unit };
+}
+
 function stepsToDrafts(stepsIn: WorkflowStep[]): StepDraft[] {
   return stepsIn.map((s) => {
     const base = newStepDraft(s.kind);
-    if (s.kind === "wait") {
-      const h = s.hours;
-      let unit: WaitUnit = "hours";
-      let amount = h;
-      if (h > 0 && h % (24 * 365) === 0) { unit = "years"; amount = h / (24 * 365); }
-      else if (h > 0 && h % (24 * 30) === 0) { unit = "months"; amount = h / (24 * 30); }
-      else if (h > 0 && h % (24 * 7) === 0) { unit = "weeks"; amount = h / (24 * 7); }
-      else if (h > 0 && h % 24 === 0) { unit = "days"; amount = h / 24; }
-      else if (h < 1 / 60) { unit = "seconds"; amount = Math.round(h * 3600); }
-      else if (h < 1) { unit = "minutes"; amount = Math.round(h * 60 * 100) / 100; }
-      return { ...base, waitAmount: String(Math.round(amount * 1000) / 1000), waitUnit: unit };
-    }
+    if (s.kind === "wait") return { ...base, ...hoursToDraft(s.hours) };
     if (s.kind === "condition") return { ...base, field: s.field, op: s.op, value: String(s.value) };
     const cfg = s.action_config ?? {};
     return {
@@ -271,7 +277,7 @@ const SAMPLE_AUTOMATIONS: NewAutomation[] = [
   { name: "New order → email owner", trigger: triggerLabel("order.created"), action: actionLabel("email_owner"), trigger_key: "order.created", action_key: "email_owner", action_config: { subject: "New order received" }, enabled: false },
 ];
 
-function DashboardView() {
+function DashboardView({ prefill, onConsumePrefill }: { prefill: PrefillDraft | null; onConsumePrefill: () => void }) {
   const { org } = useOrg();
   const [rules, setRules] = useState<DbAutomation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -283,6 +289,18 @@ function DashboardView() {
   const [multiStep, setMultiStep] = useState(false);
   const [steps, setSteps] = useState<StepDraft[]>([newStepDraft()]);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // A workflow handed off from the AI creator — open the form pre-filled, ready to review + save.
+  useEffect(() => {
+    if (!prefill) return;
+    setEditingId(null);
+    setForm({ name: prefill.name, trigger_key: prefill.trigger_key, action_key: "ai_draft_note", prompt: "", webhook_url: "", subject: "" });
+    setSteps(prefill.steps.length ? prefill.steps : [newStepDraft()]);
+    setMultiStep(true);
+    setAdding(true);
+    onConsumePrefill();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
 
   const load = useCallback(async () => {
     if (!org) {
@@ -665,23 +683,117 @@ function BuilderView() {
 
 const creatorPrompts = ["When a customer is at churn risk, send them an offer", "Every morning, email me a revenue summary", "When an order is over $500, ask me to approve it"];
 
-function CreatorView() {
+// System-style instructions embedded in the user message (ai-chat's system prompt
+// is a fixed business-advisor persona, so we get strict JSON compliance by being
+// extremely explicit in the message itself rather than relying on a system role).
+const CREATOR_SCHEMA_PROMPT = `You are generating a WonderFlow automation workflow. Respond with ONLY raw JSON — no markdown code fences, no explanation, no extra text before or after. Match exactly this shape:
+
+{
+  "name": "short rule name (a few words)",
+  "trigger_key": "order.created" | "customer.created" | "manual",
+  "steps": [
+    { "kind": "action", "action_key": "ai_draft_note", "action_config": { "prompt": "what the AI should write" } }
+    | { "kind": "action", "action_key": "email_owner", "action_config": { "subject": "email subject" } }
+    | { "kind": "action", "action_key": "email_customer", "action_config": { "subject": "email subject", "prompt": "what the email should say" } }
+    | { "kind": "action", "action_key": "webhook", "action_config": { "webhook_url": "https://..." } }
+    | { "kind": "wait", "hours": <number> }
+    | { "kind": "condition", "field": "total", "op": ">" | "<" | "=" | ">=" | "<=", "value": <number> }
+  ]
+}
+
+Rules: trigger_key must be one of the 3 listed (use "manual" if nothing else fits). Use "wait" for any delay described (convert to hours — e.g. "1 week" = 168, "3 days" = 72, "30 seconds" = 0.0083). Use "condition" only for a numeric threshold on the trigger's payload (e.g. order total). Keep steps to what's actually needed — 1 to 5 steps. Every action needs a sensible action_config for its type. Describe this automation: `;
+
+type ParsedStep =
+  | { kind: "action"; action_key: ActionKey; action_config?: Record<string, unknown> }
+  | { kind: "wait"; hours: number }
+  | { kind: "condition"; field: string; op: "<" | ">" | "=" | ">=" | "<="; value: number };
+type ParsedWorkflow = { name: string; trigger_key: TriggerKey; steps: ParsedStep[] };
+
+function parseWorkflowJson(raw: string): ParsedWorkflow {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  const obj = JSON.parse(cleaned);
+  if (!obj || typeof obj !== "object") throw new Error("Not a JSON object");
+  const steps = Array.isArray(obj.steps) ? obj.steps : [];
+  if (steps.length === 0) throw new Error("No steps returned");
+  const validTriggers: TriggerKey[] = ["order.created", "customer.created", "manual"];
+  const validActions: ActionKey[] = ["ai_draft_note", "email_owner", "email_customer", "webhook"];
+  return {
+    name: typeof obj.name === "string" && obj.name.trim() ? obj.name.trim() : "AI-generated automation",
+    trigger_key: validTriggers.includes(obj.trigger_key) ? obj.trigger_key : "manual",
+    steps: steps.map((s: Record<string, unknown>): ParsedStep => {
+      if (s.kind === "wait") return { kind: "wait", hours: Math.max(1 / 3600, Number(s.hours) || 1) };
+      if (s.kind === "condition") return { kind: "condition", field: typeof s.field === "string" ? s.field : "total", op: (["<", ">", "=", ">=", "<="].includes(s.op as string) ? s.op : ">") as "<" | ">" | "=" | ">=" | "<=", value: Number(s.value) || 0 };
+      const action_key = validActions.includes(s.action_key as ActionKey) ? (s.action_key as ActionKey) : "ai_draft_note";
+      return { kind: "action", action_key, action_config: (s.action_config as Record<string, unknown>) ?? {} };
+    }),
+  };
+}
+
+const stepKindMeta: Record<StepKind, { icon: LucideIcon; label: string }> = {
+  action: { icon: Send, label: "action" },
+  wait: { icon: Timer, label: "wait" },
+  condition: { icon: Split, label: "condition" },
+};
+const actionKindMeta: Record<ActionKey, { icon: LucideIcon; label: string }> = {
+  ai_draft_note: { icon: FileText, label: "Draft an AI note" },
+  email_owner: { icon: Mail, label: "Email the owner" },
+  email_customer: { icon: Mail, label: "Email the customer" },
+  webhook: { icon: Zap, label: "Call a webhook" },
+};
+function describeParsedStep(s: ParsedStep): { icon: LucideIcon; kind: BlockKind; title: string; subtitle: string } {
+  if (s.kind === "wait") {
+    const h = s.hours;
+    const label = h >= 24 ? `${Math.round((h / 24) * 10) / 10} day(s)` : h >= 1 ? `${Math.round(h * 10) / 10} hour(s)` : `${Math.round(h * 3600)} sec`;
+    return { icon: Timer, kind: "action", title: `Wait ${label}`, subtitle: "wait · pauses the sequence" };
+  }
+  if (s.kind === "condition") return { icon: Split, kind: "decision", title: `If ${s.field} ${s.op} ${s.value}`, subtitle: "condition · stops if false" };
+  const m = actionKindMeta[s.action_key];
+  const cfg = s.action_config ?? {};
+  const detail = typeof cfg.subject === "string" && cfg.subject ? cfg.subject : typeof cfg.prompt === "string" && cfg.prompt ? cfg.prompt.slice(0, 40) : typeof cfg.webhook_url === "string" ? cfg.webhook_url : "";
+  return { icon: m.icon, kind: "action", title: m.label, subtitle: detail ? `action · ${detail}` : "action" };
+}
+
+function CreatorView({ onBuild }: { onBuild: (draft: PrefillDraft) => void }) {
+  const { org } = useOrg();
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [flow, setFlow] = useState<{ kind: BlockKind; icon: LucideIcon; title: string }[] | null>(null);
-  const generate = (text: string) => {
-    const q = text.trim(); if (!q) return;
-    setBusy(true); setFlow(null); setInput(q);
-    window.setTimeout(() => {
-      const s = q.toLowerCase();
-      let built: { kind: BlockKind; icon: LucideIcon; title: string }[];
-      if (s.includes("churn") || s.includes("offer")) built = [{ kind: "trigger", icon: Users, title: "Customer risk score > 70" }, { kind: "decision", icon: Brain, title: "AI picks the best offer" }, { kind: "action", icon: Mail, title: "Send personalized win-back email" }];
-      else if (s.includes("morning") || s.includes("summary") || s.includes("email me")) built = [{ kind: "trigger", icon: Calendar, title: "Every day at 6:00 AM" }, { kind: "decision", icon: Brain, title: "AI writes the summary" }, { kind: "action", icon: Mail, title: "Email the revenue digest" }];
-      else if (s.includes("approve") || s.includes("$")) built = [{ kind: "trigger", icon: ShoppingCart, title: "New order placed" }, { kind: "decision", icon: Split, title: "If order total > $500" }, { kind: "action", icon: ClipboardCheck, title: "Request your approval" }];
-      else built = [{ kind: "trigger", icon: Zap, title: "When the event happens" }, { kind: "decision", icon: Brain, title: "AI decides what to do" }, { kind: "action", icon: Send, title: "Run the right action" }];
-      setFlow(built); setBusy(false);
-    }, 1400);
+  const [flow, setFlow] = useState<ParsedWorkflow | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const generate = async (text: string) => {
+    const q = text.trim();
+    if (!q || busy) return;
+    setBusy(true); setFlow(null); setError(null); setInput(q);
+    try {
+      const reply = await askAI(
+        [{ role: "user", content: CREATOR_SCHEMA_PROMPT + q }],
+        { id: org?.id, name: org?.name, industry: org?.industry },
+      );
+      setFlow(parseWorkflowJson(reply));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't generate a workflow — try rephrasing.");
+    }
+    setBusy(false);
   };
+
+  const openInBuilder = () => {
+    if (!flow) return;
+    const drafts: StepDraft[] = flow.steps.map((s) => {
+      const base = newStepDraft(s.kind);
+      if (s.kind === "wait") return { ...base, ...hoursToDraft(s.hours) };
+      if (s.kind === "condition") return { ...base, field: s.field, op: s.op, value: String(s.value) };
+      const cfg = s.action_config ?? {};
+      return {
+        ...base,
+        action_key: s.action_key,
+        prompt: typeof cfg.prompt === "string" ? cfg.prompt : "",
+        subject: typeof cfg.subject === "string" ? cfg.subject : "",
+        webhook_url: typeof cfg.webhook_url === "string" ? cfg.webhook_url : "",
+      };
+    });
+    onBuild({ name: flow.name, trigger_key: flow.trigger_key, steps: drafts });
+  };
+
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Reveal>
@@ -689,9 +801,9 @@ function CreatorView() {
           <div className="veil pointer-events-none absolute inset-0 opacity-50" />
           <div className="relative">
             <div className="flex items-center gap-2"><Wand2 className="size-4 text-gold" /><p className="text-sm font-semibold">Describe an automation</p></div>
-            <p className="mt-2 text-sm text-muted-foreground">Tell me what should happen — I'll build the workflow.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Tell me what should happen — real Claude builds the workflow, ready to save.</p>
             <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={3} placeholder="When a customer leaves a 5-star review, thank them and offer a referral reward…" className="mt-4 w-full resize-none rounded-2xl border border-border bg-background/40 px-4 py-3 text-sm text-foreground outline-none focus:border-gold/50" />
-            <button onClick={() => generate(input)} disabled={busy || !input.trim()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}><Sparkles className="size-4" /> {busy ? "Building…" : "Generate workflow"}</button>
+            <button onClick={() => generate(input)} disabled={busy || !input.trim()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}><Sparkles className="size-4" /> {busy ? "Thinking…" : "Generate workflow"}</button>
             <div className="mt-4 flex flex-wrap gap-2">
               {creatorPrompts.map((p) => (<button key={p} onClick={() => generate(p)} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground">{p}</button>))}
             </div>
@@ -704,18 +816,23 @@ function CreatorView() {
           <SectionLabel icon={GitBranch}>Generated workflow</SectionLabel>
           <div className="mt-5 flex-1">
             {busy && <div className="typing flex items-center gap-1 py-4"><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /></div>}
-            {!busy && flow && (
+            {!busy && error && <p className="grid h-full place-items-center text-center text-sm text-muted-foreground">{error}</p>}
+            {!busy && !error && flow && (
               <div className="flex flex-col items-center">
-                {flow.map((n, i) => (
-                  <div key={i} className="flex w-full flex-col items-center">
-                    {i > 0 && <Connector />}
-                    <Node kind={n.kind} icon={n.icon} title={n.title} subtitle={`${n.kind} · AI-generated`} />
-                  </div>
-                ))}
-                <button className="mt-5 flex items-center gap-2 rounded-full border border-gold/30 bg-glass px-4 py-2 text-xs font-semibold text-foreground/85 transition-colors hover:border-gold/60"><GitBranch className="size-3.5 text-gold" /> Open in builder</button>
+                <div className="mb-3 rounded-full border border-border bg-glass px-3 py-1 text-xs text-muted-foreground">{flow.name} · {triggerLabel(flow.trigger_key)}</div>
+                {flow.steps.map((s, i) => {
+                  const d = describeParsedStep(s);
+                  return (
+                    <div key={i} className="flex w-full flex-col items-center">
+                      {i > 0 && <Connector />}
+                      <Node kind={d.kind} icon={d.icon} title={d.title} subtitle={d.subtitle} />
+                    </div>
+                  );
+                })}
+                <button onClick={openInBuilder} className="mt-5 flex items-center gap-2 rounded-full border border-gold/30 bg-glass px-4 py-2 text-xs font-semibold text-foreground/85 transition-colors hover:border-gold/60"><GitBranch className="size-3.5 text-gold" /> Open in builder</button>
               </div>
             )}
-            {!busy && !flow && <p className="grid h-full place-items-center text-center text-sm text-muted-foreground">Describe an automation and I'll draft the workflow.</p>}
+            {!busy && !error && !flow && <p className="grid h-full place-items-center text-center text-sm text-muted-foreground">Describe an automation and I'll draft the workflow.</p>}
           </div>
         </GlassCard>
       </Reveal>
@@ -881,6 +998,7 @@ const viewMeta: Record<ViewKey, { title: string; sub: string }> = {
 
 export function AutomationWorkspace() {
   const [active, setActive] = useState<ViewKey>("dashboard");
+  const [prefill, setPrefill] = useState<PrefillDraft | null>(null);
   const meta = viewMeta[active];
   return (
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
@@ -921,9 +1039,9 @@ export function AutomationWorkspace() {
         </div>
 
         <div key={active} className="rise">
-          {active === "dashboard" && <DashboardView />}
+          {active === "dashboard" && <DashboardView prefill={prefill} onConsumePrefill={() => setPrefill(null)} />}
           {active === "builder" && <BuilderView />}
-          {active === "creator" && <CreatorView />}
+          {active === "creator" && <CreatorView onBuild={(draft) => { setPrefill(draft); setActive("dashboard"); }} />}
           {active === "templates" && <TemplatesView />}
           {active === "approvals" && <ApprovalsView />}
           {active === "history" && <HistoryView />}

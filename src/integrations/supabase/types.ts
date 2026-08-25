@@ -91,8 +91,11 @@ export type Database = {
           created_at: string
           event: string
           id: string
+          note: string | null
           org_id: string
           payload: Json
+          resolved_at: string | null
+          resolved_by: string | null
           resume_at: string
           status: string
           step_index: number
@@ -103,8 +106,11 @@ export type Database = {
           created_at?: string
           event: string
           id?: string
+          note?: string | null
           org_id: string
           payload?: Json
+          resolved_at?: string | null
+          resolved_by?: string | null
           resume_at: string
           status?: string
           step_index?: number
@@ -115,8 +121,11 @@ export type Database = {
           created_at?: string
           event?: string
           id?: string
+          note?: string | null
           org_id?: string
           payload?: Json
+          resolved_at?: string | null
+          resolved_by?: string | null
           resume_at?: string
           status?: string
           step_index?: number
@@ -135,6 +144,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automation_runs_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

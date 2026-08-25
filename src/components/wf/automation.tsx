@@ -349,7 +349,7 @@ const SAMPLE_AUTOMATIONS: NewAutomation[] = [
   { name: "New order → email owner", trigger: triggerLabel("order.created"), action: actionLabel("email_owner"), trigger_key: "order.created", action_key: "email_owner", action_config: { subject: "New order received" }, enabled: false },
 ];
 
-function DashboardView({ prefill, onConsumePrefill }: { prefill: PrefillDraft | null; onConsumePrefill: () => void }) {
+function DashboardView({ prefill, onConsumePrefill, refreshKey }: { prefill: PrefillDraft | null; onConsumePrefill: () => void; refreshKey?: number }) {
   const { org } = useOrg();
   const [rules, setRules] = useState<DbAutomation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -391,7 +391,10 @@ function DashboardView({ prefill, onConsumePrefill }: { prefill: PrefillDraft | 
   }, [org?.id]);
   useEffect(() => {
     void load();
-  }, [load]);
+    // refreshKey forces a re-fetch on arrival (e.g. from Templates just after
+    // creating a rule) even if this component never actually unmounted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, refreshKey]);
 
   const enabledCount = rules.filter((r) => r.enabled).length;
   const totalRuns = rules.reduce((a, r) => a + r.runs, 0);
@@ -1220,6 +1223,10 @@ const viewMeta: Record<ViewKey, { title: string; sub: string }> = {
 export function AutomationWorkspace() {
   const [active, setActive] = useState<ViewKey>("dashboard");
   const [prefill, setPrefill] = useState<PrefillDraft | null>(null);
+  // Bumped whenever something outside Dashboard changes its data (e.g. a
+  // template just created a rule) — forces a fresh fetch on arrival instead of
+  // relying on remount timing, which isn't guaranteed to refire the load effect.
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
   const meta = viewMeta[active];
   return (
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">
@@ -1260,10 +1267,10 @@ export function AutomationWorkspace() {
         </div>
 
         <div key={active} className="rise">
-          {active === "dashboard" && <DashboardView prefill={prefill} onConsumePrefill={() => setPrefill(null)} />}
+          {active === "dashboard" && <DashboardView prefill={prefill} onConsumePrefill={() => setPrefill(null)} refreshKey={dashboardRefreshKey} />}
           {active === "builder" && <BuilderView />}
           {active === "creator" && <CreatorView onBuild={(draft) => { setPrefill(draft); setActive("dashboard"); }} />}
-          {active === "templates" && <TemplatesView goToDashboard={() => setActive("dashboard")} />}
+          {active === "templates" && <TemplatesView goToDashboard={() => { setDashboardRefreshKey((k) => k + 1); setActive("dashboard"); }} />}
           {active === "approvals" && <ApprovalsView />}
           {active === "history" && <HistoryView />}
           {active === "analytics" && <AnalyticsView />}

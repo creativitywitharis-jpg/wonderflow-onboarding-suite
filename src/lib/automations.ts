@@ -160,6 +160,34 @@ export async function listResolvedApprovals(orgId: string, limit = 20): Promise<
   return (data as ApprovalRun[]) ?? [];
 }
 
+// ── Execution history ───────────────────────────────────────────────────────
+// A real per-attempt log (initial fire, a resumed wait/approval step, or an
+// approval resolution) — written by the runner via logExecution(). Ships in
+// migration 0029; reach the table untyped until Lovable regenerates DB types.
+const executionsTable = () => (supabase as unknown as { from: (t: string) => any }).from("automation_executions");
+
+export type DbExecution = {
+  id: string;
+  automation_id: string | null;
+  automation_name: string;
+  event: string;
+  ok: boolean;
+  detail: string | null;
+  duration_ms: number | null;
+  created_at: string;
+};
+
+/** Most recent execution attempts for an org, newest first. Fails soft (empty) if unmigrated. */
+export async function listExecutions(orgId: string, limit = 50): Promise<DbExecution[]> {
+  const { data, error } = await executionsTable()
+    .select("id,automation_id,automation_name,event,ok,detail,duration_ms,created_at")
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return [];
+  return (data as DbExecution[]) ?? [];
+}
+
 /** Approve or reject a paused run. Approving continues the workflow (which may pause again). */
 export async function resolveApproval(runId: string, approve: boolean): Promise<{ ok: boolean; detail?: string; error?: string }> {
   try {

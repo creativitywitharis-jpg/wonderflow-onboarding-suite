@@ -40,7 +40,7 @@ import { Bar, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
-import { createAutomation, deleteAutomation, insertAutomations, listAutomations, listPendingApprovals, listResolvedApprovals, resolveApproval, runAutomationNow, setAutomationEnabled, updateAutomation, type ActionKey, type ApprovalRun, type DbAutomation, type NewAutomation, type TriggerKey, type WorkflowStep } from "@/lib/automations";
+import { createAutomation, deleteAutomation, insertAutomations, listAutomations, listExecutions, listPendingApprovals, listResolvedApprovals, resolveApproval, runAutomationNow, setAutomationEnabled, updateAutomation, type ActionKey, type ApprovalRun, type DbAutomation, type DbExecution, type NewAutomation, type TriggerKey, type WorkflowStep } from "@/lib/automations";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -164,19 +164,29 @@ const templates: Template[] = [
   },
 ];
 
-const historyLog = [
-  { name: "Abandoned cart recovery", trigger: "Cart abandoned", status: "success", dur: "1.2s", time: "3m ago" },
-  { name: "Low-stock auto-reorder", trigger: "Stock < reorder point", status: "approval", dur: "—", time: "12m ago" },
-  { name: "New customer welcome", trigger: "New customer", status: "success", dur: "0.8s", time: "22m ago" },
-  { name: "Churn-risk alert", trigger: "Risk score > 70", status: "success", dur: "2.1s", time: "1h ago" },
-  { name: "Refund approval flow", trigger: "Refund requested", status: "failed", dur: "3.4s", time: "2h ago" },
-  { name: "Daily revenue digest", trigger: "Schedule 6:00 AM", status: "success", dur: "4.0s", time: "5h ago" },
-];
-const runStatus: Record<string, { color: string; icon: LucideIcon; label: string }> = {
+// Real status derived from an execution's ok/detail — "pending" covers both a
+// timer wait and an awaiting-approval pause (both report ok:true with a
+// recognisable detail string), distinct from a fully completed "success".
+type RunStatus = "success" | "failed" | "pending";
+function statusOf(e: { ok: boolean; detail: string | null }): RunStatus {
+  if (!e.ok) return "failed";
+  if (/paused|awaiting approval/i.test(e.detail ?? "")) return "pending";
+  return "success";
+}
+const runStatusMeta: Record<RunStatus, { color: string; icon: LucideIcon; label: string }> = {
   success: { color: "oklch(0.72 0.14 155)", icon: CheckCircle2, label: "Success" },
   failed: { color: "oklch(0.68 0.16 25)", icon: XCircle, label: "Failed" },
-  approval: { color: "oklch(0.84 0.14 84)", icon: ClipboardCheck, label: "Awaiting approval" },
+  pending: { color: "oklch(0.84 0.14 84)", icon: ClipboardCheck, label: "Paused" },
 };
+function historyTimeAgo(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 const runsSeries = [180, 210, 195, 240, 268, 255, 290, 312, 305, 340, 358, 382];
 const topAutomations = [
@@ -1076,20 +1086,34 @@ function ApprovalsView() {
 }
 
 function HistoryView() {
+  const { org } = useOrg();
+  const [log, setLog] = useState<DbExecution[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (org?.id) listExecutions(org.id).then((r) => alive && setLog(r)).catch(() => alive && setLog([]));
+    else setLog([]);
+    return () => { alive = false; };
+  }, [org?.id]);
+
   return (
     <Reveal>
       <GlassCard className="p-6">
         <SectionLabel icon={Clock}>Execution history</SectionLabel>
         <div className="mt-4 space-y-1">
-          {historyLog.map((h, i) => {
-            const st = runStatus[h.status];
+          {log === null && <p className="py-10 text-center text-sm text-muted-foreground">Loading…</p>}
+          {log !== null && log.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted-foreground">No executions yet — run an automation and it'll show up here.</p>
+          )}
+          {(log ?? []).map((h) => {
+            const status = statusOf(h);
+            const st = runStatusMeta[status];
             return (
-              <div key={i} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 rounded-xl px-2 py-3 sm:grid-cols-[auto_1.6fr_1fr_auto_auto]">
+              <div key={h.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 rounded-xl px-2 py-3 sm:grid-cols-[auto_1.6fr_1fr_auto_auto]">
                 <span className="grid size-8 place-items-center rounded-lg" style={{ background: `color-mix(in oklch, ${st.color} 15%, transparent)` }}><st.icon className="size-4" style={{ color: st.color }} /></span>
-                <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{h.name}</p><p className="truncate text-xs text-muted-foreground">{h.trigger}</p></div>
+                <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{h.automation_name}</p><p className="truncate text-xs text-muted-foreground">{h.detail || triggerLabel(h.event)}</p></div>
                 <span className="hidden text-xs sm:block" style={{ color: st.color }}>{st.label}</span>
-                <span className="hidden text-xs text-muted-foreground sm:block">{h.dur}</span>
-                <span className="text-right text-xs text-muted-foreground">{h.time}</span>
+                <span className="hidden text-xs text-muted-foreground sm:block">{h.duration_ms != null ? `${(h.duration_ms / 1000).toFixed(1)}s` : "—"}</span>
+                <span className="text-right text-xs text-muted-foreground">{historyTimeAgo(h.created_at)}</span>
               </div>
             );
           })}

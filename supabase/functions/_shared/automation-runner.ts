@@ -150,6 +150,34 @@ async function runAction(
   }
 }
 
+/** Logs a real execution attempt (initial fire, a resumed step, or an approval
+ *  resolution) for Automation → Execution history. Never lets a logging
+ *  failure break the actual automation run. */
+async function logExecution(
+  admin: Admin,
+  orgId: string,
+  automationId: string | null,
+  automationName: string,
+  event: string,
+  ok: boolean,
+  detail: string,
+  durationMs: number,
+): Promise<void> {
+  try {
+    await admin.from("automation_executions").insert({
+      org_id: orgId,
+      automation_id: automationId,
+      automation_name: automationName,
+      event,
+      ok,
+      detail,
+      duration_ms: Math.max(0, Math.round(durationMs)),
+    });
+  } catch {
+    // best-effort — never block the real execution over a logging failure
+  }
+}
+
 function evalCondition(payload: Payload, step: { field: string; op: string; value: number }): boolean {
   const raw = payload[step.field];
   const n = typeof raw === "number" ? raw : parseFloat(String(raw ?? ""));
@@ -234,11 +262,13 @@ export async function resumeDueRuns(admin: Admin, orgId?: string): Promise<numbe
   for (const run of runs) {
     const runId = run.id as string;
     const runOrgId = run.org_id as string;
+    const t0 = Date.now();
     try {
       const { data: auto } = await admin.from("automations").select("id,name,enabled,steps").eq("id", run.automation_id).maybeSingle();
       const automation = auto as { id: string; name: string; enabled: boolean; steps: WorkflowStep[] | null } | null;
       if (automation?.enabled && automation.steps?.length) {
-        await runStepSequence(admin, runOrgId, automation, run.event as string, (run.payload as Payload) ?? {}, automation.steps, run.step_index as number);
+        const res = await runStepSequence(admin, runOrgId, automation, run.event as string, (run.payload as Payload) ?? {}, automation.steps, run.step_index as number);
+        await logExecution(admin, runOrgId, automation.id, automation.name, `${run.event} (resumed)`, res.ok, res.detail, Date.now() - t0);
       }
     } catch {
       // never let one bad run block the batch
@@ -266,18 +296,24 @@ export async function resolveApprovalRun(
   if (!run) return { ok: false, detail: "run not found" };
   if (run.status !== "pending_approval") return { ok: false, detail: `already resolved (status: ${run.status})` };
 
+  const { data: autoRow } = await admin.from("automations").select("id,name,enabled,steps").eq("id", run.automation_id).maybeSingle();
+  const automation = autoRow as { id: string; name: string; enabled: boolean; steps: WorkflowStep[] | null } | null;
+  const automationName = automation?.name ?? "Automation";
+  const orgId = run.org_id as string;
+  const t0 = Date.now();
+
   if (!approve) {
     await admin.from("automation_runs").update({ status: "rejected", resolved_by: resolvedBy, resolved_at: new Date().toISOString() }).eq("id", runId);
+    await logExecution(admin, orgId, automation?.id ?? null, automationName, `${run.event} (approval)`, true, "rejected", Date.now() - t0);
     return { ok: true, detail: "rejected" };
   }
 
-  const { data: autoRow } = await admin.from("automations").select("id,name,enabled,steps").eq("id", run.automation_id).maybeSingle();
-  const automation = autoRow as { id: string; name: string; enabled: boolean; steps: WorkflowStep[] | null } | null;
   let result: { ok: boolean; detail: string } = { ok: true, detail: "workflow completed" };
   if (automation?.enabled && automation.steps?.length) {
-    result = await runStepSequence(admin, run.org_id as string, automation, run.event as string, (run.payload as Payload) ?? {}, automation.steps, run.step_index as number);
+    result = await runStepSequence(admin, orgId, automation, run.event as string, (run.payload as Payload) ?? {}, automation.steps, run.step_index as number);
   }
   await admin.from("automation_runs").update({ status: "approved", resolved_by: resolvedBy, resolved_at: new Date().toISOString() }).eq("id", runId);
+  await logExecution(admin, orgId, automation?.id ?? null, automationName, `${run.event} (approved)`, result.ok, result.detail, Date.now() - t0);
   return result;
 }
 
@@ -303,25 +339,28 @@ export async function runAutomations(
 
   for (const a of automations) {
     const id = a.id as string;
+    const name = a.name as string;
     const steps = (a.steps as WorkflowStep[] | null) ?? null;
     let ok = false;
     let detail = "";
     let actionLabel = (a.action_key as string) ?? "ai_draft_note";
+    const t0 = Date.now();
 
     if (steps && steps.length > 0) {
       actionLabel = "workflow";
-      const res = await runStepSequence(admin, orgId, { id, name: a.name as string }, event, payload, steps, 0);
+      const res = await runStepSequence(admin, orgId, { id, name }, event, payload, steps, 0);
       ok = res.ok;
       detail = res.detail;
     } else {
       const actionKey = (a.action_key as string) ?? "ai_draft_note";
       const config = (a.action_config as Record<string, unknown>) ?? {};
-      const res = await runAction(admin, orgId, event, payload, a.name as string, actionKey, config);
+      const res = await runAction(admin, orgId, event, payload, name, actionKey, config);
       ok = res.ok;
       detail = res.detail;
     }
 
     await admin.from("automations").update({ runs: ((a.runs as number) ?? 0) + 1, last_run: new Date().toISOString() }).eq("id", id);
+    await logExecution(admin, orgId, id, name, event, ok, detail, Date.now() - t0);
     results.push({ id, action: actionLabel, ok, detail });
   }
 

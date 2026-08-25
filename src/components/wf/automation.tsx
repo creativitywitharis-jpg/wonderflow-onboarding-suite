@@ -81,13 +81,87 @@ const palette: { kind: BlockKind; label: string; icon: LucideIcon }[] = [
 ];
 
 
-const templates = [
-  { name: "Low-stock auto-reorder", cat: "Inventory", steps: 4, icon: Boxes, desc: "Reorder when stock dips below the point — with an AI demand check." },
-  { name: "Abandoned cart recovery", cat: "Marketing", steps: 3, icon: ShoppingCart, desc: "Win back carts with a timed, personalized nudge." },
-  { name: "New customer welcome", cat: "CRM", steps: 3, icon: Users, desc: "Onboard new customers with a warm multi-step sequence." },
-  { name: "Churn-risk alert", cat: "CRM", steps: 4, icon: AlertTriangle, desc: "Detect at-risk customers and trigger a save play." },
-  { name: "Daily revenue digest", cat: "Analytics", steps: 2, icon: BarChart3, desc: "AI-written revenue summary to your inbox each morning." },
-  { name: "Refund approval flow", cat: "Finance", steps: 4, icon: DollarSign, desc: "Route refunds over a threshold for one-tap approval." },
+// Real, immediately-deployable templates — each maps to an actual trigger/action
+// this engine supports today (no illustrative capabilities like "low stock" or
+// "abandoned cart" that don't exist yet). "Use template" creates a real rule.
+type Template = {
+  name: string;
+  cat: string;
+  icon: LucideIcon;
+  desc: string;
+  trigger_key: TriggerKey;
+  action_key: ActionKey;
+  action_config: Record<string, unknown>;
+  steps: WorkflowStep[] | null;
+};
+const templates: Template[] = [
+  {
+    name: "Welcome new customers",
+    cat: "CRM",
+    icon: Users,
+    desc: "AI drafts an internal welcome note the moment a customer is added.",
+    trigger_key: "customer.created",
+    action_key: "ai_draft_note",
+    action_config: { prompt: "Write a warm, brief welcome note for this new customer." },
+    steps: null,
+  },
+  {
+    name: "Welcome email to customer",
+    cat: "CRM",
+    icon: Mail,
+    desc: "Sends a real branded welcome email the moment a customer is added.",
+    trigger_key: "customer.created",
+    action_key: "email_customer",
+    action_config: { subject: "Welcome aboard!", prompt: "Write a short, warm welcome email thanking them for becoming a customer." },
+    steps: null,
+  },
+  {
+    name: "New order → AI summary",
+    cat: "Sales",
+    icon: ShoppingCart,
+    desc: "AI summarizes each new order and flags a relevant upsell.",
+    trigger_key: "order.created",
+    action_key: "ai_draft_note",
+    action_config: { prompt: "Summarize this new order in one line and suggest one relevant upsell." },
+    steps: null,
+  },
+  {
+    name: "Big order alert",
+    cat: "Sales",
+    icon: AlertTriangle,
+    desc: "Emails you only when an order tops $500 — a condition step, not noise.",
+    trigger_key: "order.created",
+    action_key: "ai_draft_note",
+    action_config: {},
+    steps: [
+      { kind: "condition", field: "total", op: ">", value: 500 },
+      { kind: "action", action_key: "email_owner", action_config: { subject: "Big order received!" } },
+    ],
+  },
+  {
+    name: "Thank-you + review request",
+    cat: "Finance",
+    icon: Timer,
+    desc: "Thanks the client when an invoice is paid, waits a week, then asks for a review.",
+    trigger_key: "invoice.paid",
+    action_key: "ai_draft_note",
+    action_config: {},
+    steps: [
+      { kind: "action", action_key: "email_customer", action_config: { subject: "Thank you for your business!", prompt: "Write a short, warm thank-you email for this payment." } },
+      { kind: "wait", hours: 168 },
+      { kind: "action", action_key: "email_customer", action_config: { subject: "How did we do?", prompt: "Write a short, friendly email asking for a review or testimonial." } },
+    ],
+  },
+  {
+    name: "Notify owner of paid invoice",
+    cat: "Finance",
+    icon: Bell,
+    desc: "Emails you the moment a client pays an invoice.",
+    trigger_key: "invoice.paid",
+    action_key: "email_owner",
+    action_config: { subject: "Invoice paid 🎉" },
+    steps: null,
+  },
 ];
 
 const seedApprovals = [
@@ -841,25 +915,63 @@ function CreatorView({ onBuild }: { onBuild: (draft: PrefillDraft) => void }) {
   );
 }
 
-function TemplatesView() {
+function TemplatesView({ goToDashboard }: { goToDashboard: () => void }) {
+  const { org } = useOrg();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [done, setDone] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+
+  const use = async (t: Template) => {
+    if (!org || busy) return;
+    setBusy(t.name);
+    setError(null);
+    const { error: err } = await createAutomation(org.id, {
+      name: t.name,
+      trigger: triggerLabel(t.trigger_key),
+      action: t.steps ? `Multi-step workflow (${t.steps.length} steps)` : actionLabel(t.action_key),
+      trigger_key: t.trigger_key,
+      action_key: t.action_key,
+      action_config: t.action_config,
+      steps: t.steps,
+    });
+    setBusy(null);
+    if (err) setError(`Couldn't add "${t.name}" — ${err.message}`);
+    else setDone((d) => new Set(d).add(t.name));
+  };
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {templates.map((t, i) => (
-        <Reveal key={t.name} delay={i * 50} className="h-full">
-          <GlassCard className="lift flex h-full flex-col p-6 hover:border-gold/40">
-            <div className="flex items-center justify-between">
-              <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><t.icon className="size-5 text-gold" /></span>
-              <span className="rounded-full border border-border bg-glass px-2.5 py-0.5 text-[0.65rem] text-muted-foreground">{t.cat}</span>
-            </div>
-            <p className="mt-4 text-sm font-semibold text-foreground">{t.name}</p>
-            <p className="mt-1 flex-1 text-xs leading-relaxed text-muted-foreground">{t.desc}</p>
-            <div className="mt-4 flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">{t.steps} steps</span>
-              <button className="rounded-full px-4 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>Use template</button>
-            </div>
-          </GlassCard>
-        </Reveal>
-      ))}
+    <div className="space-y-4">
+      {error && <p className="rounded-xl border border-border bg-glass px-3 py-2 text-xs text-rose-300">{error}</p>}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {templates.map((t, i) => {
+          const isDone = done.has(t.name);
+          const steps = t.steps ? t.steps.length : 1;
+          return (
+            <Reveal key={t.name} delay={i * 50} className="h-full">
+              <GlassCard className="lift flex h-full flex-col p-6 hover:border-gold/40">
+                <div className="flex items-center justify-between">
+                  <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><t.icon className="size-5 text-gold" /></span>
+                  <span className="rounded-full border border-border bg-glass px-2.5 py-0.5 text-[0.65rem] text-muted-foreground">{t.cat}</span>
+                </div>
+                <p className="mt-4 text-sm font-semibold text-foreground">{t.name}</p>
+                <p className="mt-1 flex-1 text-xs leading-relaxed text-muted-foreground">{t.desc}</p>
+                <div className="mt-4 flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">{steps} step{steps === 1 ? "" : "s"}</span>
+                  {isDone ? (
+                    <button onClick={goToDashboard} className="flex items-center gap-1.5 rounded-full border border-emerald-500/40 px-4 py-1.5 text-xs font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/10">
+                      <CheckCircle2 className="size-3.5" /> Added — view
+                    </button>
+                  ) : (
+                    <button onClick={() => use(t)} disabled={busy === t.name} className="rounded-full px-4 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)" }}>
+                      {busy === t.name ? "Adding…" : "Use template"}
+                    </button>
+                  )}
+                </div>
+              </GlassCard>
+            </Reveal>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1043,7 +1155,7 @@ export function AutomationWorkspace() {
           {active === "dashboard" && <DashboardView prefill={prefill} onConsumePrefill={() => setPrefill(null)} />}
           {active === "builder" && <BuilderView />}
           {active === "creator" && <CreatorView onBuild={(draft) => { setPrefill(draft); setActive("dashboard"); }} />}
-          {active === "templates" && <TemplatesView />}
+          {active === "templates" && <TemplatesView goToDashboard={() => setActive("dashboard")} />}
           {active === "approvals" && <ApprovalsView />}
           {active === "history" && <HistoryView />}
           {active === "analytics" && <AnalyticsView />}

@@ -6,6 +6,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Field, GhostButton, GlassCard, GoldButton, inputClass } from "@/components/wf/ui";
 import { supabase } from "@/lib/supabase";
 import { acceptInvitation } from "@/lib/team";
+import { clearPendingInvite, getPendingInvite, savePendingInvite } from "@/lib/pending-invite";
 import { lovable } from "@/integrations/lovable/index";
 
 export const Route = createFileRoute("/auth")({
@@ -48,16 +49,21 @@ function AuthScreen() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    setHasInvite(new URLSearchParams(window.location.search).has("invite"));
+    const token = new URLSearchParams(window.location.search).get("invite");
+    if (token) savePendingInvite(token);
+    setHasInvite(!!getPendingInvite());
   }, []);
 
   // If the user arrived via a team invite link, redeem it after auth and send
-  // them straight to the workspace (they're joining an existing org).
+  // them straight to the workspace (they're joining an existing org). Reads
+  // from localStorage as well as the URL — email-confirmation redirects
+  // don't reliably preserve our own query string.
   async function finishAuth(fallback: "/onboarding" | "/dashboard") {
-    const token = new URLSearchParams(window.location.search).get("invite");
+    const token = getPendingInvite();
     if (token) {
       try {
         await acceptInvitation(token);
+        clearPendingInvite();
         navigate({ to: "/dashboard" });
         return;
       } catch (err) {
@@ -123,15 +129,16 @@ function AuthScreen() {
     setResetPending(true);
     try {
       // Carry a pending team invite through the reset — otherwise resetting a
-      // password mid-invite silently drops it (the recovery link would land
-      // on /reset-password with no way to know an invite was ever in flight).
-      const inviteToken = new URLSearchParams(window.location.search).get("invite");
+      // password mid-invite silently drops it. The query param is a best
+      // effort (Supabase's redirect may not preserve it); reset-password.tsx
+      // also falls back to the same localStorage key saved on arrival here.
+      const inviteToken = getPendingInvite();
       const resetUrl = `${window.location.origin}/reset-password${inviteToken ? `?invite=${inviteToken}` : ""}`;
       const { error } = await supabase.auth.resetPasswordForEmail(target, {
         redirectTo: resetUrl,
       });
       if (error) setError(error.message);
-      else setNotice(`If an account exists for ${target}, we've sent a password reset link. Check your inbox.`);
+      else setNotice(`Email sent — check ${target}'s inbox for the password reset link.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send the reset email. Please try again.");
     } finally {
@@ -273,8 +280,8 @@ function AuthScreen() {
             )}
             {notice && (
               <div className="space-y-2">
-                <p className="flex items-start gap-2 rounded-xl border border-gold/30 bg-glass px-3 py-2.5 text-xs text-foreground/85">
-                  <Check className="mt-0.5 size-3.5 shrink-0 text-gold" /> {notice}
+                <p className="flex items-start gap-2 rounded-xl border border-gold/40 bg-glass px-3.5 py-3 text-sm font-medium text-foreground">
+                  <Check className="mt-0.5 size-4 shrink-0 text-gold" /> {notice}
                 </p>
                 {confirmEmail && (
                   <button

@@ -6,6 +6,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Field, GhostButton, GlassCard, GoldButton, inputClass } from "@/components/wf/ui";
 import { supabase } from "@/lib/supabase";
 import { acceptInvitation } from "@/lib/team";
+import { clearPendingInvite, getPendingInvite } from "@/lib/pending-invite";
 
 export const Route = createFileRoute("/reset-password")({
   head: () => ({ meta: [{ title: "Reset your password — WonderFlow OS" }] }),
@@ -18,6 +19,7 @@ function ResetPassword() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [joinFailed, setJoinFailed] = useState<string | null>(null);
   const navigate = useNavigate();
 
   async function submit(e: React.FormEvent) {
@@ -40,20 +42,42 @@ function ResetPassword() {
       );
       return;
     }
-    // If this reset was reached via a pending team invite (carried through as
-    // ?invite= by the "Forgot password?" flow), redeem it now — the new
-    // password just put a real session in place, same as a normal sign-in would.
-    const inviteToken = new URLSearchParams(window.location.search).get("invite");
+    // If this reset was reached via a pending team invite, redeem it now — the
+    // new password just put a real session in place, same as a normal sign-in
+    // would. A failure here is surfaced, not swallowed: silently continuing
+    // to /dashboard with no org would just bounce the user into onboarding
+    // with zero explanation, which reads exactly like "my account got wiped."
+    const inviteToken = getPendingInvite();
     if (inviteToken) {
       try {
         await acceptInvitation(inviteToken);
-      } catch {
-        // Best-effort — the account is still recovered either way; worst case
-        // they're just not joined to the org and can retry the invite link.
+        clearPendingInvite();
+      } catch (err) {
+        setJoinFailed(err instanceof Error ? err.message : "Couldn't join the team automatically.");
+        return;
       }
     }
     setDone(true);
     setTimeout(() => navigate({ to: "/dashboard" }), 1400);
+  }
+
+  // The password update already succeeded and the user has a real session —
+  // retry just the invite redemption, no need to make them log in again.
+  async function retryJoin() {
+    const inviteToken = getPendingInvite();
+    if (!inviteToken) return;
+    setPending(true);
+    try {
+      await acceptInvitation(inviteToken);
+      clearPendingInvite();
+      setJoinFailed(null);
+      setDone(true);
+      setTimeout(() => navigate({ to: "/dashboard" }), 1400);
+    } catch (err) {
+      setJoinFailed(err instanceof Error ? err.message : "Couldn't join the team automatically.");
+    } finally {
+      setPending(false);
+    }
   }
 
   return (
@@ -68,7 +92,19 @@ function ResetPassword() {
 
       <div className="mx-auto flex w-full max-w-md flex-1 items-center px-6 pb-16">
         <GlassCard className="rise w-full p-7">
-          {done ? (
+          {joinFailed ? (
+            <div className="text-center">
+              <span className="orb mx-auto grid size-12 place-items-center rounded-full border border-rose-400/40 bg-rose-500/10">
+                <AlertTriangle className="size-6 text-rose-300" />
+              </span>
+              <h1 className="mt-5 text-2xl" style={{ fontFamily: "var(--font-display)" }}>Password updated</h1>
+              <p className="mt-2 text-sm text-muted-foreground">But we couldn't automatically join you to the team: {joinFailed}</p>
+              <GoldButton onClick={retryJoin} disabled={pending} className="mt-5 w-full justify-center">
+                {pending ? "Retrying…" : <>Retry joining the team <ArrowRight className="size-4" /></>}
+              </GoldButton>
+              <Link to="/dashboard" className="mt-3 block text-xs text-muted-foreground hover:text-gold">Skip for now — go to my workspace</Link>
+            </div>
+          ) : done ? (
             <div className="text-center">
               <span className="orb mx-auto grid size-12 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
                 <Check className="size-6" stroke="oklch(0.2 0.02 70)" />

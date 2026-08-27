@@ -14,7 +14,9 @@ import {
   FileText,
   Globe,
   Home,
+  Mail,
   MapPin,
+  Phone,
   Package,
   Pencil,
   Scale,
@@ -78,6 +80,9 @@ type Supplier = {
   name: string;
   category: string;
   country: string;
+  contactName: string | null;
+  email: string | null;
+  phone: string | null;
   rating: number;
   reliability: number;
   onTime: number;
@@ -115,6 +120,9 @@ function toUiSupplier(
     name: s.name,
     category: s.category ?? "General",
     country: s.country ?? "—",
+    contactName: s.contact_name,
+    email: s.email,
+    phone: s.phone,
     rating,
     reliability,
     onTime: Math.max(0, reliability - 3),
@@ -501,7 +509,7 @@ function DatabaseView({ selectedId, onSelect }: { selectedId: string | null; onS
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ name: "", category: "", country: "", lead_time_days: "7", rating: "4.0", status: "Active" as Status });
+  const [form, setForm] = useState({ name: "", category: "", country: "", contact_name: "", email: "", phone: "", lead_time_days: "7", rating: "4.0", status: "Active" as Status });
 
   if (selectedId) {
     const s = suppliers.find((x) => x.id === selectedId);
@@ -516,12 +524,15 @@ function DatabaseView({ selectedId, onSelect }: { selectedId: string | null; onS
       name: form.name.trim(),
       category: form.category.trim() || null,
       country: form.country.trim() || null,
+      contact_name: form.contact_name.trim() || null,
+      email: form.email.trim() || null,
+      phone: form.phone.trim() || null,
       lead_time_days: Number(form.lead_time_days) || 7,
       rating: Number(form.rating) || 4,
       status: form.status,
     });
     setBusy(false);
-    setForm({ name: "", category: "", country: "", lead_time_days: "7", rating: "4.0", status: "Active" });
+    setForm({ name: "", category: "", country: "", contact_name: "", email: "", phone: "", lead_time_days: "7", rating: "4.0", status: "Active" });
     setAdding(false);
   };
 
@@ -545,6 +556,9 @@ function DatabaseView({ selectedId, onSelect }: { selectedId: string | null; onS
             <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Supplier name *" className={SUP_INPUT} />
             <input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} placeholder="Category (e.g. Packaging)" className={SUP_INPUT} />
             <input value={form.country} onChange={(e) => setForm((f) => ({ ...f, country: e.target.value }))} placeholder="Country" className={SUP_INPUT} />
+            <input value={form.contact_name} onChange={(e) => setForm((f) => ({ ...f, contact_name: e.target.value }))} placeholder="Contact name" className={SUP_INPUT} />
+            <input type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="Email — for reordering" className={SUP_INPUT} />
+            <input type="tel" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="Phone" className={SUP_INPUT} />
             <div className="grid grid-cols-2 gap-3">
               <input type="number" value={form.lead_time_days} onChange={(e) => setForm((f) => ({ ...f, lead_time_days: e.target.value }))} placeholder="Lead days" className={SUP_INPUT} />
               <input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={(e) => setForm((f) => ({ ...f, rating: e.target.value }))} placeholder="Rating" className={SUP_INPUT} />
@@ -596,11 +610,13 @@ function SupplierProfile({ s, onBack }: { s: Supplier; onBack: () => void }) {
   const [editNote, setEditNote] = useState<string | null>(null);
   const [ef, setEf] = useState({
     name: s.name, category: s.category, country: s.country,
+    contact_name: s.contactName ?? "", email: s.email ?? "", phone: s.phone ?? "",
     lead_time_days: String(s.leadTime), rating: String(s.rating), spend: String(s.spend), status: s.status as Status,
   });
   const openEdit = () => {
     setEf({
       name: s.name, category: s.category, country: s.country,
+      contact_name: s.contactName ?? "", email: s.email ?? "", phone: s.phone ?? "",
       lead_time_days: String(s.leadTime), rating: String(s.rating), spend: String(s.spend), status: s.status,
     });
     setEditNote(null);
@@ -613,6 +629,9 @@ function SupplierProfile({ s, onBack }: { s: Supplier; onBack: () => void }) {
       name: ef.name.trim(),
       category: ef.category.trim() || null,
       country: ef.country.trim() || null,
+      contact_name: ef.contact_name.trim() || null,
+      email: ef.email.trim() || null,
+      phone: ef.phone.trim() || null,
       lead_time_days: Number(ef.lead_time_days) || 0,
       rating: Number(ef.rating) || 0,
       spend: Number(ef.spend) || 0,
@@ -650,6 +669,18 @@ function SupplierProfile({ s, onBack }: { s: Supplier; onBack: () => void }) {
             <h2 className="mt-4 text-xl font-semibold tracking-tight" style={{ fontFamily: "var(--font-display)" }}>{s.name}</h2>
             <p className="flex items-center gap-1.5 text-sm text-muted-foreground"><MapPin className="size-3.5" /> {s.country}</p>
             <div className="mt-3 flex items-center gap-2"><StatusPill status={s.status} /><RiskPill risk={s.risk} /></div>
+
+            <div className="mt-4 w-full space-y-1.5 border-t border-border pt-4 text-left">
+              {s.contactName && <p className="truncate text-sm text-foreground/85">{s.contactName}</p>}
+              {s.email ? (
+                <a href={`mailto:${s.email}`} className="flex items-center gap-1.5 text-sm text-gold transition-colors hover:underline">
+                  <Mail className="size-3.5 shrink-0" /> <span className="truncate">{s.email}</span>
+                </a>
+              ) : (
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Mail className="size-3.5 shrink-0" /> No email on file — add one via Edit details.</p>
+              )}
+              {s.phone && <p className="flex items-center gap-1.5 text-sm text-muted-foreground"><Phone className="size-3.5 shrink-0" /> {s.phone}</p>}
+            </div>
             <div className="mt-6 grid w-full grid-cols-3 gap-3 border-t border-border pt-5 text-center">
               <div><p className="text-lg font-semibold tabular-nums text-gold">${formatNum(s.spend)}</p><p className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">Spend</p></div>
               <div><p className="text-lg font-semibold tabular-nums">{s.products}</p><p className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">Products</p></div>
@@ -672,6 +703,18 @@ function SupplierProfile({ s, onBack }: { s: Supplier; onBack: () => void }) {
                 <label className="block text-[0.65rem] uppercase tracking-wide text-muted-foreground">
                   Name
                   <input value={ef.name} onChange={(e) => setEf((f) => ({ ...f, name: e.target.value }))} className={cn(SUP_INPUT, "mt-1")} />
+                </label>
+                <label className="block text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                  Contact name
+                  <input value={ef.contact_name} onChange={(e) => setEf((f) => ({ ...f, contact_name: e.target.value }))} className={cn(SUP_INPUT, "mt-1")} />
+                </label>
+                <label className="block text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                  Email — for reordering
+                  <input type="email" value={ef.email} onChange={(e) => setEf((f) => ({ ...f, email: e.target.value }))} className={cn(SUP_INPUT, "mt-1")} />
+                </label>
+                <label className="block text-[0.65rem] uppercase tracking-wide text-muted-foreground">
+                  Phone
+                  <input type="tel" value={ef.phone} onChange={(e) => setEf((f) => ({ ...f, phone: e.target.value }))} className={cn(SUP_INPUT, "mt-1")} />
                 </label>
                 <div className="grid grid-cols-2 gap-2.5">
                   <label className="text-[0.65rem] uppercase tracking-wide text-muted-foreground">

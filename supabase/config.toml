@@ -35,3 +35,6 @@ verify_jwt = false
 
 [functions.resolve-automation-approval]
 verify_jwt = true
+
+[functions.slack-notify]
+verify_jwt = true

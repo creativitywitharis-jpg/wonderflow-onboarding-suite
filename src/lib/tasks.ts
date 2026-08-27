@@ -12,6 +12,7 @@ export type DbTask = {
   priority: TaskPriority;
   status: TaskStatus;
   due_date: string | null;
+  completed_at: string | null;
   notes: string | null;
   created_at: string;
 };
@@ -23,11 +24,12 @@ export type NewTask = {
   priority?: TaskPriority;
   status?: TaskStatus;
   due_date?: string | null;
+  completed_at?: string | null;
   notes?: string | null;
 };
 
-const COLS = "id,title,assignee_id,assignee_name,priority,status,due_date,notes,created_at";
-// Ships in migration 0031 — reach the table untyped until Lovable regenerates DB types.
+const COLS = "id,title,assignee_id,assignee_name,priority,status,due_date,completed_at,notes,created_at";
+// Ships in migrations 0031/0033 — reach the table untyped until Lovable regenerates DB types.
 const table = () => (supabase as unknown as { from: (t: string) => any }).from("tasks");
 
 /** All tasks for an org, newest first (RLS-scoped to members). */

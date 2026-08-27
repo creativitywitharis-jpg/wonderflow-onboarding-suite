@@ -266,15 +266,6 @@ function formatDue(due: string | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-const leaderboard = [
-  { label: "Ava Chen", value: 94 },
-  { label: "Priya Nair", value: 91 },
-  { label: "Ivy Zhou", value: 90 },
-  { label: "Mara Silva", value: 89 },
-  { label: "Marcus Reid", value: 88 },
-];
-const perfTrend = [78, 80, 79, 82, 84, 83, 86, 87, 88, 89, 90, 91];
-
 const courses = [
   { id: "c1", title: "AI tools for daily work", cat: "Productivity", lessons: 8, progress: 62, icon: Sparkles },
   { id: "c2", title: "Customer conversations that convert", cat: "Sales", lessons: 6, progress: 100, icon: Users },
@@ -707,14 +698,23 @@ function TasksView() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Stamps completed_at whenever a task newly enters/leaves Done — the only
+  // honest way to later compute on-time rate or a real completion trend
+  // (current status alone doesn't tell us WHEN it was finished).
   const advance = async (t: DbTask) => {
     const i = TASK_COLUMNS.indexOf(t.status);
-    if (i < TASK_COLUMNS.length - 1) await editTask(t.id, { status: TASK_COLUMNS[i + 1] });
+    if (i >= TASK_COLUMNS.length - 1) return;
+    const next = TASK_COLUMNS[i + 1];
+    await editTask(t.id, { status: next, completed_at: next === "Done" ? new Date().toISOString() : t.completed_at });
   };
   const save = async (t: NewTask) => {
     setBusy(true);
-    if (editingId) await editTask(editingId, t);
-    else await addTask(t);
+    const prev = editingId ? tasks.find((x) => x.id === editingId) : undefined;
+    const patch: NewTask = { ...t };
+    if (t.status === "Done" && prev?.status !== "Done") patch.completed_at = new Date().toISOString();
+    else if (t.status !== "Done" && prev?.status === "Done") patch.completed_at = null;
+    if (editingId) await editTask(editingId, patch);
+    else await addTask(patch);
     setBusy(false);
     setAdding(false);
     setEditingId(null);
@@ -972,18 +972,87 @@ function ScheduleView() {
 }
 
 function PerformanceView() {
-  const maxLb = Math.max(...leaderboard.map((l) => l.value));
+  const { tasks, loading } = useTasksData();
+
+  if (!loading && tasks.length === 0) {
+    return (
+      <GlassCard className="p-8 text-center sm:p-10">
+        <span className="orb mx-auto grid size-14 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+          <Gauge className="size-6" stroke="oklch(0.2 0.02 70)" />
+        </span>
+        <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>No performance data yet</h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">Add and complete tasks in the Tasks tab — completion rate, on-time rate and a real trend build up here.</p>
+      </GlassCard>
+    );
+  }
+
+  const done = tasks.filter((t) => t.status === "Done");
+  const open = tasks.length - done.length;
+  const completionRate = tasks.length ? Math.round((done.length / tasks.length) * 100) : 0;
+
+  const period = new Date().toISOString().slice(0, 7);
+  const doneThisMonth = done.filter((t) => (t.completed_at ?? "").slice(0, 7) === period).length;
+
+  // On-time rate only counts completed tasks that HAD a due date — nothing to
+  // judge "on time" against otherwise.
+  const doneWithDue = done.filter((t) => t.due_date && t.completed_at);
+  const onTime = doneWithDue.filter((t) => new Date(t.completed_at!) <= new Date(t.due_date + "T23:59:59"));
+  const onTimeRate = doneWithDue.length ? Math.round((onTime.length / doneWithDue.length) * 100) : null;
+
+  // Real completions per week, last 8 weeks (from actual completed_at timestamps).
+  const weeks = 8;
+  const buckets = new Array(weeks).fill(0);
+  const now = new Date();
+  for (const t of done) {
+    if (!t.completed_at) continue;
+    const diffDays = Math.floor((now.getTime() - new Date(t.completed_at).getTime()) / 864e5);
+    const w = Math.floor(diffDays / 7);
+    if (w >= 0 && w < weeks) buckets[weeks - 1 - w]++;
+  }
+  const hasTrend = buckets.some((v) => v > 0);
+
+  // Most tasks completed, by assignee — an honest ranking (a count, not a
+  // fabricated "performance score").
+  const counts = new Map<string, number>();
+  for (const t of done) if (t.assignee_name) counts.set(t.assignee_name, (counts.get(t.assignee_name) ?? 0) + 1);
+  const topDoers = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([label, value]) => ({ label, value }));
+  const maxDoer = Math.max(1, ...topDoers.map((t) => t.value));
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Avg performance" value={88} suffix="%" delta="2 pts" icon={Gauge} />
-        <StatTile label="Tasks completed (mo)" value={642} delta="11%" icon={CheckCircle2} />
-        <StatTile label="On-time rate" value={94} suffix="%" delta="1.5 pts" icon={Target} />
-        <StatTile label="Engagement" value={4.6} suffix="/5" decimals={1} delta="0.2" icon={Star} />
+        <StatTile label="Completion rate" value={completionRate} suffix="%" icon={Gauge} />
+        <StatTile label="Tasks completed (mo)" value={doneThisMonth} icon={CheckCircle2} />
+        <StatTile label="Total tasks" value={tasks.length} icon={Award} />
+        <StatTile label="Open tasks" value={open} positive={open === 0} icon={LayoutGrid} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <Reveal className="h-full"><GlassCard className="flex h-full flex-col p-6"><div className="flex items-baseline justify-between"><SectionLabel icon={TrendingUp}>Team performance trend</SectionLabel><span className="text-xs text-muted-foreground">Last 12 months</span></div><div className="mt-6"><Bars data={perfTrend} /></div></GlassCard></Reveal>
-        <Reveal className="h-full" delay={80}><GlassCard className="flex h-full flex-col p-6"><SectionLabel icon={Award}>Top performers</SectionLabel><div className="mt-5 space-y-4">{leaderboard.map((l) => (<div key={l.label}><div className="flex items-baseline justify-between text-sm"><span className="truncate text-foreground/85">{l.label}</span><span className="ml-2 shrink-0 tabular-nums text-gold">{l.value}</span></div><div className="mt-1.5"><Bar value={(l.value / maxLb) * 100} /></div></div>))}</div></GlassCard></Reveal>
+        <Reveal className="h-full">
+          <GlassCard className="flex h-full flex-col p-6">
+            <div className="flex items-baseline justify-between">
+              <SectionLabel icon={TrendingUp}>Tasks completed per week</SectionLabel>
+              <span className="text-xs text-muted-foreground">{onTimeRate !== null ? <><span className="text-gold">{onTimeRate}%</span> on-time · </> : null}Last 8 weeks</span>
+            </div>
+            {hasTrend ? <div className="mt-6"><Bars data={buckets} /></div> : <p className="py-10 text-center text-sm text-muted-foreground">Complete a few tasks and this trend fills in.</p>}
+          </GlassCard>
+        </Reveal>
+        <Reveal className="h-full" delay={80}>
+          <GlassCard className="flex h-full flex-col p-6">
+            <SectionLabel icon={Award}>Most tasks completed</SectionLabel>
+            {topDoers.length > 0 ? (
+              <div className="mt-5 space-y-4">
+                {topDoers.map((l) => (
+                  <div key={l.label}>
+                    <div className="flex items-baseline justify-between text-sm"><span className="truncate text-foreground/85">{l.label}</span><span className="ml-2 shrink-0 tabular-nums text-gold">{l.value}</span></div>
+                    <div className="mt-1.5"><Bar value={(l.value / maxDoer) * 100} /></div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-5 text-center text-sm text-muted-foreground">No completed, assigned tasks yet.</p>
+            )}
+          </GlassCard>
+        </Reveal>
       </div>
     </div>
   );

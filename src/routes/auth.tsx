@@ -88,7 +88,12 @@ function AuthScreen() {
         }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        if (error) {
+          // A brand-new invitee has no account yet, so "sign in" always fails
+          // here — point them at Sign up instead of leaving a bare auth error.
+          if (hasInvite) throw new Error(`${error.message} — if this is your first time joining, switch to "Sign up" above to create your account with this email instead.`);
+          throw error;
+        }
         await finishAuth("/dashboard");
       }
     } catch (err) {

@@ -33,7 +33,7 @@ function inviteHtml(opts: { orgName: string; inviter: string; role: string; join
         <strong style="color:#e3b341">${opts.orgName}</strong> on WonderFlow OS as a <strong>${opts.role}</strong>.
       </p>
       <a href="${opts.joinUrl}" style="display:inline-block;padding:12px 22px;border-radius:999px;background:linear-gradient(135deg,#f0cf6e,#c99a35);color:#1a1509;font-weight:600;font-size:14px;text-decoration:none">Accept invitation</a>
-      <p style="margin:18px 0 0;font-size:12px;color:#8a877f">Sign in with <strong style="color:#b8b5ad">${opts.email}</strong> to join. If you didn't expect this, you can ignore it.</p>
+      <p style="margin:18px 0 0;font-size:12px;color:#8a877f">Create your account with <strong style="color:#b8b5ad">${opts.email}</strong> to join — or sign in with that email if you already have a WonderFlow account. If you didn't expect this, you can ignore it.</p>
     </div>
   </div></body></html>`;
 }

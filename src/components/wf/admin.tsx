@@ -21,7 +21,6 @@ import {
   Plug,
   ScrollText,
   Search,
-  Server,
   Shield,
   ShieldCheck,
   Sparkles,
@@ -37,12 +36,14 @@ import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
+import { supabase } from "@/lib/supabase";
 import { enabledModulesFor, INDUSTRIES, updateOrganization } from "@/lib/org";
 import { connectSlack, disconnectSlack, listConnections, syncStripe, testSlack, type DbConnection } from "@/lib/connections";
 import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
-import { PLANS, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
+import { PLANS, getAiUsage, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
 import { cancelInvitation, inviteMember, listInvitations, listMembers, setMemberStatus, updateMember, type Invitation, type Member } from "@/lib/team";
+import { listAuditLog, logAudit, type AuditEntry } from "@/lib/audit";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Primitives
@@ -125,12 +126,6 @@ const aiModels = [
   { id: "balanced", name: "Balanced", desc: "Great quality at lower cost — the everyday default." },
   { id: "fast", name: "Fast", desc: "Instant responses for high-volume automations." },
 ];
-const autonomyLevels = [
-  { id: "suggest", name: "Suggest only", desc: "AI proposes; you do everything." },
-  { id: "approve", name: "Ask approval", desc: "AI drafts actions and waits for your OK." },
-  { id: "auto", name: "Autopilot", desc: "AI executes low-risk actions on its own." },
-];
-
 const PROVIDERS: { id: string; name: string; desc: string; icon: LucideIcon; kind: "sync" | "soon" }[] = [
   { id: "stripe", name: "Stripe", desc: "Import your customers & revenue into the CRM", icon: Zap, kind: "sync" },
   { id: "shopify", name: "Shopify", desc: "Sync orders, products & inventory", icon: Globe, kind: "soon" },
@@ -139,29 +134,7 @@ const PROVIDERS: { id: string; name: string; desc: string; icon: LucideIcon; kin
   { id: "google_analytics", name: "Google Analytics", desc: "Web & marketing analytics", icon: Globe, kind: "soon" },
 ];
 
-const sessions = [
-  { device: "MacBook Pro · Chrome", loc: "Austin, TX", last: "Active now", current: true },
-  { device: "iPhone 15 · Safari", loc: "Austin, TX", last: "2h ago", current: false },
-  { device: "Windows · Edge", loc: "Denver, CO", last: "3d ago", current: false },
-];
-
-const auditLog = [
-  { actor: "Marcus Reid", action: "updated AI autonomy to 'Ask approval'", cat: "AI", time: "8m ago", ip: "72.14.x.x" },
-  { actor: "Aisha Imran", action: "invited sam@contractor.io as Viewer", cat: "Users", time: "22m ago", ip: "72.14.x.x" },
-  { actor: "System", action: "auto-reorder created PO-2043", cat: "Orders", time: "1h ago", ip: "—" },
-  { actor: "Priya Nair", action: "exported financial report (YTD)", cat: "Data", time: "3h ago", ip: "98.20.x.x" },
-  { actor: "Marcus Reid", action: "connected Stripe integration", cat: "Integrations", time: "1d ago", ip: "72.14.x.x" },
-  { actor: "Aisha Imran", action: "enabled 2-factor authentication", cat: "Security", time: "2d ago", ip: "72.14.x.x" },
-];
-const catColor: Record<string, string> = { AI: "oklch(0.84 0.14 84)", Users: "oklch(0.66 0.09 200)", Orders: "oklch(0.7 0.11 60)", Data: "oklch(0.62 0.12 300)", Integrations: "oklch(0.75 0.13 150)", Security: "oklch(0.68 0.16 25)" };
-
-const services = [
-  { name: "API gateway", tone: "ok" as const, note: "142ms avg" },
-  { name: "Database", tone: "ok" as const, note: "healthy" },
-  { name: "AI engine", tone: "ok" as const, note: "3 models live" },
-  { name: "Webhooks", tone: "warn" as const, note: "elevated latency" },
-  { name: "Storage", tone: "ok" as const, note: "41% used" },
-];
+const catColor: Record<string, string> = { Users: "oklch(0.66 0.09 200)", Integrations: "oklch(0.75 0.13 150)", Security: "oklch(0.68 0.16 25)" };
 
 /* ──────────────────────────────────────────────────────────────────────
  * Views
@@ -323,17 +296,23 @@ function UsersView() {
         ? `Invitation emailed to ${invited}.`
         : `${invited} was invited and a seat reserved, but the email couldn't be sent${emailError ? ` (${emailError})` : ""}.`,
     );
+    await logAudit(org.id, `invited ${invited} as ${inviteRole}`, "Users");
     await reload();
   }
 
   async function toggleStatus(m: Member) {
-    if (m.role === "owner") return;
-    await setMemberStatus(m.id, m.status === "disabled" ? "active" : "disabled");
+    if (!org || m.role === "owner") return;
+    const nowActive = m.status === "disabled";
+    await setMemberStatus(m.id, nowActive ? "active" : "disabled");
+    await logAudit(org.id, `${nowActive ? "enabled" : "disabled"} ${m.name}`, "Users");
     await reload();
   }
 
   async function removeInvite(id: string) {
+    if (!org) return;
+    const inv = invites.find((i) => i.id === id);
     await cancelInvitation(id);
+    if (inv) await logAudit(org.id, `cancelled invite to ${inv.email}`, "Users");
     await reload();
   }
 
@@ -345,12 +324,14 @@ function UsersView() {
   }
 
   async function saveEdit() {
-    if (!editingId || editBusy) return;
+    if (!org || !editingId || editBusy) return;
+    const member = members.find((m) => m.id === editingId);
     setEditBusy(true);
     const { error: err } = await updateMember(editingId, { role: editRole, title: editTitle.trim() || null });
     setEditBusy(false);
     if (err) { setError(err.message); return; }
     setEditingId(null);
+    if (member) await logAudit(org.id, `updated ${member.name}'s role to ${editRole}${editTitle.trim() ? ` (${editTitle.trim()})` : ""}`, "Users");
     await reload();
   }
 
@@ -559,51 +540,33 @@ function PermissionsView() {
 }
 
 function AiConfigView() {
-  const [model, setModel] = useState("balanced");
-  const [autonomy, setAutonomy] = useState("approve");
-  const [features, setFeatures] = useState<Record<string, boolean>>({ briefings: true, reorder: true, replies: false, alerts: true, content: true });
-  const [learn, setLearn] = useState(true);
-  const toggleF = (k: string) => setFeatures((f) => ({ ...f, [k]: !f[k] }));
+  const { org, refresh } = useOrg();
+  const [saving, setSaving] = useState<string | null>(null);
+
+  const choose = async (id: string) => {
+    if (!org || saving || org.ai_model === id) return;
+    setSaving(id);
+    await updateOrganization(org.id, { ai_model: id });
+    await refresh();
+    setSaving(null);
+  };
+
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Reveal className="h-full">
-          <GlassCard className="h-full p-6">
-            <SectionLabel icon={Cpu}>AI model</SectionLabel>
-            <div className="mt-4 space-y-2">
-              {aiModels.map((m) => (
-                <button key={m.id} onClick={() => setModel(m.id)} className={cn("flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-colors", model === m.id ? "border-gold/50 bg-glass" : "border-border bg-background/30 hover:border-gold/30")}>
-                  <span className={cn("mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border", model === m.id ? "border-transparent" : "border-border")} style={model === m.id ? { background: "var(--gradient-gold)" } : undefined}>{model === m.id && <Check className="size-3.5" stroke="oklch(0.2 0.02 70)" />}</span>
-                  <div><p className="text-sm font-medium text-foreground">{m.name}</p><p className="text-xs text-muted-foreground">{m.desc}</p></div>
-                </button>
-              ))}
-            </div>
-          </GlassCard>
-        </Reveal>
-
-        <Reveal className="h-full" delay={80}>
-          <GlassCard className="h-full p-6">
-            <SectionLabel icon={Zap}>Autonomy level</SectionLabel>
-            <div className="mt-4 space-y-2">
-              {autonomyLevels.map((a) => (
-                <button key={a.id} onClick={() => setAutonomy(a.id)} className={cn("flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-colors", autonomy === a.id ? "border-gold/50 bg-glass" : "border-border bg-background/30 hover:border-gold/30")}>
-                  <span className={cn("mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border", autonomy === a.id ? "border-transparent" : "border-border")} style={autonomy === a.id ? { background: "var(--gradient-gold)" } : undefined}>{autonomy === a.id && <Check className="size-3.5" stroke="oklch(0.2 0.02 70)" />}</span>
-                  <div><p className="text-sm font-medium text-foreground">{a.name}</p><p className="text-xs text-muted-foreground">{a.desc}</p></div>
-                </button>
-              ))}
-            </div>
-          </GlassCard>
-        </Reveal>
-      </div>
-
       <Reveal>
         <GlassCard className="p-6">
-          <SectionLabel icon={Bot}>AI features</SectionLabel>
-          <div className="mt-2 grid gap-x-8 sm:grid-cols-2">
-            {([["briefings", "Daily AI briefings", "Morning summaries across the business"], ["reorder", "Auto-reorder", "Draft POs when stock runs low"], ["replies", "AI-suggested replies", "Draft responses in the CRM inbox"], ["alerts", "Predictive alerts", "Warn before stockouts & churn"], ["content", "Content generation", "Draft marketing copy on demand"]] as const).map(([k, label, desc]) => (
-              <div key={k} className="border-b border-border/60"><SettingRow label={label} desc={desc}><Toggle on={features[k]} onChange={() => toggleF(k)} /></SettingRow></div>
-            ))}
-            <div className="border-b border-border/60"><SettingRow label="Learn from my data" desc="Improve suggestions using your history"><Toggle on={learn} onChange={setLearn} /></SettingRow></div>
+          <SectionLabel icon={Cpu}>AI model</SectionLabel>
+          <p className="mt-1 text-xs text-muted-foreground">Every AI feature in WonderFlow — Staff Assistant, AI Advisor, automation drafts — uses this model.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {aiModels.map((m) => {
+              const active = (org?.ai_model ?? "balanced") === m.id;
+              return (
+                <button key={m.id} onClick={() => choose(m.id)} disabled={!org || saving !== null} className={cn("flex items-start gap-3 rounded-2xl border p-4 text-left transition-colors disabled:opacity-70", active ? "border-gold/50 bg-glass" : "border-border bg-background/30 hover:border-gold/30")}>
+                  <span className={cn("mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border", active ? "border-transparent" : "border-border")} style={active ? { background: "var(--gradient-gold)" } : undefined}>{active && <Check className="size-3.5" stroke="oklch(0.2 0.02 70)" />}</span>
+                  <div><p className="text-sm font-medium text-foreground">{m.name}{saving === m.id ? " — saving…" : ""}</p><p className="text-xs text-muted-foreground">{m.desc}</p></div>
+                </button>
+              );
+            })}
           </div>
         </GlassCard>
       </Reveal>
@@ -869,6 +832,7 @@ function SlackCard({ conn, onChange }: { conn?: DbConnection; onChange: () => vo
     if (err) { setError(err.message); return; }
     setEditing(false);
     setUrl("");
+    await logAudit(org.id, connected ? "updated the Slack connection" : "connected Slack", "Integrations");
     onChange();
   };
   const disconnect = async () => {
@@ -877,6 +841,7 @@ function SlackCard({ conn, onChange }: { conn?: DbConnection; onChange: () => vo
     await disconnectSlack(org.id);
     setBusy(false);
     setTestMsg(null);
+    await logAudit(org.id, "disconnected Slack", "Integrations");
     onChange();
   };
   const sendTest = async () => {
@@ -1001,48 +966,173 @@ function IntegrationsView() {
   );
 }
 
+type TotpFactor = { id: string; status: string };
+
+// Real TOTP 2FA via Supabase Auth's built-in MFA — enroll here shows a QR
+// code + manual secret, confirmed with a 6-digit code from the user's
+// authenticator app. Enforcement at sign-in lives in routes/auth.tsx (a
+// verified factor makes Supabase require a code there before the session
+// reaches aal2). SSO/IP-allowlist/session-timeout were dropped — none of
+// those are available on this Supabase tier, and a toggle that saves
+// nothing is worse than no toggle.
+function TwoFactorCard() {
+  const { org } = useOrg();
+  const [factors, setFactors] = useState<TotpFactor[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [enrolling, setEnrolling] = useState(false);
+  const [qr, setQr] = useState<string | null>(null);
+  const [secret, setSecret] = useState<string | null>(null);
+  const [factorId, setFactorId] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase.auth.mfa.listFactors();
+    setFactors(((data?.totp ?? []) as TotpFactor[]).filter((f) => f.status === "verified"));
+    setLoading(false);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const enabled = factors.length > 0;
+
+  const startEnroll = async () => {
+    setError(null);
+    setBusy(true);
+    const { data, error: err } = await supabase.auth.mfa.enroll({ factorType: "totp" });
+    setBusy(false);
+    if (err) { setError(err.message); return; }
+    setFactorId(data.id);
+    setQr(data.totp.qr_code);
+    setSecret(data.totp.secret);
+    setEnrolling(true);
+  };
+
+  const cancelEnroll = async () => {
+    if (factorId) await supabase.auth.mfa.unenroll({ factorId });
+    setEnrolling(false);
+    setQr(null);
+    setSecret(null);
+    setCode("");
+    setFactorId(null);
+    setError(null);
+  };
+
+  const verify = async () => {
+    if (!factorId || code.trim().length !== 6 || busy) return;
+    setBusy(true);
+    setError(null);
+    const { data: challenge, error: chErr } = await supabase.auth.mfa.challenge({ factorId });
+    if (chErr) { setBusy(false); setError(chErr.message); return; }
+    const { error: vErr } = await supabase.auth.mfa.verify({ factorId, challengeId: challenge.id, code: code.trim() });
+    setBusy(false);
+    if (vErr) { setError(vErr.message); return; }
+    setEnrolling(false);
+    setQr(null);
+    setSecret(null);
+    setCode("");
+    if (org) await logAudit(org.id, "enabled two-factor authentication", "Security");
+    await load();
+  };
+
+  const disable = async () => {
+    if (busy) return;
+    setBusy(true);
+    for (const f of factors) await supabase.auth.mfa.unenroll({ factorId: f.id });
+    setBusy(false);
+    if (org) await logAudit(org.id, "disabled two-factor authentication", "Security");
+    await load();
+  };
+
+  return (
+    <GlassCard className="h-full p-6">
+      <SectionLabel icon={ShieldCheck}>Two-factor authentication</SectionLabel>
+      <p className="mt-2 text-sm text-muted-foreground">Protects your own sign-in with an authenticator app (Google Authenticator, Authy, 1Password…) — this is per-account, not something you set for teammates.</p>
+
+      {loading ? (
+        <p className="mt-4 text-sm text-muted-foreground">Loading…</p>
+      ) : enrolling ? (
+        <div className="mt-4 space-y-3">
+          {qr && <img src={qr} alt="2FA QR code" className="size-40 rounded-xl border border-border bg-white p-2" />}
+          {secret && <p className="text-xs text-muted-foreground">Can't scan? Enter this key manually: <code className="font-mono text-foreground/80">{secret}</code></p>}
+          <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6-digit code" className="w-40 rounded-lg border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
+          {error && <p className="text-xs text-rose-300">{error}</p>}
+          <div className="flex gap-2">
+            <button onClick={verify} disabled={busy || code.length !== 6} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Verifying…" : "Confirm & enable"}</button>
+            <button onClick={cancelEnroll} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+          </div>
+        </div>
+      ) : enabled ? (
+        <div className="mt-4 space-y-3">
+          <p className="flex items-center gap-1.5 text-xs text-emerald-300"><StatusDot tone="ok" /> Enabled — a code is required to sign in.</p>
+          {error && <p className="text-xs text-rose-300">{error}</p>}
+          <button onClick={disable} disabled={busy} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:border-rose-400/50 hover:text-rose-300 disabled:opacity-60">{busy ? "Disabling…" : "Disable 2FA"}</button>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-2">
+          {error && <p className="text-xs text-rose-300">{error}</p>}
+          <button onClick={startEnroll} disabled={busy} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-60" style={{ background: "var(--gradient-gold)" }}>{busy ? "Starting…" : "Enable 2FA"}</button>
+        </div>
+      )}
+    </GlassCard>
+  );
+}
+
+function SessionsCard() {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const signOutOthers = async () => {
+    setBusy(true);
+    await supabase.auth.signOut({ scope: "others" });
+    setBusy(false);
+    setDone(true);
+  };
+  return (
+    <GlassCard className="h-full p-6">
+      <SectionLabel icon={Lock}>Sessions</SectionLabel>
+      <p className="mt-2 text-sm text-muted-foreground">This device is signed in right now. If you think you're signed in somewhere you shouldn't be, sign out everywhere else without affecting this session.</p>
+      <button onClick={signOutOthers} disabled={busy} className="mt-4 rounded-full border border-border bg-glass px-4 py-2 text-xs text-foreground/80 transition-colors hover:border-rose-400/50 hover:text-rose-300 disabled:opacity-60">
+        {busy ? "Signing out…" : done ? "Done — other sessions signed out" : "Sign out of other sessions"}
+      </button>
+    </GlassCard>
+  );
+}
+
 function SecurityView() {
-  const [twoFa, setTwoFa] = useState(true);
-  const [sso, setSso] = useState(false);
-  const [strongPw, setStrongPw] = useState(true);
-  const [ipAllow, setIpAllow] = useState(false);
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Reveal className="h-full">
-        <GlassCard className="h-full p-6">
-          <SectionLabel icon={ShieldCheck}>Authentication</SectionLabel>
-          <div className="mt-2 divide-y divide-border">
-            <SettingRow label="Two-factor authentication" desc="Require 2FA for every team member"><Toggle on={twoFa} onChange={setTwoFa} /></SettingRow>
-            <SettingRow label="Single sign-on (SAML)" desc="Log in with your identity provider"><Toggle on={sso} onChange={setSso} /></SettingRow>
-            <SettingRow label="Strong password policy" desc="12+ chars, rotation every 90 days"><Toggle on={strongPw} onChange={setStrongPw} /></SettingRow>
-            <SettingRow label="IP allowlist" desc="Restrict access to known networks"><Toggle on={ipAllow} onChange={setIpAllow} /></SettingRow>
-            <SettingRow label="Session timeout" desc="Auto-logout after inactivity"><select className="rounded-lg border border-border bg-background/40 px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-gold/50"><option>30 min</option><option>1 hour</option><option>8 hours</option></select></SettingRow>
-          </div>
-        </GlassCard>
-      </Reveal>
-
-      <Reveal className="h-full" delay={80}>
-        <GlassCard className="h-full p-6">
-          <SectionLabel icon={Lock}>Active sessions</SectionLabel>
-          <div className="mt-4 space-y-2">
-            {sessions.map((s) => (
-              <div key={s.device} className="flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-3">
-                <span className="grid size-9 place-items-center rounded-lg border border-border bg-glass"><Server className="size-4 text-gold" /></span>
-                <div className="min-w-0 flex-1"><p className="truncate text-sm text-foreground/90">{s.device} {s.current && <span className="ml-1 text-xs text-gold">· this device</span>}</p><p className="text-xs text-muted-foreground">{s.loc} · {s.last}</p></div>
-                {!s.current && <button className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300"><Trash2 className="size-3.5" /></button>}
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 flex items-center gap-2 rounded-xl border border-gold/25 bg-glass p-3 text-xs text-foreground/80"><ShieldCheck className="size-4 text-gold" /> Security posture: strong. No anomalies detected.</div>
-        </GlassCard>
-      </Reveal>
+      <Reveal className="h-full"><TwoFactorCard /></Reveal>
+      <Reveal className="h-full" delay={80}><SessionsCard /></Reveal>
     </div>
   );
 }
 
+function auditTimeAgo(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+// Scoped to security-sensitive admin actions (team membership, integrations)
+// rather than every write across the app — see lib/audit.ts.
 function AuditView() {
+  const { org } = useOrg();
+  const [log, setLog] = useState<AuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
-  const filtered = auditLog.filter((l) => (l.actor + l.action + l.cat).toLowerCase().includes(q.toLowerCase()));
+
+  useEffect(() => {
+    if (!org) { setLog([]); setLoading(false); return; }
+    setLoading(true);
+    listAuditLog(org.id).then(setLog).finally(() => setLoading(false));
+  }, [org?.id]);
+
+  const filtered = log.filter((l) => (l.actor_name + l.action + l.category).toLowerCase().includes(q.toLowerCase()));
   return (
     <Reveal>
       <GlassCard className="p-5 sm:p-6">
@@ -1053,61 +1143,67 @@ function AuditView() {
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter…" className="w-32 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70" />
           </label>
         </div>
+        <p className="mt-1 text-xs text-muted-foreground">Team membership, integrations, and security changes — not every action across the app.</p>
         <div className="mt-5 space-y-1">
-          {filtered.map((l, i) => (
-            <div key={i} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
-              <Avatar name={l.actor === "System" ? "S Y" : l.actor} />
-              <div className="min-w-0 flex-1"><p className="truncate text-sm text-foreground/90"><span className="font-medium">{l.actor}</span> {l.action}</p><p className="text-xs text-muted-foreground">{l.time} · {l.ip}</p></div>
-              <span className="shrink-0 rounded-full px-2 py-0.5 text-[0.65rem] font-medium" style={{ color: catColor[l.cat], background: `color-mix(in oklch, ${catColor[l.cat]} 14%, transparent)` }}>{l.cat}</span>
+          {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>}
+          {!loading && filtered.map((l) => (
+            <div key={l.id} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
+              <Avatar name={l.actor_name} />
+              <div className="min-w-0 flex-1"><p className="truncate text-sm text-foreground/90"><span className="font-medium">{l.actor_name}</span> {l.action}</p><p className="text-xs text-muted-foreground">{auditTimeAgo(l.created_at)}</p></div>
+              <span className="shrink-0 rounded-full px-2 py-0.5 text-[0.65rem] font-medium" style={{ color: catColor[l.category], background: `color-mix(in oklch, ${catColor[l.category]} 14%, transparent)` }}>{l.category}</span>
             </div>
           ))}
-          {filtered.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No matching events.</p>}
+          {!loading && filtered.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No matching events.</p>}
         </div>
       </GlassCard>
     </Reveal>
   );
 }
 
+// Real usage against the org's plan limits — seats (from real membership
+// counts) and AI messages (from the same metering ai-chat enforces server-side).
+// No infra metrics here (uptime/latency/error-rate) since there's no real
+// observability tooling wired into this app to source them from honestly.
 function MonitoringView() {
-  const meters = [{ label: "API quota", value: 62, note: "620k / 1M calls" }, { label: "Storage", value: 41, note: "41 / 100 GB" }, { label: "Seats", value: 53, note: "8 / 15 used" }];
+  const { org } = useOrg();
+  const [seatsUsed, setSeatsUsed] = useState(0);
+  const [aiUsed, setAiUsed] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!org) { setLoading(false); return; }
+    setLoading(true);
+    Promise.all([listMembers(org.id), getAiUsage(org.id)])
+      .then(([members, ai]) => {
+        setSeatsUsed(members.filter((m) => m.status !== "disabled").length);
+        setAiUsed(ai);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [org?.id]);
+
+  const limits = planLimits(org?.plan);
+  const seatPct = limits.seats > 0 ? Math.min(100, Math.round((seatsUsed / limits.seats) * 100)) : 0;
+  const aiPct = limits.aiMonthly ? Math.min(100, Math.round((aiUsed / limits.aiMonthly) * 100)) : 0;
+
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Uptime (30d)" value={99.98} suffix="%" decimals={2} icon={Activity} />
-        <StatTile label="Avg latency" value={142} suffix=" ms" positive icon={Zap} />
-        <StatTile label="Requests today" value={1240000} icon={Server} />
-        <StatTile label="Error rate" value={0.02} suffix="%" decimals={2} positive icon={AlertTriangle} />
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Reveal className="h-full">
-          <GlassCard className="h-full p-6">
-            <SectionLabel icon={Server}>Service status</SectionLabel>
-            <div className="mt-4 space-y-1">
-              {services.map((s) => (
-                <div key={s.name} className="flex items-center gap-3 rounded-xl px-2 py-3">
-                  <StatusDot tone={s.tone} />
-                  <span className="flex-1 text-sm text-foreground/90">{s.name}</span>
-                  <span className="text-xs text-muted-foreground">{s.note}</span>
-                  <span className="text-xs" style={{ color: s.tone === "ok" ? "oklch(0.72 0.14 155)" : "oklch(0.84 0.14 84)" }}>{s.tone === "ok" ? "Operational" : "Degraded"}</span>
-                </div>
-              ))}
+      <Reveal>
+        <GlassCard className="p-6">
+          <SectionLabel icon={Database}>Usage this month</SectionLabel>
+          <p className="mt-1 text-xs text-muted-foreground">Real usage against your {limits.label} plan's limits.</p>
+          <div className="mt-5 space-y-5">
+            <div>
+              <div className="flex items-baseline justify-between text-sm"><span className="text-foreground/85">Seats</span><span className="text-xs text-muted-foreground">{loading ? "…" : `${seatsUsed} / ${limits.seats} used`}</span></div>
+              <div className="mt-2"><Bar value={loading ? 0 : seatPct} /></div>
             </div>
-          </GlassCard>
-        </Reveal>
-        <Reveal className="h-full" delay={80}>
-          <GlassCard className="h-full p-6">
-            <SectionLabel icon={Database}>Usage</SectionLabel>
-            <div className="mt-5 space-y-5">
-              {meters.map((m) => (
-                <div key={m.label}>
-                  <div className="flex items-baseline justify-between text-sm"><span className="text-foreground/85">{m.label}</span><span className="text-xs text-muted-foreground">{m.note}</span></div>
-                  <div className="mt-2"><Bar value={m.value} /></div>
-                </div>
-              ))}
+            <div>
+              <div className="flex items-baseline justify-between text-sm"><span className="text-foreground/85">AI messages</span><span className="text-xs text-muted-foreground">{loading ? "…" : limits.aiMonthly ? `${aiUsed} / ${limits.aiMonthly} this month` : `${aiUsed} this month — unlimited`}</span></div>
+              <div className="mt-2"><Bar value={loading ? 0 : aiPct} /></div>
             </div>
-          </GlassCard>
-        </Reveal>
-      </div>
+          </div>
+        </GlassCard>
+      </Reveal>
     </div>
   );
 }

@@ -59,13 +59,20 @@ const SLACK_SYSTEM = [
   "No preamble, no meta-commentary about the request or the data, no questions back to whoever triggered this.",
 ].join(" ");
 
-async function claudeDraft(prompt: string, system: string = DRAFT_SYSTEM): Promise<string> {
+// Kept in sync with src/components/wf/admin.tsx's AiConfigView.
+const MODEL_FOR_TIER: Record<string, string> = {
+  precision: "claude-opus-5",
+  balanced: "claude-sonnet-5",
+  fast: "claude-haiku-4-5-20251001",
+};
+
+async function claudeDraft(prompt: string, system: string = DRAFT_SYSTEM, model: string = MODEL_FOR_TIER.balanced): Promise<string> {
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (!key) return "";
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model: "claude-opus-5", max_tokens: 1024, system, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model, max_tokens: 1024, system, messages: [{ role: "user", content: prompt }] }),
   });
   const data = await resp.json();
   if (!resp.ok) return "";
@@ -98,6 +105,12 @@ async function runAction(
   config: Record<string, unknown>,
 ): Promise<{ ok: boolean; detail: string }> {
   try {
+    // Only ai_draft_note/email_customer/slack_message call Claude, but this is
+    // cheap and keeps the model lookup in one place rather than duplicated
+    // across three branches.
+    const { data: org } = await admin.from("organizations").select("ai_model").eq("id", orgId).maybeSingle();
+    const model = MODEL_FOR_TIER[(org as { ai_model?: string } | null)?.ai_model ?? "balanced"] ?? MODEL_FOR_TIER.balanced;
+
     if (actionKey === "webhook") {
       const url = (config.webhook_url as string) ?? "";
       if (!url) return { ok: false, detail: "no webhook_url" };
@@ -110,7 +123,7 @@ async function runAction(
       const webhookUrl = (conn as { config?: { webhook_url?: string } } | null)?.config?.webhook_url;
       if ((conn as { status?: string } | null)?.status !== "connected" || !webhookUrl) return { ok: false, detail: "Slack not connected" };
       const basePrompt = (config.prompt as string) || "Write a short, friendly Slack alert for the team about this event.";
-      const text = await claudeDraft(`${basePrompt}\n\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`, SLACK_SYSTEM);
+      const text = await claudeDraft(`${basePrompt}\n\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`, SLACK_SYSTEM, model);
       if (!text) return { ok: false, detail: "AI unavailable" };
       const r = await fetch(webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: `*${automationName}*\n${text}` }) });
       return { ok: r.ok, detail: `slack ${r.status}` };
@@ -144,7 +157,7 @@ async function runAction(
       const { data: org } = await admin.from("organizations").select("name").eq("id", orgId).maybeSingle();
       const orgName = (org as { name?: string } | null)?.name ?? "Your business";
       const basePrompt = (config.prompt as string) || "Write a short, warm email to this customer for this event.";
-      const body = await claudeDraft(`${basePrompt}\n\nCustomer name: ${custName}\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`, EMAIL_SYSTEM);
+      const body = await claudeDraft(`${basePrompt}\n\nCustomer name: ${custName}\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`, EMAIL_SYSTEM, model);
       if (!body) return { ok: false, detail: "AI unavailable" };
       const from = Deno.env.get("EMAIL_FROM") || "WonderFlow OS <onboarding@resend.dev>";
       const subject = (config.subject as string) || `A message from ${orgName}`;
@@ -159,7 +172,7 @@ async function runAction(
 
     // Default: ai_draft_note
     const basePrompt = (config.prompt as string) || "Draft a short, friendly, actionable note for this business event.";
-    const draft = await claudeDraft(`${basePrompt}\n\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`);
+    const draft = await claudeDraft(`${basePrompt}\n\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`, DRAFT_SYSTEM, model);
     if (!draft) return { ok: false, detail: "AI unavailable" };
     const customerId = (payload.customer_id as string) ?? null;
     await admin.from("interactions").insert({ org_id: orgId, customer_id: customerId, channel: "note", body: `🤖 ${automationName}: ${draft}` });

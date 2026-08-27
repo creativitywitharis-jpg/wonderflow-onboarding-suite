@@ -26,6 +26,13 @@ const AI_MONTHLY: Record<string, number | null> = {
   scale: null,
 };
 
+// Kept in sync with src/components/wf/admin.tsx's AiConfigView.
+const MODEL_FOR_TIER: Record<string, string> = {
+  precision: "claude-opus-5",
+  balanced: "claude-sonnet-5",
+  fast: "claude-haiku-4-5-20251001",
+};
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -97,6 +104,7 @@ Deno.serve(async (req: Request) => {
   let plan = "trial";
   let metered = false;
   let memoryFacts: string[] = [];
+  let model = MODEL_FOR_TIER.balanced;
   if (orgId) {
     const { data: membership } = await userClient
       .from("memberships")
@@ -114,8 +122,9 @@ Deno.serve(async (req: Request) => {
       memoryFacts = [];
     }
 
-    const { data: org } = await admin.from("organizations").select("plan").eq("id", orgId).maybeSingle();
+    const { data: org } = await admin.from("organizations").select("plan,ai_model").eq("id", orgId).maybeSingle();
     plan = (org as { plan?: string } | null)?.plan ?? "trial";
+    model = MODEL_FOR_TIER[(org as { ai_model?: string } | null)?.ai_model ?? "balanced"] ?? MODEL_FOR_TIER.balanced;
     const limit = AI_MONTHLY[plan] ?? null;
     metered = limit !== null;
 
@@ -149,7 +158,7 @@ Deno.serve(async (req: Request) => {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: "claude-opus-5",
+        model,
         max_tokens: 2048,
         system: buildSystem(body.business ?? null, memoryFacts),
         messages,

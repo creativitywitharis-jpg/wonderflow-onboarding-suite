@@ -46,6 +46,8 @@ function AuthScreen() {
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
   const [hasInvite, setHasInvite] = useState(false);
   const [resetPending, setResetPending] = useState(false);
+  const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -101,10 +103,41 @@ function AuthScreen() {
           if (hasInvite) throw new Error(`${error.message} — if this is your first time joining, switch to "Sign up" above to create your account with this email instead.`);
           throw error;
         }
+        // The password alone only gets an aal1 session if this account has a
+        // verified 2FA factor — it still needs a code before it's really signed in.
+        const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+          const { data: factors } = await supabase.auth.mfa.listFactors();
+          const factor = factors?.totp?.[0];
+          if (factor) {
+            setMfaFactorId(factor.id);
+            return;
+          }
+        }
         await finishAuth("/dashboard");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function verifyMfa(e: React.FormEvent) {
+    e.preventDefault();
+    if (!mfaFactorId || mfaCode.trim().length !== 6 || pending) return;
+    setError(null);
+    setPending(true);
+    try {
+      const { data: challenge, error: chErr } = await supabase.auth.mfa.challenge({ factorId: mfaFactorId });
+      if (chErr) throw chErr;
+      const { error: vErr } = await supabase.auth.mfa.verify({ factorId: mfaFactorId, challengeId: challenge.id, code: mfaCode.trim() });
+      if (vErr) throw vErr;
+      setMfaFactorId(null);
+      setMfaCode("");
+      await finishAuth("/dashboard");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid code. Please try again.");
     } finally {
       setPending(false);
     }
@@ -196,6 +229,34 @@ function AuthScreen() {
               <Users className="size-3.5 shrink-0 text-gold" /> You've been invited to a team — sign in or create your account with the invited email to join.
             </div>
           )}
+          {mfaFactorId ? (
+            <form onSubmit={verifyMfa} className="space-y-4">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">Two-factor code</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Enter the 6-digit code from your authenticator app.</p>
+              </div>
+              <input
+                autoFocus
+                inputMode="numeric"
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                className={`${inputClass} text-center tracking-[0.4em]`}
+                placeholder="000000"
+              />
+              {error && (
+                <p className="flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-200">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" /> {error}
+                </p>
+              )}
+              <GoldButton type="submit" disabled={pending || mfaCode.length !== 6} className="w-full">
+                {pending ? "Verifying…" : <>Verify <ArrowRight className="size-4" /></>}
+              </GoldButton>
+              <button type="button" onClick={() => { setMfaFactorId(null); setMfaCode(""); setError(null); }} className="w-full text-center text-xs text-muted-foreground hover:text-foreground">
+                Back to sign in
+              </button>
+            </form>
+          ) : (
+          <>
           <div className="flex rounded-full border border-border p-1 text-sm">
             {(["signup", "signin"] as const).map((m) => (
               <button
@@ -319,6 +380,8 @@ function AuthScreen() {
             </svg>
             Continue with Google
           </GhostButton>
+          </>
+          )}
 
           <p className="mt-5 text-center text-xs leading-relaxed text-muted-foreground">
             Protected by enterprise controls, encrypted storage and per-business data isolation.

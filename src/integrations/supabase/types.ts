@@ -725,6 +725,48 @@ export type Database = {
           },
         ]
       }
+      help_messages: {
+        Row: {
+          created_at: string
+          id: string
+          org_id: string
+          role: string
+          text: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          org_id: string
+          role: string
+          text: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          org_id?: string
+          role?: string
+          text?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "help_messages_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "help_messages_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       initiatives: {
         Row: {
           created_at: string
@@ -1919,6 +1961,7 @@ export type Database = {
       is_org_member:
         | { Args: { _org_id: string; _user_id: string }; Returns: boolean }
         | { Args: { org: string }; Returns: boolean }
+      leave_organization: { Args: { p_org_id: string }; Returns: undefined }
       shares_org: { Args: { other: string }; Returns: boolean }
     }
     Enums: {

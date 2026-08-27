@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock,
   CreditCard,
+  ExternalLink,
   Globe,
   Home,
   LayoutGrid,
@@ -17,6 +18,7 @@ import {
   Minus,
   Package,
   PackageCheck,
+  Pencil,
   Plus,
   Receipt,
   Search,
@@ -42,6 +44,7 @@ import {
   insertOrders,
   listOrders,
   updateOrderStatus,
+  updateOrderTracking,
   type DbOrder,
   type NewOrder,
   type OrderItem,
@@ -109,6 +112,8 @@ type UiOrder = {
   priority: "High" | "Normal";
   city: string;
   eta: string;
+  trackingNumber: string | null;
+  carrier: string | null;
   lineItems: OrderItem[];
 };
 
@@ -135,6 +140,8 @@ function toUi(o: DbOrder): UiOrder {
     priority: o.priority,
     city: o.city ?? "—",
     eta: o.eta ?? "—",
+    trackingNumber: o.tracking_number,
+    carrier: o.carrier,
     lineItems: Array.isArray(o.items) ? o.items : [],
   };
 }
@@ -147,6 +154,7 @@ type OrdersState = {
   addOrder: (o: NewOrder) => Promise<void>;
   importOrders: (rows: NewOrder[]) => Promise<{ error: Error | null }>;
   advance: (id: string, status: OrderStatus) => Promise<void>;
+  setTracking: (id: string, patch: { tracking_number?: string | null; carrier?: string | null }) => Promise<{ error: Error | null }>;
   seed: () => Promise<void>;
 };
 const OrdersCtx = createContext<OrdersState | null>(null);
@@ -219,6 +227,18 @@ function OrdersProvider({ children }: { children: ReactNode }) {
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, stage: status } : o)));
   }, []);
 
+  const setTracking = useCallback(async (id: string, patch: { tracking_number?: string | null; carrier?: string | null }) => {
+    const { error } = await updateOrderTracking(id, patch);
+    if (!error) {
+      setOrders((prev) => prev.map((o) => (o.id === id ? {
+        ...o,
+        trackingNumber: patch.tracking_number !== undefined ? patch.tracking_number : o.trackingNumber,
+        carrier: patch.carrier !== undefined ? patch.carrier : o.carrier,
+      } : o)));
+    }
+    return { error };
+  }, []);
+
   const seed = useCallback(
     async () => {
       if (!org) return;
@@ -249,7 +269,7 @@ function OrdersProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <OrdersCtx.Provider value={{ orders, customers, products, loading, addOrder, importOrders, advance, seed }}>
+    <OrdersCtx.Provider value={{ orders, customers, products, loading, addOrder, importOrders, advance, setTracking, seed }}>
       {children}
     </OrdersCtx.Provider>
   );
@@ -959,40 +979,110 @@ function FulfillmentView() {
   );
 }
 
+// No carrier API — real, but manual: you paste in the tracking number you
+// already got from shipping, and this builds a real link to that carrier's
+// own public tracking page.
+const CARRIER_TRACK_URL: Record<string, (n: string) => string> = {
+  FedEx: (n) => `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(n)}`,
+  UPS: (n) => `https://www.ups.com/track?loc=en_US&tracknum=${encodeURIComponent(n)}`,
+  DHL: (n) => `https://www.dhl.com/en/express/tracking.html?AWB=${encodeURIComponent(n)}`,
+  USPS: (n) => `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(n)}`,
+};
+const CARRIERS = Object.keys(CARRIER_TRACK_URL);
+const DELIVERY_STEPS: OrderStatus[] = ["New", "Paid", "Processing", "Packed", "Shipped", "Delivered"];
+
+function TrackingForm({
+  order,
+  onSave,
+}: {
+  order: UiOrder;
+  onSave: (patch: { tracking_number?: string | null; carrier?: string | null }) => Promise<{ error: Error | null }>;
+}) {
+  const [carrier, setCarrier] = useState(order.carrier ?? CARRIERS[0]);
+  const [num, setNum] = useState(order.trackingNumber ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    if (!num.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await onSave({ tracking_number: num.trim(), carrier });
+    setBusy(false);
+    if (err) setError(err.message);
+  };
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-background/30 p-3">
+      <select value={carrier} onChange={(e) => setCarrier(e.target.value)} className="rounded-lg border border-border bg-background/60 px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-gold/50">
+        {CARRIERS.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      <input value={num} onChange={(e) => setNum(e.target.value)} placeholder="Tracking number" className="min-w-0 flex-1 rounded-lg border border-border bg-background/60 px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-gold/50" />
+      <button onClick={save} disabled={!num.trim() || busy} className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Save"}</button>
+      {error && <p className="w-full text-xs text-rose-300">{error}</p>}
+    </div>
+  );
+}
+
 function DeliveryView() {
-  const steps = ["Ordered", "Packed", "Shipped", "Out for delivery", "Delivered"];
-  const shipments = [
-    { id: "#10426", customer: "Noah Reed", carrier: "FedEx", active: 2, eta: "Aug 5", city: "Seattle, WA" },
-    { id: "#10424", customer: "Ivy Zhou", carrier: "UPS", active: 3, eta: "Today, 6 PM", city: "Chicago, IL" },
-    { id: "#10421", customer: "Dane Ford", carrier: "DHL", active: 2, eta: "Aug 5", city: "Portland, OR" },
-    { id: "#10422", customer: "Sam Idris", carrier: "USPS", active: 4, eta: "Delivered", city: "Boston, MA" },
-  ];
+  const { orders, setTracking } = useOrdersData();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const shipped = orders.filter((o) => o.stage === "Shipped" || o.stage === "Delivered");
+  const inTransit = orders.filter((o) => o.stage === "Shipped").length;
+  const delivered = orders.filter((o) => o.stage === "Delivered").length;
+  const trackedPct = shipped.length ? Math.round((shipped.filter((o) => o.trackingNumber).length / shipped.length) * 100) : 0;
+
   return (
     <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile label="In transit" value={38} icon={Truck} />
-        <StatTile label="Out for delivery" value={12} icon={MapPin} />
-        <StatTile label="On-time rate" value={96} suffix="%" delta="1.4 pts" icon={CheckCircle2} />
+        <StatTile label="In transit" value={inTransit} icon={Truck} />
+        <StatTile label="Delivered" value={delivered} icon={CheckCircle2} />
+        <StatTile label="Shipments with tracking" value={trackedPct} suffix="%" icon={Package} />
       </div>
-      {shipments.map((s, i) => (
-        <Reveal key={s.id} delay={i * 60}>
-          <GlassCard className="p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <Avatar name={s.customer} />
-                <div>
-                  <p className="text-sm font-medium text-foreground">{s.customer} <span className="font-mono text-xs text-muted-foreground">{s.id}</span></p>
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Truck className="size-3" /> {s.carrier} · <MapPin className="size-3" /> {s.city}</p>
+      {shipped.length === 0 && (
+        <GlassCard className="p-10 text-center text-sm text-muted-foreground">No shipped orders yet — orders show up here once they reach the Shipped stage in the Pipeline tab.</GlassCard>
+      )}
+      {shipped.map((o, i) => {
+        const stepIdx = Math.max(0, DELIVERY_STEPS.indexOf(o.stage));
+        const url = o.trackingNumber && o.carrier && CARRIER_TRACK_URL[o.carrier] ? CARRIER_TRACK_URL[o.carrier](o.trackingNumber) : null;
+        return (
+          <Reveal key={o.id} delay={i * 60}>
+            <GlassCard className="p-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <Avatar name={o.customer} />
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{o.customer} <span className="font-mono text-xs text-muted-foreground">{o.number}</span></p>
+                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      {o.carrier && <><Truck className="size-3" /> {o.carrier} · </>}<MapPin className="size-3" /> {o.city}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {o.trackingNumber && (
+                    url ? (
+                      <a href={url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 rounded-full bg-glass px-3 py-1 text-xs text-gold transition-colors hover:underline">
+                        <ExternalLink className="size-3" /> Track {o.trackingNumber}
+                      </a>
+                    ) : (
+                      <span className="rounded-full bg-glass px-3 py-1 text-xs text-muted-foreground">{o.carrier}: {o.trackingNumber}</span>
+                    )
+                  )}
+                  <button onClick={() => setEditingId(editingId === o.id ? null : o.id)} aria-label={o.trackingNumber ? "Edit tracking" : "Add tracking"} className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground">
+                    {o.trackingNumber ? <Pencil className="size-3" /> : <><Plus className="size-3" /> Add tracking</>}
+                  </button>
                 </div>
               </div>
-              <span className="flex items-center gap-1.5 rounded-full bg-glass px-3 py-1 text-xs text-gold"><Clock className="size-3" /> ETA {s.eta}</span>
-            </div>
-            <div className="mt-6">
-              <StatusTracker steps={steps} active={s.active} />
-            </div>
-          </GlassCard>
-        </Reveal>
-      ))}
+              {editingId === o.id && (
+                <TrackingForm order={o} onSave={async (patch) => { const r = await setTracking(o.id, patch); if (!r.error) setEditingId(null); return r; }} />
+              )}
+              <div className="mt-6">
+                <StatusTracker steps={DELIVERY_STEPS} active={stepIdx} />
+              </div>
+            </GlassCard>
+          </Reveal>
+        );
+      })}
     </div>
   );
 }

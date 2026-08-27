@@ -274,13 +274,14 @@ function AuthScreen() {
             ))}
           </div>
 
-          <form onSubmit={submit} className="mt-6 space-y-4">
+          <form onSubmit={submit} autoComplete={mode === "signup" ? "off" : "on"} className="mt-6 space-y-4">
             {mode === "signup" && (
               <Field label="Full name">
                 <div className="relative">
                   <User className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <input
                     required
+                    autoComplete="off"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     className={`${inputClass} pl-10`}
@@ -295,6 +296,7 @@ function AuthScreen() {
                 <input
                   required
                   type="email"
+                  autoComplete={mode === "signup" ? "off" : "email"}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className={`${inputClass} pl-10`}
@@ -309,6 +311,7 @@ function AuthScreen() {
                   required
                   type={showPassword ? "text" : "password"}
                   minLength={6}
+                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className={`${inputClass} pl-10 pr-10`}

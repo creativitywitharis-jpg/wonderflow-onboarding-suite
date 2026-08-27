@@ -1075,6 +1075,7 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string | null
+          currency: string
           enabled_modules: string[]
           health_score: number
           id: string
@@ -1083,10 +1084,12 @@ export type Database = {
           name: string
           plan: string
           slug: string | null
+          timezone: string
         }
         Insert: {
           created_at?: string
           created_by?: string | null
+          currency?: string
           enabled_modules?: string[]
           health_score?: number
           id?: string
@@ -1095,10 +1098,12 @@ export type Database = {
           name: string
           plan?: string
           slug?: string | null
+          timezone?: string
         }
         Update: {
           created_at?: string
           created_by?: string | null
+          currency?: string
           enabled_modules?: string[]
           health_score?: number
           id?: string
@@ -1107,6 +1112,7 @@ export type Database = {
           name?: string
           plan?: string
           slug?: string | null
+          timezone?: string
         }
         Relationships: []
       }

@@ -521,9 +521,30 @@ function PeopleView({ selectedId, onSelect }: { selectedId: string | null; onSel
 }
 
 function EmployeeProfile({ e, onBack }: { e: DbEmployee; onBack: () => void }) {
+  const { org } = useOrg();
   const { editEmployee, removeEmployee } = useEmployeesData();
+  const { tasks } = useTasksData();
+  const [courses, setCourses] = useState<DbCourse[]>([]);
+  const [progress, setProgressList] = useState<DbProgress[]>([]);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Training isn't in a shared provider (only Training's own view needs it
+  // elsewhere), so fetch it locally here too — same pattern as Schedule's shifts.
+  useEffect(() => {
+    let alive = true;
+    if (org?.id) {
+      Promise.all([listCourses(org.id), listProgress(org.id)]).then(([c, p]) => {
+        if (alive) { setCourses(c); setProgressList(p); }
+      }).catch(() => {});
+    }
+    return () => { alive = false; };
+  }, [org?.id]);
+
+  const myTasks = tasks.filter((t) => t.assignee_id === e.id);
+  const openTasks = myTasks.filter((t) => t.status !== "Done");
+  const myTraining = progress.filter((p) => p.employee_id === e.id);
+  const trainingDone = myTraining.filter((p) => p.completed).length;
   const [ef, setEf] = useState({
     name: e.name, role: e.role ?? "", department: e.department ?? "", status: e.status,
     email: e.email ?? "", phone: e.phone ?? "", location: e.location ?? "", since: e.since ?? "", skills: e.skills.join(", "),
@@ -631,8 +652,49 @@ function EmployeeProfile({ e, onBack }: { e: DbEmployee; onBack: () => void }) {
             </GlassCard>
           </Reveal>
           <Reveal delay={80}>
-            <GlassCard className="p-6 text-sm text-muted-foreground">
-              Tasks, performance and training history for {e.name.split(" ")[0]} will appear here once those modules are built.
+            <GlassCard className="p-6">
+              <div className="flex items-baseline justify-between">
+                <SectionLabel icon={LayoutGrid}>Tasks</SectionLabel>
+                <span className="text-xs text-muted-foreground">{openTasks.length} open · {myTasks.length - openTasks.length} done</span>
+              </div>
+              {myTasks.length > 0 ? (
+                <div className="mt-4 space-y-1.5">
+                  {myTasks.slice(0, 6).map((t) => (
+                    <div key={t.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm">
+                      {t.status === "Done" ? <CheckCircle2 className="size-3.5 shrink-0 text-emerald-400" /> : <span className="size-3.5 shrink-0 rounded-full border border-border" />}
+                      <span className={cn("min-w-0 flex-1 truncate", t.status === "Done" ? "text-muted-foreground line-through" : "text-foreground/90")}>{t.title}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{formatDue(t.due_date)}</span>
+                    </div>
+                  ))}
+                  {myTasks.length > 6 && <p className="pt-1 text-center text-xs text-muted-foreground">+{myTasks.length - 6} more — see Tasks tab</p>}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-muted-foreground">No tasks assigned to {e.name.split(" ")[0]} yet.</p>
+              )}
+            </GlassCard>
+          </Reveal>
+          <Reveal delay={120}>
+            <GlassCard className="p-6">
+              <div className="flex items-baseline justify-between">
+                <SectionLabel icon={GraduationCap}>Training</SectionLabel>
+                {myTraining.length > 0 && <span className="text-xs text-muted-foreground">{trainingDone} of {myTraining.length} completed</span>}
+              </div>
+              {myTraining.length > 0 ? (
+                <div className="mt-4 space-y-1.5">
+                  {myTraining.map((p) => {
+                    const course = courses.find((c) => c.id === p.course_id);
+                    return (
+                      <div key={p.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm">
+                        {p.completed ? <CheckCircle2 className="size-3.5 shrink-0 text-emerald-400" /> : <span className="size-3.5 shrink-0 rounded-full border border-border" />}
+                        <span className={cn("min-w-0 flex-1 truncate", p.completed ? "text-muted-foreground" : "text-foreground/90")}>{course?.title ?? "Unknown course"}</span>
+                        <span className={cn("shrink-0 text-xs", p.completed ? "text-emerald-400" : "text-gold")}>{p.completed ? "Completed" : "Pending"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-muted-foreground">No training assigned to {e.name.split(" ")[0]} yet — assign a course in the Training tab.</p>
+              )}
             </GlassCard>
           </Reveal>
         </div>

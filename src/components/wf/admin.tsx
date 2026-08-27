@@ -28,6 +28,7 @@ import {
   Trash2,
   UserPlus,
   Users,
+  X,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -102,31 +103,22 @@ const views: { key: ViewKey; label: string; icon: LucideIcon }[] = [
 ];
 
 
-// Describes what each role actually does, per the real RLS policies checked
-// across every table in the app (not a configurable/editable matrix — the
-// permission tiers are fixed). Analyst/Viewer/Member are genuinely identical
-// today: nothing in the backend distinguishes them from one another, only
-// from owner/admin/manager.
-const ROLE_META: { key: string; name: string; desc: string; tier: "Full access" | "Operational" | "Read-only"; locked?: boolean }[] = [
+// Describes what each role actually does, verified against every insert/
+// update/delete RLS policy in supabase/migrations (not a configurable/
+// editable matrix — the permission tiers are fixed in the database, not
+// something this UI can change). The real, near-universal pattern: any
+// member can view/create/edit operational records; only owner/admin/manager
+// can delete them; only owner/admin can manage settings (integrations,
+// webhooks, billing, team members). Analyst/Viewer/Member are genuinely
+// identical to one another today.
+const ROLE_META: { key: string; name: string; desc: string; tier: string; locked?: boolean }[] = [
   { key: "owner", name: "Owner", desc: "Full control of the workspace. The only role that can promote or demote admins, manage billing, or delete the organization. Assigned automatically to whoever creates the workspace.", tier: "Full access", locked: true },
-  { key: "admin", name: "Admin", desc: "Everything except managing other admins or deleting the organization. Can invite and manage team members, connect integrations, manage webhooks, and delete records across every module.", tier: "Full access" },
-  { key: "manager", name: "Manager", desc: "Runs day-to-day operations — create, edit, and delete records in CRM, Orders, Inventory, Suppliers, Finance, Automations, and Team. Can't manage integrations, billing, or team members.", tier: "Operational" },
-  { key: "analyst", name: "Analyst", desc: "Read-only access across every module — view data and generate reports, no create, edit, or delete rights anywhere.", tier: "Read-only" },
-  { key: "viewer", name: "Viewer", desc: "Read-only access across every module — view data and generate reports, no create, edit, or delete rights anywhere.", tier: "Read-only" },
-  { key: "member", name: "Member", desc: "The default role for anyone invited without a specific pick. Read-only access across every module.", tier: "Read-only" },
+  { key: "admin", name: "Admin", desc: "Everything except managing other admins or deleting the organization. Can invite and manage team members, connect integrations, manage webhooks, manage billing, and delete records across every module.", tier: "Full access" },
+  { key: "manager", name: "Manager", desc: "Can view, create, edit, and delete records across every operational module (CRM, Orders, Inventory, Suppliers, Finance, Automations, Team). Can't manage integrations, billing, or team members.", tier: "Can delete records" },
+  { key: "analyst", name: "Analyst", desc: "Can view, create, and edit records across every module — same as Manager minus the ability to delete records or manage settings.", tier: "Can create & edit" },
+  { key: "viewer", name: "Viewer", desc: "Can view, create, and edit records across every module — same as Manager minus the ability to delete records or manage settings.", tier: "Can create & edit" },
+  { key: "member", name: "Member", desc: "The default role for anyone invited without a specific pick. Can view, create, and edit records across every module — same as Manager minus the ability to delete records or manage settings.", tier: "Can create & edit" },
 ];
-
-const capabilities = ["View analytics", "Manage orders", "Edit inventory", "Manage users", "Configure AI", "Billing & plans", "Delete data"];
-const permRoles = ["Admin", "Manager", "Analyst", "Viewer"];
-const defaultPerms: Record<string, Record<string, boolean>> = {
-  "View analytics": { Admin: true, Manager: true, Analyst: true, Viewer: true },
-  "Manage orders": { Admin: true, Manager: true, Analyst: false, Viewer: false },
-  "Edit inventory": { Admin: true, Manager: true, Analyst: false, Viewer: false },
-  "Manage users": { Admin: true, Manager: false, Analyst: false, Viewer: false },
-  "Configure AI": { Admin: true, Manager: false, Analyst: false, Viewer: false },
-  "Billing & plans": { Admin: true, Manager: false, Analyst: false, Viewer: false },
-  "Delete data": { Admin: false, Manager: false, Analyst: false, Viewer: false },
-};
 
 const aiModels = [
   { id: "precision", name: "Precision", desc: "Most capable — deep reasoning for strategy & analysis." },
@@ -516,39 +508,50 @@ function RolesView() {
           );
         })}
       </div>
-      <p className="text-xs text-muted-foreground">Analyst, Viewer, and Member currently behave identically — all three are read-only with no elevated access anywhere in the app. The distinction exists for future refinement, not present-day permission differences.</p>
+      <p className="text-xs text-muted-foreground">Analyst, Viewer, and Member currently behave identically — nothing in the database distinguishes them from one another, only from Owner/Admin/Manager. The distinction exists for future refinement, not present-day permission differences.</p>
     </div>
   );
 }
 
+// The real capability matrix, verified against every insert/update/delete
+// RLS policy in supabase/migrations — not editable here, since permissions
+// aren't independently configurable per capability; they're fixed by role.
+// Analyst/Viewer/Member are combined into one column since they're identical.
+const PERM_COLUMNS = ["Owner", "Admin", "Manager", "Analyst / Viewer / Member"];
+const PERM_ROWS: { cap: string; on: boolean[] }[] = [
+  { cap: "View data", on: [true, true, true, true] },
+  { cap: "Create & edit records", on: [true, true, true, true] },
+  { cap: "Delete records", on: [true, true, true, false] },
+  { cap: "Manage integrations & webhooks", on: [true, true, false, false] },
+  { cap: "Invite & manage team members", on: [true, true, false, false] },
+  { cap: "Manage billing", on: [true, true, false, false] },
+  { cap: "Promote/demote admins, delete org", on: [true, false, false, false] },
+];
+
 function PermissionsView() {
-  const [perms, setPerms] = useState(defaultPerms);
-  const toggle = (cap: string, role: string) => setPerms((p) => ({ ...p, [cap]: { ...p[cap], [role]: !p[cap][role] } }));
   return (
     <Reveal>
       <GlassCard className="overflow-x-auto p-6">
         <SectionLabel icon={KeyRound}>Permission matrix</SectionLabel>
-        <p className="mt-1 text-xs text-muted-foreground">Owner has every permission. Toggle capabilities for each role.</p>
+        <p className="mt-1 text-xs text-muted-foreground">The real rules enforced by the database for every role — not editable here, since these aren't independently configurable per capability.</p>
         <div className="mt-5 min-w-[36rem]">
-          <div className="grid grid-cols-[1.4fr_repeat(4,1fr)] items-center gap-2 border-b border-border pb-2 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+          <div className="grid grid-cols-[1.6fr_repeat(4,1fr)] items-center gap-2 border-b border-border pb-2 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
             <span>Capability</span>
-            {permRoles.map((r) => <span key={r} className="text-center">{r}</span>)}
+            {PERM_COLUMNS.map((r) => <span key={r} className="text-center">{r}</span>)}
           </div>
-          {capabilities.map((cap) => (
-            <div key={cap} className="grid grid-cols-[1.4fr_repeat(4,1fr)] items-center gap-2 border-b border-border/60 py-2.5">
-              <span className="text-sm text-foreground/85">{cap}</span>
-              {permRoles.map((role) => {
-                const on = perms[cap][role];
-                return (
-                  <div key={role} className="flex justify-center">
-                    <button onClick={() => toggle(cap, role)} className={cn("grid size-7 place-items-center rounded-lg border transition-colors", on ? "border-transparent text-primary-foreground" : "border-border text-transparent hover:border-gold/40")} style={on ? { background: "var(--gradient-gold)" } : undefined} aria-pressed={on}>
-                      <Check className="size-4" />
-                    </button>
-                  </div>
-                );
-              })}
+          {PERM_ROWS.map((row) => (
+            <div key={row.cap} className="grid grid-cols-[1.6fr_repeat(4,1fr)] items-center gap-2 border-b border-border/60 py-2.5">
+              <span className="text-sm text-foreground/85">{row.cap}</span>
+              {row.on.map((on, i) => (
+                <div key={PERM_COLUMNS[i]} className="flex justify-center">
+                  <span className={cn("grid size-7 place-items-center rounded-lg border", on ? "border-transparent text-primary-foreground" : "border-border text-muted-foreground/30")} style={on ? { background: "var(--gradient-gold)" } : undefined}>
+                    {on ? <Check className="size-4" /> : <X className="size-3.5" />}
+                  </span>
+                </div>
+              ))}
             </div>
           ))}
+          <p className="mt-3 text-[0.7rem] text-muted-foreground">A few specific settings — like Loyalty program rules — require Manager or above to edit even though most operational data doesn't.</p>
         </div>
       </GlassCard>
     </Reveal>

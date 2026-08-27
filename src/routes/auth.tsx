@@ -119,8 +119,13 @@ function AuthScreen() {
     }
     setError(null);
     setNotice(null);
+    // Carry a pending team invite through the reset — otherwise resetting a
+    // password mid-invite silently drops it (the recovery link would land on
+    // /reset-password with no way to know an invite was ever in flight).
+    const inviteToken = new URLSearchParams(window.location.search).get("invite");
+    const resetUrl = `${window.location.origin}/reset-password${inviteToken ? `?invite=${inviteToken}` : ""}`;
     const { error } = await supabase.auth.resetPasswordForEmail(target, {
-      redirectTo: `${window.location.origin}/reset-password`,
+      redirectTo: resetUrl,
     });
     if (error) setError(error.message);
     else setNotice(`If an account exists for ${target}, we've sent a password reset link. Check your inbox.`);

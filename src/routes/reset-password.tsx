@@ -5,6 +5,7 @@ import { Backdrop } from "@/components/wf/Backdrop";
 import { Brand } from "@/components/wf/Brand";
 import { Field, GhostButton, GlassCard, GoldButton, inputClass } from "@/components/wf/ui";
 import { supabase } from "@/lib/supabase";
+import { acceptInvitation } from "@/lib/team";
 
 export const Route = createFileRoute("/reset-password")({
   head: () => ({ meta: [{ title: "Reset your password — WonderFlow OS" }] }),
@@ -38,6 +39,18 @@ function ResetPassword() {
           : error.message,
       );
       return;
+    }
+    // If this reset was reached via a pending team invite (carried through as
+    // ?invite= by the "Forgot password?" flow), redeem it now — the new
+    // password just put a real session in place, same as a normal sign-in would.
+    const inviteToken = new URLSearchParams(window.location.search).get("invite");
+    if (inviteToken) {
+      try {
+        await acceptInvitation(inviteToken);
+      } catch {
+        // Best-effort — the account is still recovered either way; worst case
+        // they're just not joined to the org and can retry the invite link.
+      }
     }
     setDone(true);
     setTimeout(() => navigate({ to: "/dashboard" }), 1400);

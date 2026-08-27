@@ -788,6 +788,7 @@ export type Database = {
           invited_by: string | null
           org_id: string
           role: string
+          title: string | null
           token: string
         }
         Insert: {
@@ -798,6 +799,7 @@ export type Database = {
           invited_by?: string | null
           org_id: string
           role?: string
+          title?: string | null
           token?: string
         }
         Update: {
@@ -808,6 +810,7 @@ export type Database = {
           invited_by?: string | null
           org_id?: string
           role?: string
+          title?: string | null
           token?: string
         }
         Relationships: [
@@ -954,6 +957,7 @@ export type Database = {
           org_id: string
           role: string
           status: string
+          title: string | null
           user_id: string
         }
         Insert: {
@@ -962,6 +966,7 @@ export type Database = {
           org_id: string
           role?: string
           status?: string
+          title?: string | null
           user_id: string
         }
         Update: {
@@ -970,6 +975,7 @@ export type Database = {
           org_id?: string
           role?: string
           status?: string
+          title?: string | null
           user_id?: string
         }
         Relationships: [

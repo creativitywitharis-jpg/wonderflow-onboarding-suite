@@ -17,6 +17,7 @@ import {
   Loader2,
   Lock,
   Mail,
+  Pencil,
   Plug,
   ScrollText,
   Search,
@@ -40,7 +41,7 @@ import { connectSlack, disconnectSlack, listConnections, syncStripe, testSlack, 
 import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
 import { PLANS, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
-import { cancelInvitation, inviteMember, listInvitations, listMembers, setMemberStatus, type Invitation, type Member } from "@/lib/team";
+import { cancelInvitation, inviteMember, listInvitations, listMembers, setMemberStatus, updateMember, type Invitation, type Member } from "@/lib/team";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Primitives
@@ -272,9 +273,14 @@ function UsersView() {
   const [q, setQ] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
+  const [inviteTitle, setInviteTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editRole, setEditRole] = useState("member");
+  const [editTitle, setEditTitle] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
 
   const reload = useCallback(async () => {
     if (!org) return;
@@ -309,10 +315,11 @@ function UsersView() {
     }
     setBusy(true);
     const invited = inviteEmail.trim();
-    const { error: err, sent, emailError } = await inviteMember(org.id, invited, inviteRole);
+    const { error: err, sent, emailError } = await inviteMember(org.id, invited, inviteRole, inviteTitle);
     setBusy(false);
     if (err) { setError(err.message); return; }
     setInviteEmail("");
+    setInviteTitle("");
     setNotice(
       sent
         ? `Invitation emailed to ${invited}.`
@@ -329,6 +336,23 @@ function UsersView() {
 
   async function removeInvite(id: string) {
     await cancelInvitation(id);
+    await reload();
+  }
+
+  function startEdit(m: Member) {
+    setEditingId(m.id);
+    setEditRole(m.role);
+    setEditTitle(m.title ?? "");
+    setError(null);
+  }
+
+  async function saveEdit() {
+    if (!editingId || editBusy) return;
+    setEditBusy(true);
+    const { error: err } = await updateMember(editingId, { role: editRole, title: editTitle.trim() || null });
+    setEditBusy(false);
+    if (err) { setError(err.message); return; }
+    setEditingId(null);
     await reload();
   }
 
@@ -372,32 +396,48 @@ function UsersView() {
           </div>
 
           {canManage && (
-            <div className="mt-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-[1fr_auto_auto]">
+            <div className="mt-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-[1fr_1fr_auto_auto]">
               <div className="relative">
                 <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} type="email" placeholder="teammate@company.com" className={cn(inputCls, "pl-9")} />
               </div>
+              <input value={inviteTitle} onChange={(e) => setInviteTitle(e.target.value)} placeholder="Job title (optional) — e.g. Sales Lead" className={inputCls} />
               <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} className={inputCls}>
                 {INVITE_ROLES.map((r) => <option key={r} value={r} className="capitalize">{r}</option>)}
               </select>
               <button onClick={submitInvite} disabled={!inviteEmail.trim() || busy || atCapacity} className="flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>
                 <UserPlus className="size-4" /> {busy ? "Inviting…" : "Invite"}
               </button>
+              <p className="text-[0.65rem] text-muted-foreground sm:col-span-4">Job title is just a display label — the role dropdown is what actually controls permissions.</p>
             </div>
           )}
 
           <div className="mt-5 space-y-1">
             {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading team…</p>}
-            {!loading && filtered.map((m) => (
+            {!loading && filtered.map((m) => editingId === m.id ? (
+              <div key={m.id} className="grid gap-3 rounded-2xl border border-gold/30 bg-background/30 p-4 sm:grid-cols-[1fr_auto_auto_auto]">
+                <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} placeholder="Job title (optional)" className={inputCls} />
+                <select value={editRole} onChange={(e) => setEditRole(e.target.value)} className={inputCls}>
+                  {INVITE_ROLES.map((r) => <option key={r} value={r} className="capitalize">{r}</option>)}
+                </select>
+                <button onClick={saveEdit} disabled={editBusy} className="rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{editBusy ? "Saving…" : "Save"}</button>
+                <button onClick={() => setEditingId(null)} className="rounded-full border border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground">Cancel</button>
+              </div>
+            ) : (
               <div key={m.id} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.8fr_0.8fr_auto]">
                 <div className="flex items-center gap-3">
                   <Avatar name={m.name} />
                   <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{m.name}</p><p className="truncate text-xs text-muted-foreground">{m.email}</p></div>
                 </div>
-                <span className="hidden text-sm capitalize text-muted-foreground sm:block">{m.role}</span>
+                <span className="hidden text-sm text-muted-foreground sm:block">
+                  {m.title ? <><span className="text-foreground/85">{m.title}</span><span className="text-xs capitalize"> · {m.role}</span></> : <span className="capitalize">{m.role}</span>}
+                </span>
                 <span className="hidden items-center gap-1.5 text-xs capitalize sm:flex" style={{ color: memberStatusColor[m.status] ?? memberStatusColor.active }}><span className="size-1.5 rounded-full" style={{ background: memberStatusColor[m.status] ?? memberStatusColor.active }} />{m.status}</span>
                 {canManage && m.role !== "owner" ? (
-                  <button onClick={() => toggleStatus(m)} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40">{m.status === "disabled" ? "Enable" : "Disable"}</button>
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button onClick={() => startEdit(m)} aria-label="Edit member" className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground"><Pencil className="size-3.5" /></button>
+                    <button onClick={() => toggleStatus(m)} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40">{m.status === "disabled" ? "Enable" : "Disable"}</button>
+                  </div>
                 ) : <span />}
               </div>
             ))}
@@ -411,7 +451,7 @@ function UsersView() {
                 {invites.map((i) => (
                   <div key={i.id} className="flex items-center gap-3 rounded-xl px-3 py-2.5">
                     <span className="grid size-8 place-items-center rounded-full border border-gold/30 bg-glass"><Mail className="size-3.5 text-gold" /></span>
-                    <div className="min-w-0 flex-1"><p className="truncate text-sm text-foreground/85">{i.email}</p><p className="text-xs capitalize text-muted-foreground">{i.role} · invited</p></div>
+                    <div className="min-w-0 flex-1"><p className="truncate text-sm text-foreground/85">{i.email}</p><p className="text-xs text-muted-foreground">{i.title ? <>{i.title} · <span className="capitalize">{i.role}</span></> : <span className="capitalize">{i.role}</span>} · invited</p></div>
                     {canManage && (
                       <button onClick={() => removeInvite(i.id)} className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300"><Trash2 className="size-3.5" /></button>
                     )}

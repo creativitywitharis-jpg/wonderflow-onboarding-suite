@@ -94,10 +94,16 @@ Deno.serve(async (req: Request) => {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
         const orgId = session.metadata?.org_id ?? session.client_reference_id ?? "";
-        const plan = session.metadata?.plan ?? "starter";
-        if (session.subscription) {
+        const plan = session.metadata?.plan;
+        // No plan metadata means this session wasn't created by our own
+        // create-checkout (which always sets it) — e.g. a synthetic test
+        // event sent from the Stripe dashboard. Guessing "starter" here
+        // previously mis-set real orgs to a paid tier they never chose.
+        if (plan && session.subscription) {
           const sub = await stripe.subscriptions.retrieve(session.subscription as string);
           await upsertFromSubscription(sub, plan, orgId);
+        } else if (!plan) {
+          console.log("[stripe-webhook] checkout.session.completed with no plan metadata — ignoring", session.id);
         }
         break;
       }
@@ -105,8 +111,9 @@ Deno.serve(async (req: Request) => {
       case "customer.subscription.updated": {
         const sub = event.data.object as Stripe.Subscription;
         const orgId = sub.metadata?.org_id ?? "";
-        const plan = sub.metadata?.plan ?? "starter";
-        await upsertFromSubscription(sub, plan, orgId);
+        const plan = sub.metadata?.plan;
+        if (plan) await upsertFromSubscription(sub, plan, orgId);
+        else console.log("[stripe-webhook] subscription event with no plan metadata — ignoring", sub.id);
         break;
       }
       case "customer.subscription.deleted": {

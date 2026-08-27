@@ -39,7 +39,21 @@ export async function signOut() {
  */
 export async function deleteMyAccount(): Promise<{ error: Error | null }> {
   const { data, error } = await supabase.functions.invoke("delete-account", {});
-  if (error) return { error: new Error(error.message) };
+  if (error) {
+    // The function returns its real error message in a 200 JSON body (see
+    // its own comment), but fall back to reading the raw response here too
+    // in case of a genuine transport-level failure that never reaches it.
+    const context = (error as { context?: Response }).context;
+    if (context) {
+      try {
+        const body = await context.clone().json();
+        if (body?.error) return { error: new Error(body.error as string) };
+      } catch {
+        // response wasn't JSON — fall through to the generic message
+      }
+    }
+    return { error: new Error(error.message) };
+  }
   if (data?.error) return { error: new Error(data.error as string) };
   return { error: null };
 }

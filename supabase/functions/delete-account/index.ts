@@ -38,7 +38,11 @@ Deno.serve(async (req: Request) => {
   );
   const { data: userData } = await userClient.auth.getUser();
   const user = userData.user;
-  if (!user) return json({ error: "Please sign in." }, 401);
+  // Errors below are returned at 200 with an {error} body on purpose —
+  // supabase-js's functions.invoke() only reads the response body when the
+  // status is 2xx; a non-2xx status collapses into a generic "non-2xx
+  // status code" message on the client with no way to read the real text.
+  if (!user) return json({ error: "Please sign in." });
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -46,7 +50,7 @@ Deno.serve(async (req: Request) => {
     .from("memberships")
     .select("id,org_id,role,organizations(name)")
     .eq("user_id", user.id);
-  if (rowsErr) return json({ error: rowsErr.message }, 500);
+  if (rowsErr) return json({ error: rowsErr.message });
   const memberships = (rows ?? []) as unknown as MembershipRow[];
 
   // Refuse if they own a business that still has other members.
@@ -62,10 +66,9 @@ Deno.serve(async (req: Request) => {
       .filter((m) => blockedOrgIds.has(m.org_id))
       .map((m) => m.organizations?.name ?? "a business");
     if (blockedNames.length > 0) {
-      return json(
-        { error: `Transfer ownership of ${blockedNames.join(", ")} before deleting your account — those businesses still have other team members.` },
-        400,
-      );
+      return json({
+        error: `Transfer ownership of ${blockedNames.join(", ")} before deleting your account — those businesses still have other team members.`,
+      });
     }
   }
 
@@ -77,7 +80,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const { error: delErr } = await admin.auth.admin.deleteUser(user.id);
-  if (delErr) return json({ error: delErr.message }, 500);
+  if (delErr) return json({ error: delErr.message });
 
   return json({ ok: true });
 });

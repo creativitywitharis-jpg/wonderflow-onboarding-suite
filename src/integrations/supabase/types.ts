@@ -1572,6 +1572,7 @@ export type Database = {
       }
       training_progress: {
         Row: {
+          assigned_at: string
           completed: boolean
           completed_at: string | null
           course_id: string
@@ -1580,6 +1581,7 @@ export type Database = {
           org_id: string
         }
         Insert: {
+          assigned_at?: string
           completed?: boolean
           completed_at?: string | null
           course_id: string
@@ -1588,6 +1590,7 @@ export type Database = {
           org_id: string
         }
         Update: {
+          assigned_at?: string
           completed?: boolean
           completed_at?: string | null
           course_id?: string

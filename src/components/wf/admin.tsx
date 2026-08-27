@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import {
   Activity,
   AlertTriangle,
@@ -1411,8 +1411,26 @@ const viewMeta: Record<ViewKey, { title: string; sub: string }> = {
   monitoring: { title: "System monitoring", sub: "Health of your platform" },
 };
 
+const VALID_VIEW_KEYS: ViewKey[] = ["settings", "billing", "users", "roles", "permissions", "ai", "integrations", "security", "audit", "monitoring"];
+
+function tabFromUrl(): ViewKey {
+  const t = new URLSearchParams(window.location.search).get("tab");
+  return (VALID_VIEW_KEYS as string[]).includes(t ?? "") ? (t as ViewKey) : "settings";
+}
+
 export function AdminWorkspace() {
-  const [active, setActive] = useState<ViewKey>("settings");
+  // Sidebar/topbar links outside this page (e.g. the "Settings" link in
+  // AppShell) navigate to /admin?tab=X. TanStack Router doesn't remount this
+  // component for a search-only navigation, so reading the URL once on mount
+  // isn't enough — react to router search-string changes via useRouterState,
+  // otherwise clicking "Settings" while already on /admin does nothing.
+  const searchStr = useRouterState({ select: (s) => s.location.searchStr });
+  const [active, setActiveState] = useState<ViewKey>(tabFromUrl);
+  useEffect(() => setActiveState(tabFromUrl()), [searchStr]);
+  const setActive = (key: ViewKey) => {
+    setActiveState(key);
+    window.history.replaceState(null, "", `/admin?tab=${key}`);
+  };
   const meta = viewMeta[active];
   return (
     <div className="mx-auto flex max-w-[110rem] gap-6 px-4 py-6 lg:px-6">

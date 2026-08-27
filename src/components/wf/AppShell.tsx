@@ -51,7 +51,7 @@ import { buildInsights, type Insight } from "@/lib/insights";
  * Navigation model
  * ─────────────────────────────────────────────────────────────────── */
 
-type NavItem = { label: string; to: string; icon: LucideIcon };
+type NavItem = { label: string; to: string; icon: LucideIcon; tab?: string };
 const navGroups: { label: string; items: NavItem[] }[] = [
   {
     label: "Main",
@@ -90,8 +90,8 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   {
     label: "System",
     items: [
-      { label: "Integrations", to: "/admin", icon: Plug },
-      { label: "Administration", to: "/admin", icon: Shield },
+      { label: "Integrations", to: "/admin", icon: Plug, tab: "integrations" },
+      { label: "Administration", to: "/admin", icon: Shield, tab: "settings" },
     ],
   },
 ];
@@ -458,6 +458,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
                   <Link
                     key={it.label + it.to}
                     to={it.to}
+                    search={it.tab ? { tab: it.tab } : undefined}
                     title={collapsed ? it.label : undefined}
                     className={cn("group flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}
                     activeProps={{ style: { background: "oklch(0.84 0.14 84 / 12%)", color: "var(--color-foreground)" } }}
@@ -474,7 +475,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
 
       {/* bottom */}
       <div className="space-y-0.5 border-t border-border pt-2">
-        <Link to="/admin" title={collapsed ? "Settings" : undefined} className={cn("flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><Settings className="size-4 shrink-0" />{!collapsed && "Settings"}</Link>
+        <Link to="/admin" search={{ tab: "settings" }} title={collapsed ? "Settings" : undefined} className={cn("flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><Settings className="size-4 shrink-0" />{!collapsed && "Settings"}</Link>
         <button title={collapsed ? "Help" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><HelpCircle className="size-4 shrink-0" />{!collapsed && "Help"}</button>
         <button onClick={doSignOut} title={collapsed ? "Sign out" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><LogOut className="size-4 shrink-0" />{!collapsed && "Sign out"}</button>
         <div className={cn("flex items-center gap-3 rounded-xl px-2 py-2", collapsed && "justify-center px-0")}>
@@ -585,7 +586,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
                       <Lock className="size-3 shrink-0 text-muted-foreground/60" />
                     </Link>
                   ) : (
-                    <Link key={it.label + it.to} to={it.to} onClick={onClose} className="group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground" activeProps={{ style: { background: "oklch(0.84 0.14 84 / 12%)", color: "var(--color-foreground)" } }}>
+                    <Link key={it.label + it.to} to={it.to} search={it.tab ? { tab: it.tab } : undefined} onClick={onClose} className="group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground" activeProps={{ style: { background: "oklch(0.84 0.14 84 / 12%)", color: "var(--color-foreground)" } }}>
                       <it.icon className="size-4 shrink-0 group-hover:text-gold" />
                       <span className="truncate">{it.label}</span>
                     </Link>

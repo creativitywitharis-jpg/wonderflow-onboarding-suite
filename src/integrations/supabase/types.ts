@@ -14,6 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_audit_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          actor_name: string
+          category: string
+          created_at: string
+          id: string
+          org_id: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          actor_name: string
+          category: string
+          created_at?: string
+          id?: string
+          org_id: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          actor_name?: string
+          category?: string
+          created_at?: string
+          id?: string
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "admin_audit_log_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "admin_audit_log_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_memory: {
         Row: {
           category: string
@@ -1079,6 +1124,7 @@ export type Database = {
       }
       organizations: {
         Row: {
+          ai_model: string
           created_at: string
           created_by: string | null
           currency: string
@@ -1093,6 +1139,7 @@ export type Database = {
           timezone: string
         }
         Insert: {
+          ai_model?: string
           created_at?: string
           created_by?: string | null
           currency?: string
@@ -1107,6 +1154,7 @@ export type Database = {
           timezone?: string
         }
         Update: {
+          ai_model?: string
           created_at?: string
           created_by?: string | null
           currency?: string

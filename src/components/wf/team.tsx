@@ -44,6 +44,7 @@ import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { CsvImport } from "@/components/wf/CsvImport";
 import type { FieldSpec } from "@/lib/csv";
+import { DatePicker } from "@/components/wf/DatePicker";
 import {
   createEmployee,
   deleteEmployee,
@@ -54,6 +55,17 @@ import {
   type EmployeeStatus,
   type NewEmployee,
 } from "@/lib/employees";
+import {
+  createTask,
+  deleteTask,
+  listTasks,
+  updateTask,
+  TASK_COLUMNS,
+  type DbTask,
+  type NewTask,
+  type TaskPriority,
+  type TaskStatus,
+} from "@/lib/tasks";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -177,18 +189,81 @@ const EMPLOYEE_IMPORT_FIELDS: FieldSpec[] = [
   { key: "skills", label: "Skills", type: "tags", aliases: ["tags", "specialties"] },
 ];
 
-const taskColumns = ["To do", "In progress", "Review", "Done"] as const;
-type Col = (typeof taskColumns)[number];
-type Task = { id: string; title: string; who: string; priority: "High" | "Normal"; due: string; col: Col };
-const seedTasks: Task[] = [
-  { id: "t1", title: "Launch referral email sequence", who: "Ava Chen", priority: "High", due: "Today", col: "In progress" },
-  { id: "t2", title: "Q3 supplier contract review", who: "Marcus Reid", priority: "High", due: "Tomorrow", col: "To do" },
-  { id: "t3", title: "Redesign onboarding screens", who: "Mara Silva", priority: "Normal", due: "Fri", col: "In progress" },
-  { id: "t4", title: "Churn cohort analysis", who: "Leo Park", priority: "Normal", due: "Wed", col: "Review" },
-  { id: "t5", title: "Restock hero SKUs", who: "Noah Reed", priority: "High", due: "Today", col: "To do" },
-  { id: "t6", title: "Publish August content calendar", who: "Ivy Zhou", priority: "Normal", due: "Done", col: "Done" },
-  { id: "t7", title: "Resolve top 5 support tickets", who: "Sam Idris", priority: "High", due: "Today", col: "In progress" },
-];
+type TasksState = {
+  tasks: DbTask[];
+  loading: boolean;
+  addTask: (t: NewTask) => Promise<void>;
+  editTask: (id: string, patch: Partial<NewTask>) => Promise<void>;
+  removeTask: (id: string) => Promise<void>;
+};
+const TasksCtx = createContext<TasksState | null>(null);
+function useTasksData() {
+  const ctx = useContext(TasksCtx);
+  if (!ctx) throw new Error("useTasksData must be used within TasksProvider");
+  return ctx;
+}
+function TasksProvider({ children }: { children: ReactNode }) {
+  const { org } = useOrg();
+  const [tasks, setTasks] = useState<DbTask[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!org) {
+      setTasks([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      setTasks(await listTasks(org.id));
+    } catch {
+      setTasks([]);
+    }
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id]);
+  useEffect(() => { void load(); }, [load]);
+
+  const addTask = useCallback(
+    async (t: NewTask) => {
+      if (!org) return;
+      await createTask(org.id, t);
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.id, load],
+  );
+  const editTask = useCallback(
+    async (id: string, patch: Partial<NewTask>) => {
+      await updateTask(id, patch);
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [load],
+  );
+  const removeTask = useCallback(
+    async (id: string) => {
+      await deleteTask(id);
+      await load();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [load],
+  );
+
+  return <TasksCtx.Provider value={{ tasks, loading, addTask, editTask, removeTask }}>{children}</TasksCtx.Provider>;
+}
+
+/** "Today" / "Tomorrow" / short date, from a YYYY-MM-DD due_date. */
+function formatDue(due: string | null): string {
+  if (!due) return "No date";
+  const d = new Date(due + "T00:00:00");
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((d.getTime() - today.getTime()) / 864e5);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Tomorrow";
+  if (diffDays === -1) return "Yesterday";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
 
 const scheduleDays = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 const shifts = [
@@ -575,37 +650,144 @@ function EmployeeProfile({ e, onBack }: { e: DbEmployee; onBack: () => void }) {
   );
 }
 
-function TasksView() {
-  const [tasks, setTasks] = useState(seedTasks);
-  const advance = (id: string) => setTasks((ts) => ts.map((t) => {
-    if (t.id !== id) return t;
-    const i = taskColumns.indexOf(t.col);
-    return i < taskColumns.length - 1 ? { ...t, col: taskColumns[i + 1] } : t;
-  }));
+const TSK_INPUT = "w-full rounded-xl border border-border bg-background/40 px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-gold/50";
+
+function TaskForm({
+  employees,
+  initial,
+  onCancel,
+  onSave,
+  saving,
+}: {
+  employees: DbEmployee[];
+  initial?: Partial<NewTask>;
+  onCancel: () => void;
+  onSave: (t: NewTask) => void;
+  saving: boolean;
+}) {
+  const [f, setF] = useState({
+    title: initial?.title ?? "",
+    assignee_id: initial?.assignee_id ?? "",
+    priority: (initial?.priority ?? "Normal") as TaskPriority,
+    status: (initial?.status ?? "To do") as TaskStatus,
+    due_date: initial?.due_date ?? "",
+  });
+  const submit = () => {
+    if (!f.title.trim()) return;
+    const emp = employees.find((e) => e.id === f.assignee_id);
+    onSave({
+      title: f.title.trim(),
+      assignee_id: f.assignee_id || null,
+      assignee_name: emp?.name ?? null,
+      priority: f.priority,
+      status: f.status,
+      due_date: f.due_date || null,
+    });
+  };
   return (
-    <Reveal>
+    <div className="grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
+      <input value={f.title} onChange={(e) => setF((x) => ({ ...x, title: e.target.value }))} placeholder="Task title *" className={cn(TSK_INPUT, "sm:col-span-2")} />
+      <select value={f.assignee_id} onChange={(e) => setF((x) => ({ ...x, assignee_id: e.target.value }))} className={TSK_INPUT}>
+        <option value="">Unassigned</option>
+        {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+      </select>
+      <select value={f.priority} onChange={(e) => setF((x) => ({ ...x, priority: e.target.value as TaskPriority }))} className={TSK_INPUT}>
+        <option value="Normal">Normal priority</option>
+        <option value="High">High priority</option>
+      </select>
+      <select value={f.status} onChange={(e) => setF((x) => ({ ...x, status: e.target.value as TaskStatus }))} className={TSK_INPUT}>
+        {TASK_COLUMNS.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      <DatePicker value={f.due_date} onChange={(v) => setF((x) => ({ ...x, due_date: v }))} placeholder="Due date" className={TSK_INPUT} />
+      <div className="flex gap-2 sm:col-span-2">
+        <button onClick={submit} disabled={!f.title.trim() || saving} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{saving ? "Saving…" : "Save task"}</button>
+        <button onClick={onCancel} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function TasksView() {
+  const { tasks, loading, addTask, editTask, removeTask } = useTasksData();
+  const { employees } = useEmployeesData();
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const advance = async (t: DbTask) => {
+    const i = TASK_COLUMNS.indexOf(t.status);
+    if (i < TASK_COLUMNS.length - 1) await editTask(t.id, { status: TASK_COLUMNS[i + 1] });
+  };
+  const save = async (t: NewTask) => {
+    setBusy(true);
+    if (editingId) await editTask(editingId, t);
+    else await addTask(t);
+    setBusy(false);
+    setAdding(false);
+    setEditingId(null);
+  };
+
+  if (!loading && tasks.length === 0 && !adding) {
+    return (
+      <GlassCard className="p-8 text-center sm:p-10">
+        <span className="orb mx-auto grid size-14 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+          <LayoutGrid className="size-6" stroke="oklch(0.2 0.02 70)" />
+        </span>
+        <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>No tasks yet</h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">Add your first task and assign it to a real team member.</p>
+        <button onClick={() => setAdding(true)} className="mt-6 flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] mx-auto" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
+          <Plus className="size-4" /> New task
+        </button>
+      </GlassCard>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">{tasks.length} task{tasks.length === 1 ? "" : "s"}</p>
+        <button onClick={() => { setAdding((a) => !a); setEditingId(null); }} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
+          <Plus className="size-3.5" /> New task
+        </button>
+      </div>
+      {adding && <TaskForm employees={employees} onCancel={() => setAdding(false)} onSave={save} saving={busy} />}
+
       <div className="-mx-4 overflow-x-auto px-4 pb-2">
         <div className="flex min-w-max gap-4">
-          {taskColumns.map((col) => {
-            const list = tasks.filter((t) => t.col === col);
+          {TASK_COLUMNS.map((col) => {
+            const list = tasks.filter((t) => t.status === col);
             return (
-              <div key={col} className="w-64 shrink-0">
+              <div key={col} className="w-72 shrink-0">
                 <div className="mb-3 flex items-center justify-between px-1"><span className="text-sm font-semibold">{col}</span><span className="rounded-full bg-glass px-2 py-0.5 text-xs text-muted-foreground">{list.length}</span></div>
                 <div className="space-y-3">
-                  {list.map((t) => (
-                    <div key={t.id} className="lift rounded-2xl border border-border bg-background/40 p-4">
-                      <div className="flex items-center justify-between">
-                        {t.priority === "High" ? <span className="rounded-full px-2 py-0.5 text-[0.6rem] font-medium text-gold" style={{ background: "oklch(0.84 0.14 84 / 12%)" }}>High</span> : <span className="text-[0.65rem] text-muted-foreground">Normal</span>}
-                        <span className="flex items-center gap-1 text-[0.7rem] text-muted-foreground"><Clock className="size-3" /> {t.due}</span>
+                  {list.map((t) =>
+                    editingId === t.id ? (
+                      <TaskForm key={t.id} employees={employees} initial={t} onCancel={() => setEditingId(null)} onSave={save} saving={busy} />
+                    ) : (
+                      <div key={t.id} className="lift group rounded-2xl border border-border bg-background/40 p-4">
+                        <div className="flex items-center justify-between">
+                          {t.priority === "High" ? <span className="rounded-full px-2 py-0.5 text-[0.6rem] font-medium text-gold" style={{ background: "oklch(0.84 0.14 84 / 12%)" }}>High</span> : <span className="text-[0.65rem] text-muted-foreground">Normal</span>}
+                          <span className="flex items-center gap-1 text-[0.7rem] text-muted-foreground"><Clock className="size-3" /> {formatDue(t.due_date)}</span>
+                        </div>
+                        <p className="mt-2 text-sm font-medium text-foreground">{t.title}</p>
+                        <div className="mt-3 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Avatar name={t.assignee_name ?? "?"} className="size-6 text-[0.55rem]" />
+                            <span className="text-xs text-muted-foreground">{t.assignee_name?.split(" ")[0] ?? "Unassigned"}</span>
+                          </div>
+                          <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                            <button onClick={() => { setEditingId(t.id); setAdding(false); }} aria-label="Edit task" className="grid size-6 place-items-center rounded-lg border border-border text-muted-foreground hover:border-gold/40 hover:text-foreground"><Pencil className="size-3" /></button>
+                            <button onClick={() => removeTask(t.id)} aria-label="Delete task" className="grid size-6 place-items-center rounded-lg border border-border text-muted-foreground hover:border-rose-400/50 hover:text-rose-300"><Trash2 className="size-3" /></button>
+                          </div>
+                        </div>
+                        {t.status !== "Done" ? (
+                          <button onClick={() => advance(t)} className="mt-3 w-full rounded-full border border-border bg-glass px-2.5 py-1 text-[0.7rem] text-foreground/80 transition-colors hover:border-gold/40 hover:text-gold">Advance →</button>
+                        ) : (
+                          <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-emerald-400"><CheckCircle2 className="size-3.5" /> Done</div>
+                        )}
                       </div>
-                      <p className="mt-2 text-sm font-medium text-foreground">{t.title}</p>
-                      <div className="mt-3 flex items-center justify-between">
-                        <div className="flex items-center gap-2"><Avatar name={t.who} className="size-6 text-[0.55rem]" /><span className="text-xs text-muted-foreground">{t.who.split(" ")[0]}</span></div>
-                        {t.col !== "Done" && <button onClick={() => advance(t.id)} className="rounded-full border border-border bg-glass px-2.5 py-1 text-[0.7rem] text-foreground/80 transition-colors hover:border-gold/40 hover:text-gold">Advance →</button>}
-                        {t.col === "Done" && <CheckCircle2 className="size-4 text-emerald-400" />}
-                      </div>
-                    </div>
-                  ))}
+                    ),
+                  )}
                   {list.length === 0 && <div className="rounded-2xl border border-dashed border-border p-6 text-center text-xs text-muted-foreground">Empty</div>}
                 </div>
               </div>
@@ -613,7 +795,7 @@ function TasksView() {
           })}
         </div>
       </div>
-    </Reveal>
+    </div>
   );
 }
 
@@ -794,7 +976,9 @@ const viewMeta: Record<ViewKey, { title: string; sub: string }> = {
 export function TeamWorkspace() {
   return (
     <EmployeesProvider>
-      <TeamWorkspaceInner />
+      <TasksProvider>
+        <TeamWorkspaceInner />
+      </TasksProvider>
     </EmployeesProvider>
   );
 }

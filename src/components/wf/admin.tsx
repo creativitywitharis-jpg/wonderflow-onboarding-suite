@@ -36,7 +36,7 @@ import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
 import { updateOrganization } from "@/lib/org";
-import { listConnections, syncStripe, type DbConnection } from "@/lib/connections";
+import { connectSlack, disconnectSlack, listConnections, syncStripe, testSlack, type DbConnection } from "@/lib/connections";
 import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
 import { PLANS, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
@@ -137,7 +137,6 @@ const PROVIDERS: { id: string; name: string; desc: string; icon: LucideIcon; kin
   { id: "shopify", name: "Shopify", desc: "Sync orders, products & inventory", icon: Globe, kind: "soon" },
   { id: "quickbooks", name: "QuickBooks", desc: "Accounting & finance sync", icon: Database, kind: "soon" },
   { id: "klaviyo", name: "Klaviyo", desc: "Email & SMS marketing", icon: Mail, kind: "soon" },
-  { id: "slack", name: "Slack", desc: "Alerts & AI briefings", icon: Activity, kind: "soon" },
   { id: "google_analytics", name: "Google Analytics", desc: "Web & marketing analytics", icon: Globe, kind: "soon" },
 ];
 
@@ -744,6 +743,88 @@ function WebhooksCard() {
   );
 }
 
+// Real Slack connection via an Incoming Webhook URL (no OAuth app needed —
+// the user creates one at api.slack.com/apps and pastes the URL here). A test
+// message and every automation's slack_message action both post to it for real.
+function SlackCard({ conn, onChange }: { conn?: DbConnection; onChange: () => void }) {
+  const { org } = useOrg();
+  const connected = conn?.status === "connected";
+  const existingUrl = (conn?.config as { webhook_url?: string } | undefined)?.webhook_url ?? "";
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [testMsg, setTestMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    if (!org || !url.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await connectSlack(org.id, url.trim());
+    setBusy(false);
+    if (err) { setError(err.message); return; }
+    setEditing(false);
+    setUrl("");
+    onChange();
+  };
+  const disconnect = async () => {
+    if (!org || busy) return;
+    setBusy(true);
+    await disconnectSlack(org.id);
+    setBusy(false);
+    setTestMsg(null);
+    onChange();
+  };
+  const sendTest = async () => {
+    if (!org || busy) return;
+    setBusy(true);
+    setTestMsg(null);
+    const r = await testSlack(org.id);
+    setBusy(false);
+    setTestMsg(r.ok ? "✓ Test message sent — check your Slack channel." : `Failed: ${r.detail ?? "unknown error"}`);
+  };
+
+  return (
+    <Reveal className="h-full">
+      <GlassCard className="flex h-full flex-col p-6">
+        <div className="flex items-center justify-between">
+          <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><Activity className="size-5 text-gold" /></span>
+          {connected && <span className="flex items-center gap-1.5 text-xs text-emerald-300"><StatusDot tone="ok" /> Connected</span>}
+        </div>
+        <p className="mt-4 text-sm font-semibold text-foreground">Slack</p>
+        <p className="mt-1 flex-1 text-xs text-muted-foreground">Send AI briefings and automation alerts to a Slack channel via an Incoming Webhook.</p>
+
+        {!connected && !editing && (
+          <button onClick={() => setEditing(true)} className="mt-4 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>Connect</button>
+        )}
+
+        {editing && (
+          <div className="mt-4 space-y-2">
+            <p className="text-[0.7rem] text-muted-foreground">In Slack: create an app at api.slack.com/apps → Incoming Webhooks → Add New Webhook to Workspace → pick a channel → copy the URL below.</p>
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://hooks.slack.com/services/…" className="w-full rounded-lg border border-border bg-background/40 px-3 py-2 text-xs text-foreground outline-none focus:border-gold/50" />
+            {error && <p className="text-[0.7rem] text-rose-300">{error}</p>}
+            <div className="flex gap-2">
+              <button onClick={save} disabled={busy || !url.trim()} className="rounded-full px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Save"}</button>
+              <button onClick={() => { setEditing(false); setError(null); }} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {connected && !editing && (
+          <div className="mt-4 space-y-2">
+            {testMsg && <p className="text-[0.7rem] text-muted-foreground">{testMsg}</p>}
+            <div className="flex flex-wrap gap-2">
+              <button onClick={sendTest} disabled={busy} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-gold/40 disabled:opacity-60">{busy ? "Sending…" : "Send test message"}</button>
+              <button onClick={() => { setEditing(true); setUrl(existingUrl); }} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Change URL</button>
+              <button onClick={disconnect} disabled={busy} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-rose-300 disabled:opacity-60">Disconnect</button>
+            </div>
+          </div>
+        )}
+      </GlassCard>
+    </Reveal>
+  );
+}
+
 function IntegrationsView() {
   const { org } = useOrg();
   const [conns, setConns] = useState<DbConnection[]>([]);
@@ -781,6 +862,7 @@ function IntegrationsView() {
       <FormEndpointCard />
       <WebhooksCard />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <SlackCard conn={statusOf("slack")} onChange={load} />
         {PROVIDERS.map((p, i) => {
           const conn = statusOf(p.id);
           const connected = conn?.status === "connected";

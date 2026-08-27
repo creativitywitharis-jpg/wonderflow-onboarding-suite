@@ -7,6 +7,7 @@
 //   email_owner     → emails the org owner via Resend (no-op if unconfigured)
 //   email_customer  → Claude drafts + Resend actually SENDS an email to the customer
 //   webhook         → POSTs the payload to a configured URL
+//   slack_message   → Claude drafts a short alert, posted to the org's connected Slack channel
 //
 // Multi-step workflows: a `wait` step pauses the sequence by writing a row to
 // automation_runs (resume_at = now + hours) instead of blocking the function.
@@ -49,6 +50,13 @@ const EMAIL_SYSTEM = [
   "Output ONLY the email body text — no subject line, no markdown headers, no code fences, no meta-commentary about the request or the data, no questions back to whoever triggered this.",
   "Address the customer directly and naturally. If a name looks like a placeholder, use it as given without commenting on it.",
   "Keep it concise (3–6 short sentences). Sign off simply (e.g. 'Warmly,' or 'Best,') without a name — the caller appends the business's own signature.",
+].join(" ");
+
+// A Slack alert reads worst when it sounds like a chat reply — short and flat.
+const SLACK_SYSTEM = [
+  "You write a short internal Slack alert for a team about a business event — not a conversation.",
+  "Output ONLY the message text itself, plain text (no markdown headers, no code fences), 1–3 short sentences.",
+  "No preamble, no meta-commentary about the request or the data, no questions back to whoever triggered this.",
 ].join(" ");
 
 async function claudeDraft(prompt: string, system: string = DRAFT_SYSTEM): Promise<string> {
@@ -95,6 +103,17 @@ async function runAction(
       if (!url) return { ok: false, detail: "no webhook_url" };
       const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event, payload, automation: automationName }) });
       return { ok: r.ok, detail: `webhook ${r.status}` };
+    }
+
+    if (actionKey === "slack_message") {
+      const { data: conn } = await admin.from("connections").select("status,config").eq("org_id", orgId).eq("provider", "slack").maybeSingle();
+      const webhookUrl = (conn as { config?: { webhook_url?: string } } | null)?.config?.webhook_url;
+      if ((conn as { status?: string } | null)?.status !== "connected" || !webhookUrl) return { ok: false, detail: "Slack not connected" };
+      const basePrompt = (config.prompt as string) || "Write a short, friendly Slack alert for the team about this event.";
+      const text = await claudeDraft(`${basePrompt}\n\nEvent: ${event}\nDetails: ${JSON.stringify(payload)}`, SLACK_SYSTEM);
+      if (!text) return { ok: false, detail: "AI unavailable" };
+      const r = await fetch(webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: `*${automationName}*\n${text}` }) });
+      return { ok: r.ok, detail: `slack ${r.status}` };
     }
 
     if (actionKey === "email_owner") {

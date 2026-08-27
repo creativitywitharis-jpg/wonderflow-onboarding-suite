@@ -27,6 +27,34 @@ export async function setConnection(orgId: string, provider: string, status: Con
   return { error: error ? new Error(error.message) : null };
 }
 
+/** Connect Slack via an Incoming Webhook URL (owner/admin only, enforced by RLS). */
+export async function connectSlack(orgId: string, webhookUrl: string) {
+  const { error } = await supabase
+    .from("connections")
+    .upsert({ org_id: orgId, provider: "slack", status: "connected", config: { webhook_url: webhookUrl.trim() } }, { onConflict: "org_id,provider" });
+  return { error: error ? new Error(error.message) : null };
+}
+
+export async function disconnectSlack(orgId: string) {
+  const { error } = await supabase
+    .from("connections")
+    .upsert({ org_id: orgId, provider: "slack", status: "disconnected", config: {} }, { onConflict: "org_id,provider" });
+  return { error: error ? new Error(error.message) : null };
+}
+
+/** Send a real test message to the org's connected Slack channel. */
+export async function testSlack(orgId: string): Promise<{ ok: boolean; detail?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke("slack-notify", {
+      body: { orgId, text: "👋 This is a test message from WonderFlow OS — your Slack connection is working." },
+    });
+    if (error) return { ok: false, detail: error.message };
+    return { ok: !!data?.ok, detail: data?.detail as string | undefined };
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : "Test failed" };
+  }
+}
+
 /** Pull real customers from Stripe into the CRM. Returns how many were added. */
 export async function syncStripe(orgId: string): Promise<{ synced: number; error: Error | null }> {
   try {

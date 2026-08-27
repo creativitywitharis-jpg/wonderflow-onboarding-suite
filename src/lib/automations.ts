@@ -1,7 +1,7 @@
 import { supabase } from "./supabase";
 
 export type TriggerKey = "order.created" | "customer.created" | "invoice.paid" | "manual";
-export type ActionKey = "ai_draft_note" | "email_owner" | "email_customer" | "webhook";
+export type ActionKey = "ai_draft_note" | "email_owner" | "email_customer" | "webhook" | "slack_message";
 
 // A multi-step workflow, run in order. `action` steps reuse the same 4 action
 // types as a simple rule; `wait` pauses the sequence (resumed later — see

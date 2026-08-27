@@ -15,6 +15,7 @@ import {
   Home,
   LayoutTemplate,
   Mail,
+  MessageSquare,
   Pencil,
   Plus,
   Send,
@@ -143,6 +144,16 @@ const templates: Template[] = [
     action_config: { subject: "Invoice paid 🎉" },
     steps: null,
   },
+  {
+    name: "New order → Slack alert",
+    cat: "Sales",
+    icon: MessageSquare,
+    desc: "Posts a short alert to your connected Slack channel the moment an order comes in. Needs Slack connected in Settings → Integrations.",
+    trigger_key: "order.created",
+    action_key: "slack_message",
+    action_config: { prompt: "Write a short Slack alert announcing this new order." },
+    steps: null,
+  },
 ];
 
 // Real status derived from an execution's ok/detail — "pending" covers both a
@@ -253,6 +264,7 @@ const ACTION_OPTS: { key: ActionKey; label: string; sends?: boolean }[] = [
   { key: "email_owner", label: "Email the owner" },
   { key: "email_customer", label: "Email the customer", sends: true },
   { key: "webhook", label: "Call a webhook" },
+  { key: "slack_message", label: "Send a Slack message", sends: true },
 ];
 const triggerLabel = (k: string) => TRIGGER_OPTS.find((t) => t.key === k)?.label ?? k;
 const actionLabel = (k: string) => ACTION_OPTS.find((a) => a.key === k)?.label ?? k;
@@ -403,6 +415,7 @@ function DashboardView({ prefill, onConsumePrefill, refreshKey }: { prefill: Pre
       form.action_key === "webhook" ? { webhook_url: form.webhook_url.trim() }
       : form.action_key === "email_owner" ? { subject: form.subject.trim() || `Automation: ${form.name.trim()}` }
       : form.action_key === "email_customer" ? { subject: form.subject.trim() || undefined, prompt: form.prompt.trim() || "Write a short, warm email to this customer for this event." }
+      : form.action_key === "slack_message" ? { prompt: form.prompt.trim() || "Write a short Slack alert for the team about this event." }
       : { prompt: form.prompt.trim() || "Draft a short, useful note for this event." };
     const payload: NewAutomation = {
       name: form.name.trim(),
@@ -543,6 +556,9 @@ function DashboardView({ prefill, onConsumePrefill, refreshKey }: { prefill: Pre
                       <input value={form.prompt} onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))} placeholder="What should the email say? (optional)" className={AUTO_INPUT} />
                     </>
                   )}
+                  {form.action_key === "slack_message" && (
+                    <input value={form.prompt} onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))} placeholder="AI instruction (optional) — what should the Slack message say?" className={`${AUTO_INPUT} sm:col-span-2`} />
+                  )}
                 </>
               )}
 
@@ -578,8 +594,8 @@ function DashboardView({ prefill, onConsumePrefill, refreshKey }: { prefill: Pre
                           {(sd.action_key === "email_owner" || sd.action_key === "email_customer") && (
                             <input value={sd.subject} onChange={(e) => updateStep(sd.id, { subject: e.target.value })} placeholder="Email subject (optional)" className={AUTO_INPUT} />
                           )}
-                          {(sd.action_key === "ai_draft_note" || sd.action_key === "email_customer") && (
-                            <input value={sd.prompt} onChange={(e) => updateStep(sd.id, { prompt: e.target.value })} placeholder={sd.action_key === "email_customer" ? "What should the email say? (optional)" : "AI instruction (optional)"} className={AUTO_INPUT} />
+                          {(sd.action_key === "ai_draft_note" || sd.action_key === "email_customer" || sd.action_key === "slack_message") && (
+                            <input value={sd.prompt} onChange={(e) => updateStep(sd.id, { prompt: e.target.value })} placeholder={sd.action_key === "email_customer" ? "What should the email say? (optional)" : sd.action_key === "slack_message" ? "What should the Slack message say? (optional)" : "AI instruction (optional)"} className={AUTO_INPUT} />
                           )}
                         </div>
                       )}
@@ -673,6 +689,7 @@ const actionPalette: { action_key: ActionKey; label: string; icon: LucideIcon }[
   { action_key: "email_owner", label: "Email owner", icon: Mail },
   { action_key: "email_customer", label: "Email customer", icon: Mail },
   { action_key: "webhook", label: "Call webhook", icon: Zap },
+  { action_key: "slack_message", label: "Send Slack message", icon: MessageSquare },
 ];
 
 // A real, click-to-build workflow: every block maps to an actual trigger or
@@ -797,8 +814,8 @@ function BuilderView({ onBuild }: { onBuild: (draft: PrefillDraft) => void }) {
                   {(selected.action_key === "email_owner" || selected.action_key === "email_customer") && (
                     <input value={selected.subject} onChange={(e) => updateStep(selected.id, { subject: e.target.value })} placeholder="Email subject (optional)" className={AUTO_INPUT} />
                   )}
-                  {(selected.action_key === "ai_draft_note" || selected.action_key === "email_customer") && (
-                    <input value={selected.prompt} onChange={(e) => updateStep(selected.id, { prompt: e.target.value })} placeholder={selected.action_key === "email_customer" ? "What should the email say? (optional)" : "AI instruction (optional)"} className={AUTO_INPUT} />
+                  {(selected.action_key === "ai_draft_note" || selected.action_key === "email_customer" || selected.action_key === "slack_message") && (
+                    <input value={selected.prompt} onChange={(e) => updateStep(selected.id, { prompt: e.target.value })} placeholder={selected.action_key === "email_customer" ? "What should the email say? (optional)" : selected.action_key === "slack_message" ? "What should the Slack message say? (optional)" : "AI instruction (optional)"} className={AUTO_INPUT} />
                   )}
                 </div>
               )}
@@ -851,6 +868,7 @@ const CREATOR_SCHEMA_PROMPT = `You are generating a WonderFlow automation workfl
     | { "kind": "action", "action_key": "email_owner", "action_config": { "subject": "email subject" } }
     | { "kind": "action", "action_key": "email_customer", "action_config": { "subject": "email subject", "prompt": "what the email should say" } }
     | { "kind": "action", "action_key": "webhook", "action_config": { "webhook_url": "https://..." } }
+    | { "kind": "action", "action_key": "slack_message", "action_config": { "prompt": "what the Slack message should say" } }
     | { "kind": "wait", "hours": <number> }
     | { "kind": "condition", "field": "total", "op": ">" | "<" | "=" | ">=" | "<=", "value": <number> }
     | { "kind": "approval", "note": "what the approver should decide on" }
@@ -873,7 +891,7 @@ function parseWorkflowJson(raw: string): ParsedWorkflow {
   const steps = Array.isArray(obj.steps) ? obj.steps : [];
   if (steps.length === 0) throw new Error("No steps returned");
   const validTriggers: TriggerKey[] = ["order.created", "customer.created", "invoice.paid", "manual"];
-  const validActions: ActionKey[] = ["ai_draft_note", "email_owner", "email_customer", "webhook"];
+  const validActions: ActionKey[] = ["ai_draft_note", "email_owner", "email_customer", "webhook", "slack_message"];
   return {
     name: typeof obj.name === "string" && obj.name.trim() ? obj.name.trim() : "AI-generated automation",
     trigger_key: validTriggers.includes(obj.trigger_key) ? obj.trigger_key : "manual",
@@ -898,6 +916,7 @@ const actionKindMeta: Record<ActionKey, { icon: LucideIcon; label: string }> = {
   email_owner: { icon: Mail, label: "Email the owner" },
   email_customer: { icon: Mail, label: "Email the customer" },
   webhook: { icon: Zap, label: "Call a webhook" },
+  slack_message: { icon: MessageSquare, label: "Send a Slack message" },
 };
 function describeParsedStep(s: ParsedStep): { icon: LucideIcon; kind: BlockKind; title: string; subtitle: string } {
   if (s.kind === "wait") {

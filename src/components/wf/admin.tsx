@@ -27,6 +27,7 @@ import {
   Trash2,
   UserPlus,
   Users,
+  UserX,
   X,
   Zap,
   type LucideIcon,
@@ -38,7 +39,7 @@ import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/pri
 import { useOrg } from "@/lib/org-context";
 import { supabase } from "@/lib/supabase";
 import { deleteOrganization, enabledModulesFor, INDUSTRIES, leaveOrganization, transferOwnership, updateOrganization } from "@/lib/org";
-import { signOut } from "@/lib/use-auth";
+import { deleteMyAccount, signOut } from "@/lib/use-auth";
 import { connectSlack, disconnectSlack, listConnections, syncStripe, testSlack, type DbConnection } from "@/lib/connections";
 import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
@@ -230,6 +231,7 @@ function SettingsView() {
       </GlassCard>
       </Reveal>
       <LeaveOrgCard />
+      <DeleteAccountCard />
     </div>
   );
 }
@@ -364,6 +366,54 @@ function LeaveOrgCard() {
           <>
             <p className="mt-3 text-sm text-muted-foreground">Remove your own access to this business. This only affects your account — the business and its data stay intact for everyone else.</p>
             <button onClick={() => setConfirming(true)} className="mt-4 rounded-full border border-rose-400/40 px-4 py-2 text-xs text-rose-300 transition-colors hover:bg-rose-500/10">Delete my account</button>
+          </>
+        )}
+      </GlassCard>
+    </Reveal>
+  );
+}
+
+// Deletes the actual WonderFlow login, not just membership in one business
+// (that's what LeaveOrgCard's "Delete my account" does). Available to
+// every role — the edge function itself checks for owned businesses that
+// still have other members and refuses if any exist, so this can't
+// silently orphan a business.
+function DeleteAccountCard() {
+  const navigate = useNavigate();
+  const [confirming, setConfirming] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const doDelete = async () => {
+    if (busy || confirmText.trim() !== "DELETE") return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await deleteMyAccount();
+    if (err) { setBusy(false); setError(err.message); return; }
+    await signOut();
+    navigate({ to: "/auth" });
+  };
+
+  return (
+    <Reveal delay={120}>
+      <GlassCard className="border-rose-400/20 p-6">
+        <SectionLabel icon={UserX}>Delete your WonderFlow account</SectionLabel>
+        {confirming ? (
+          <div className="mt-3 space-y-3">
+            <p className="text-sm text-foreground/85">This permanently deletes your WonderFlow login and profile — not just your access to one business. Any business you solely own is deleted along with it; if you own a business that still has other team members, this refuses until you transfer ownership there first.</p>
+            {error && <p className="text-xs text-rose-300">{error}</p>}
+            <p className="text-xs text-muted-foreground">Type <span className="font-medium text-foreground">DELETE</span> to confirm.</p>
+            <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} className={inputCls} />
+            <div className="flex gap-2 pt-1">
+              <button onClick={doDelete} disabled={busy || confirmText.trim() !== "DELETE"} className="rounded-full bg-rose-500/90 px-4 py-2 text-xs font-semibold text-white transition-all hover:brightness-110 disabled:opacity-50">{busy ? "Deleting…" : "Permanently delete my account"}</button>
+              <button onClick={() => { setConfirming(false); setConfirmText(""); setError(null); }} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="mt-3 text-sm text-muted-foreground">Close your WonderFlow account entirely — your login, your profile, and any businesses you solely own. This is separate from just leaving one business.</p>
+            <button onClick={() => setConfirming(true)} className="mt-4 rounded-full border border-rose-400/40 px-4 py-2 text-xs text-rose-300 transition-colors hover:bg-rose-500/10">Delete my WonderFlow account entirely</button>
           </>
         )}
       </GlassCard>

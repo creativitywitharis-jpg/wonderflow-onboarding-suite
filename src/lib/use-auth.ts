@@ -30,3 +30,16 @@ export function useAuth() {
 export async function signOut() {
   await supabase.auth.signOut();
 }
+
+/**
+ * Permanently delete the signed-in user's WonderFlow account — their actual
+ * login, not just membership in one business. The edge function refuses if
+ * they own a business that still has other members (transfer ownership
+ * first); businesses they solely own are deleted along with the account.
+ */
+export async function deleteMyAccount(): Promise<{ error: Error | null }> {
+  const { data, error } = await supabase.functions.invoke("delete-account", {});
+  if (error) return { error: new Error(error.message) };
+  if (data?.error) return { error: new Error(data.error as string) };
+  return { error: null };
+}

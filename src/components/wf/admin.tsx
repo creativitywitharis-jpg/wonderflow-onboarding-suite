@@ -102,12 +102,18 @@ const views: { key: ViewKey; label: string; icon: LucideIcon }[] = [
 ];
 
 
-const roles = [
-  { name: "Owner", members: 1, desc: "Full control, billing and data. Cannot be restricted.", perms: "All", locked: true },
-  { name: "Admin", members: 2, desc: "Manage the platform, users and configuration.", perms: "18 / 20", locked: false },
-  { name: "Manager", members: 4, desc: "Run operations — orders, inventory, customers.", perms: "12 / 20", locked: false },
-  { name: "Analyst", members: 3, desc: "Read analytics and generate reports.", perms: "6 / 20", locked: false },
-  { name: "Viewer", members: 6, desc: "View-only access to dashboards.", perms: "3 / 20", locked: false },
+// Describes what each role actually does, per the real RLS policies checked
+// across every table in the app (not a configurable/editable matrix — the
+// permission tiers are fixed). Analyst/Viewer/Member are genuinely identical
+// today: nothing in the backend distinguishes them from one another, only
+// from owner/admin/manager.
+const ROLE_META: { key: string; name: string; desc: string; tier: "Full access" | "Operational" | "Read-only"; locked?: boolean }[] = [
+  { key: "owner", name: "Owner", desc: "Full control of the workspace. The only role that can promote or demote admins, manage billing, or delete the organization. Assigned automatically to whoever creates the workspace.", tier: "Full access", locked: true },
+  { key: "admin", name: "Admin", desc: "Everything except managing other admins or deleting the organization. Can invite and manage team members, connect integrations, manage webhooks, and delete records across every module.", tier: "Full access" },
+  { key: "manager", name: "Manager", desc: "Runs day-to-day operations — create, edit, and delete records in CRM, Orders, Inventory, Suppliers, Finance, Automations, and Team. Can't manage integrations, billing, or team members.", tier: "Operational" },
+  { key: "analyst", name: "Analyst", desc: "Read-only access across every module — view data and generate reports, no create, edit, or delete rights anywhere.", tier: "Read-only" },
+  { key: "viewer", name: "Viewer", desc: "Read-only access across every module — view data and generate reports, no create, edit, or delete rights anywhere.", tier: "Read-only" },
+  { key: "member", name: "Member", desc: "The default role for anyone invited without a specific pick. Read-only access across every module.", tier: "Read-only" },
 ];
 
 const capabilities = ["View analytics", "Manage orders", "Edit inventory", "Manage users", "Configure AI", "Billing & plans", "Delete data"];
@@ -471,23 +477,46 @@ function UsersView() {
 }
 
 function RolesView() {
+  const { org } = useOrg();
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!org) { setCounts({}); setLoading(false); return; }
+    setLoading(true);
+    listMembers(org.id)
+      .then((members) => {
+        const c: Record<string, number> = {};
+        for (const m of members) c[m.role] = (c[m.role] ?? 0) + 1;
+        setCounts(c);
+      })
+      .catch(() => setCounts({}))
+      .finally(() => setLoading(false));
+  }, [org?.id]);
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {roles.map((r, i) => (
-        <Reveal key={r.name} delay={i * 50} className="h-full">
-          <GlassCard className="lift flex h-full flex-col p-6 hover:border-gold/40">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-sm font-semibold text-foreground"><Shield className="size-4 text-gold" />{r.name}</span>
-              {r.locked && <Lock className="size-3.5 text-muted-foreground" />}
-            </div>
-            <p className="mt-3 flex-1 text-sm leading-relaxed text-muted-foreground">{r.desc}</p>
-            <div className="mt-4 flex items-center justify-between border-t border-border pt-4 text-xs">
-              <span className="text-muted-foreground">{r.members} member{r.members === 1 ? "" : "s"}</span>
-              <span className="text-gold">{r.perms} permissions</span>
-            </div>
-          </GlassCard>
-        </Reveal>
-      ))}
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {ROLE_META.map((r, i) => {
+          const n = counts[r.key] ?? 0;
+          return (
+            <Reveal key={r.key} delay={i * 50} className="h-full">
+              <GlassCard className="lift flex h-full flex-col p-6 hover:border-gold/40">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm font-semibold text-foreground"><Shield className="size-4 text-gold" />{r.name}</span>
+                  {r.locked && <Lock className="size-3.5 text-muted-foreground" />}
+                </div>
+                <p className="mt-3 flex-1 text-sm leading-relaxed text-muted-foreground">{r.desc}</p>
+                <div className="mt-4 flex items-center justify-between border-t border-border pt-4 text-xs">
+                  <span className="text-muted-foreground">{loading ? "…" : n} member{n === 1 ? "" : "s"}</span>
+                  <span className="text-gold">{r.tier}</span>
+                </div>
+              </GlassCard>
+            </Reveal>
+          );
+        })}
+      </div>
+      <p className="text-xs text-muted-foreground">Analyst, Viewer, and Member currently behave identically — all three are read-only with no elevated access anywhere in the app. The distinction exists for future refinement, not present-day permission differences.</p>
     </div>
   );
 }

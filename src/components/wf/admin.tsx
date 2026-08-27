@@ -1521,6 +1521,12 @@ function BillingView() {
                   {activePlan ? <span className="gold-text italic">{PLANS.find((p) => p.id === activePlan)?.name ?? activePlan}</span> : <span className="italic text-muted-foreground">No active plan</span>}
                 </p>
               )}
+              {/* "Current plan" above is Stripe subscription status — separate
+                  from the workspace tier below, which is what actually gates
+                  sidebar modules (planLimits(org?.plan)) regardless of billing. */}
+              {!loading && (
+                <p className="mt-1 text-[0.7rem] text-muted-foreground">Workspace tier: <span className="text-foreground/80">{planLimits(org?.plan).label}</span> — {planLimits(org?.plan).modules.length} of {planLimits("scale").modules.length} modules included.</p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-5">
@@ -1531,7 +1537,7 @@ function BillingView() {
                   {renews && <p className="mt-1">Renews {renews}</p>}
                 </>
               ) : (
-                <p>Choose a plan below to unlock your full workspace.</p>
+                <p>No Stripe subscription yet — your workspace tier above already controls what's unlocked.</p>
               )}
             </div>
             {activePlan && canManage && (

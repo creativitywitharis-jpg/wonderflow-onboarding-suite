@@ -1123,17 +1123,21 @@ function CourseCard({
   );
 }
 
-function CourseForm({ initial, onCancel, onSave, saving }: { initial?: Partial<NewCourse>; onCancel: () => void; onSave: (c: NewCourse) => void; saving: boolean }) {
+function CourseForm({ initial, onCancel, onSave, saving }: { initial?: Partial<NewCourse>; onCancel: () => void; onSave: (c: NewCourse) => Promise<{ error: Error | null }>; saving: boolean }) {
   const [f, setF] = useState({ title: initial?.title ?? "", category: initial?.category ?? "", lessons: String(initial?.lessons ?? 1) });
-  const submit = () => {
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
     if (!f.title.trim()) return;
-    onSave({ title: f.title.trim(), category: f.category.trim() || undefined, lessons: Math.max(1, Number(f.lessons) || 1) });
+    setError(null);
+    const { error: err } = await onSave({ title: f.title.trim(), category: f.category.trim() || undefined, lessons: Math.max(1, Number(f.lessons) || 1) });
+    if (err) setError(err.message);
   };
   return (
     <div className="grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
       <input value={f.title} onChange={(e) => setF((x) => ({ ...x, title: e.target.value }))} placeholder="Course title *" className={cn(TRN_INPUT, "sm:col-span-2")} />
       <input value={f.category} onChange={(e) => setF((x) => ({ ...x, category: e.target.value }))} placeholder="Category (e.g. Sales)" className={TRN_INPUT} />
       <input type="number" min={1} value={f.lessons} onChange={(e) => setF((x) => ({ ...x, lessons: e.target.value }))} placeholder="Lessons" className={TRN_INPUT} />
+      {error && <p className="text-xs text-rose-300 sm:col-span-2">{error}</p>}
       <div className="flex gap-2 sm:col-span-2">
         <button onClick={submit} disabled={!f.title.trim() || saving} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{saving ? "Saving…" : "Save course"}</button>
         <button onClick={onCancel} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
@@ -1163,14 +1167,13 @@ function TrainingView() {
   useEffect(() => { void load(); }, [load]);
 
   const save = async (c: NewCourse) => {
-    if (!org) return;
+    if (!org) return { error: new Error("No active workspace.") };
     setBusy(true);
-    if (editingId) await updateCourse(editingId, c);
-    else await createCourse(org.id, c);
+    const { error } = editingId ? await updateCourse(editingId, c) : await createCourse(org.id, c);
     setBusy(false);
-    setAdding(false);
-    setEditingId(null);
+    if (!error) { setAdding(false); setEditingId(null); }
     await load();
+    return { error };
   };
   const remove = async (id: string) => { await deleteCourse(id); await load(); };
   const toggle = async (courseId: string, employeeId: string, completed: boolean) => {

@@ -1285,6 +1285,54 @@ export type Database = {
           },
         ]
       }
+      shifts: {
+        Row: {
+          day: string
+          employee_id: string
+          end_time: string | null
+          id: string
+          is_off: boolean
+          org_id: string
+          start_time: string | null
+          updated_at: string
+        }
+        Insert: {
+          day: string
+          employee_id: string
+          end_time?: string | null
+          id?: string
+          is_off?: boolean
+          org_id: string
+          start_time?: string | null
+          updated_at?: string
+        }
+        Update: {
+          day?: string
+          employee_id?: string
+          end_time?: string | null
+          id?: string
+          is_off?: boolean
+          org_id?: string
+          start_time?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shifts_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shifts_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subscriptions: {
         Row: {
           created_at: string

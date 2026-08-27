@@ -44,6 +44,7 @@ function AuthScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
   const [hasInvite, setHasInvite] = useState(false);
+  const [resetPending, setResetPending] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -119,16 +120,23 @@ function AuthScreen() {
     }
     setError(null);
     setNotice(null);
-    // Carry a pending team invite through the reset — otherwise resetting a
-    // password mid-invite silently drops it (the recovery link would land on
-    // /reset-password with no way to know an invite was ever in flight).
-    const inviteToken = new URLSearchParams(window.location.search).get("invite");
-    const resetUrl = `${window.location.origin}/reset-password${inviteToken ? `?invite=${inviteToken}` : ""}`;
-    const { error } = await supabase.auth.resetPasswordForEmail(target, {
-      redirectTo: resetUrl,
-    });
-    if (error) setError(error.message);
-    else setNotice(`If an account exists for ${target}, we've sent a password reset link. Check your inbox.`);
+    setResetPending(true);
+    try {
+      // Carry a pending team invite through the reset — otherwise resetting a
+      // password mid-invite silently drops it (the recovery link would land
+      // on /reset-password with no way to know an invite was ever in flight).
+      const inviteToken = new URLSearchParams(window.location.search).get("invite");
+      const resetUrl = `${window.location.origin}/reset-password${inviteToken ? `?invite=${inviteToken}` : ""}`;
+      const { error } = await supabase.auth.resetPasswordForEmail(target, {
+        redirectTo: resetUrl,
+      });
+      if (error) setError(error.message);
+      else setNotice(`If an account exists for ${target}, we've sent a password reset link. Check your inbox.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send the reset email. Please try again.");
+    } finally {
+      setResetPending(false);
+    }
   }
 
   async function google() {
@@ -252,8 +260,8 @@ function AuthScreen() {
 
             {mode === "signin" && (
               <div className="-mt-2 text-right">
-                <button type="button" onClick={sendReset} className="text-xs text-muted-foreground transition-colors hover:text-gold">
-                  Forgot password?
+                <button type="button" onClick={sendReset} disabled={resetPending} className="text-xs text-muted-foreground transition-colors hover:text-gold disabled:opacity-60">
+                  {resetPending ? "Sending…" : "Forgot password?"}
                 </button>
               </div>
             )}

@@ -845,25 +845,29 @@ function ShiftCell({
   onSave,
 }: {
   shift: DbShift | undefined;
-  onSave: (patch: { start_time: string | null; end_time: string | null; is_off: boolean }) => Promise<void>;
+  onSave: (patch: { start_time: string | null; end_time: string | null; is_off: boolean }) => Promise<{ error: Error | null }>;
 }) {
   const [editing, setEditing] = useState(false);
   const [start, setStart] = useState(shift?.start_time ?? "09:00");
   const [end, setEnd] = useState(shift?.end_time ?? "17:00");
   const [off, setOff] = useState(shift?.is_off ?? false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const open = () => {
     setStart(shift?.start_time ?? "09:00");
     setEnd(shift?.end_time ?? "17:00");
     setOff(shift?.is_off ?? false);
+    setError(null);
     setEditing(true);
   };
   const save = async () => {
     setSaving(true);
-    await onSave({ start_time: off ? null : start, end_time: off ? null : end, is_off: off });
+    setError(null);
+    const { error: err } = await onSave({ start_time: off ? null : start, end_time: off ? null : end, is_off: off });
     setSaving(false);
-    setEditing(false);
+    if (err) setError(err.message);
+    else setEditing(false);
   };
 
   // Renders inline (normal document flow, not absolutely positioned) so it can
@@ -883,6 +887,7 @@ function ShiftCell({
             <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="w-full rounded border border-border bg-background/60 px-1 py-1 text-[0.65rem] text-foreground outline-none" />
           </div>
         )}
+        {error && <p className="text-[0.6rem] leading-tight text-rose-300">{error}</p>}
         <div className="flex gap-1">
           <button onClick={save} disabled={saving} className="flex-1 rounded bg-gold/90 py-1 text-[0.65rem] font-semibold text-background">{saving ? "…" : "Save"}</button>
           <button onClick={() => setEditing(false)} className="flex-1 rounded border border-border py-1 text-[0.65rem] text-muted-foreground">Cancel</button>
@@ -918,9 +923,10 @@ function ScheduleView() {
   useEffect(() => { void load(); }, [load]);
 
   const setCell = async (employeeId: string, day: Weekday, patch: { start_time: string | null; end_time: string | null; is_off: boolean }) => {
-    if (!org) return;
-    await upsertShift(org.id, employeeId, day, patch);
+    if (!org) return { error: new Error("No active workspace.") };
+    const { error } = await upsertShift(org.id, employeeId, day, patch);
     await load();
+    return { error };
   };
 
   if (!employeesLoading && employees.length === 0) {

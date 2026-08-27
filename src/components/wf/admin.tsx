@@ -168,18 +168,27 @@ const services = [
  * Views
  * ─────────────────────────────────────────────────────────────────── */
 
+const TIMEZONE_OPTS = ["America/Chicago", "America/New_York", "America/Los_Angeles", "Europe/London", "UTC"];
+const CURRENCY_OPTS: { key: string; label: string }[] = [
+  { key: "USD", label: "USD $" },
+  { key: "EUR", label: "EUR €" },
+  { key: "GBP", label: "GBP £" },
+];
+
 function SettingsView() {
   const { org, refresh } = useOrg();
-  const [statusPage, setStatusPage] = useState(true);
-  const [maintenance, setMaintenance] = useState(false);
   const [name, setName] = useState("");
   const [industry, setIndustry] = useState("");
+  const [timezone, setTimezone] = useState("America/Chicago");
+  const [currency, setCurrency] = useState("USD");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   useEffect(() => {
     if (org) {
       setName(org.name ?? "");
       setIndustry(org.industry ?? "");
+      setTimezone(org.timezone ?? "America/Chicago");
+      setCurrency(org.currency ?? "USD");
     }
   }, [org?.id]);
 
@@ -187,7 +196,7 @@ function SettingsView() {
     if (!org || busy) return;
     setBusy(true);
     setSaved(false);
-    const { error } = await updateOrganization(org.id, { name: name.trim() || org.name, industry: industry.trim() || null });
+    const { error } = await updateOrganization(org.id, { name: name.trim() || org.name, industry: industry.trim() || null, timezone, currency });
     setBusy(false);
     if (!error) {
       setSaved(true);
@@ -196,36 +205,29 @@ function SettingsView() {
   };
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Reveal className="h-full">
-        <GlassCard className="flex h-full flex-col p-6">
-          <SectionLabel icon={Building2}>Business profile</SectionLabel>
-          <div className="mt-4 space-y-4">
-            <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Company name</span><input value={name} onChange={(e) => { setName(e.target.value); setSaved(false); }} className={inputCls} /></label>
-            <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Industry</span><input value={industry} onChange={(e) => { setIndustry(e.target.value); setSaved(false); }} placeholder="e.g. Retail, Finance & banking" className={inputCls} /></label>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Timezone</span><select className={inputCls}><option>America/Chicago</option><option>America/New_York</option><option>UTC</option></select></label>
-              <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Currency</span><select className={inputCls}><option>USD $</option><option>EUR €</option><option>GBP £</option></select></label>
-            </div>
-          </div>
-          <button onClick={save} disabled={busy || !name.trim()} className="mt-5 flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
-            <Check className="size-4" /> {busy ? "Saving…" : saved ? "Saved ✓" : "Save profile"}
-          </button>
-        </GlassCard>
-      </Reveal>
-
-      <Reveal className="h-full" delay={80}>
-        <GlassCard className="flex h-full flex-col p-6">
-          <SectionLabel icon={Sparkles}>Preferences</SectionLabel>
-          <div className="mt-2 divide-y divide-border">
-            <SettingRow label="Public status page" desc="Show a live uptime page to customers"><Toggle on={statusPage} onChange={setStatusPage} /></SettingRow>
-            <SettingRow label="Maintenance mode" desc="Temporarily take the workspace offline"><Toggle on={maintenance} onChange={setMaintenance} /></SettingRow>
-            <SettingRow label="Weekly digest" desc="Email the team a Monday summary"><Toggle on onChange={() => {}} /></SettingRow>
-          </div>
-          <button className="mt-auto flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}><Check className="size-4" /> Save changes</button>
-        </GlassCard>
-      </Reveal>
-    </div>
+    <Reveal>
+      <GlassCard className="p-6">
+        <SectionLabel icon={Building2}>Business profile</SectionLabel>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Company name</span><input value={name} onChange={(e) => { setName(e.target.value); setSaved(false); }} className={inputCls} /></label>
+          <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Industry</span><input value={industry} onChange={(e) => { setIndustry(e.target.value); setSaved(false); }} placeholder="e.g. Retail, Finance & banking" className={inputCls} /></label>
+          <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Timezone</span>
+            <select value={timezone} onChange={(e) => { setTimezone(e.target.value); setSaved(false); }} className={inputCls}>
+              {TIMEZONE_OPTS.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+            </select>
+          </label>
+          <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Currency</span>
+            <select value={currency} onChange={(e) => { setCurrency(e.target.value); setSaved(false); }} className={inputCls}>
+              {CURRENCY_OPTS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+          </label>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">Timezone and currency are saved as your business's stored preference. Dashboards and reports don't reformat amounts by currency yet — they still display in $.</p>
+        <button onClick={save} disabled={busy || !name.trim()} className="mt-5 flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
+          <Check className="size-4" /> {busy ? "Saving…" : saved ? "Saved ✓" : "Save profile"}
+        </button>
+      </GlassCard>
+    </Reveal>
   );
 }
 

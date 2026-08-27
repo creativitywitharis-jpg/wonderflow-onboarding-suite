@@ -22,9 +22,16 @@ export type OrgRow = {
   plan: string;
   health_score: number;
   created_by: string | null;
+  timezone: string;
+  currency: string;
 };
 
-const ORG_COLS = "id,name,slug,industry,enabled_modules,plan,health_score,created_by";
+const ORG_COLS = "id,name,slug,industry,enabled_modules,plan,health_score,created_by,timezone,currency";
+
+// timezone/currency ship in migration 0038 and aren't in the generated
+// Database types until Lovable regenerates them — reach the table untyped.
+// Runtime behaviour is unchanged once types regenerate.
+const orgTable = () => (supabase as unknown as { from: (t: string) => any }).from("organizations");
 
 export function getActiveOrgId(): string | null {
   if (typeof window === "undefined") return null;
@@ -53,7 +60,7 @@ export async function createOrganization(input: {
   const slug = slugify(input.name);
   // Insert without asking for the row back — the owner membership is created by
   // a trigger, so the row isn't yet SELECT-visible in the same statement.
-  const { error } = await supabase.from("organizations").insert({
+  const { error } = await orgTable().insert({
     name: input.name.trim(),
     slug,
     industry: input.industry ?? null,
@@ -63,7 +70,7 @@ export async function createOrganization(input: {
   if (error) return { data: null, error: new Error(error.message) };
 
   // Read it back by its unique slug (membership now exists → RLS allows the read).
-  const { data } = await supabase.from("organizations").select(ORG_COLS).eq("slug", slug).single();
+  const { data } = await orgTable().select(ORG_COLS).eq("slug", slug).single();
   const org = (data as OrgRow | null) ?? null;
   if (org) setActiveOrgId(org.id);
   return { data: org, error: null };
@@ -72,16 +79,15 @@ export async function createOrganization(input: {
 /** Update an organization (owner/admin only, enforced by RLS). */
 export async function updateOrganization(
   orgId: string,
-  patch: Partial<Pick<OrgRow, "name" | "industry" | "health_score">>,
+  patch: Partial<Pick<OrgRow, "name" | "industry" | "health_score" | "timezone" | "currency">>,
 ): Promise<{ error: Error | null }> {
-  const { error } = await supabase.from("organizations").update(patch).eq("id", orgId);
+  const { error } = await orgTable().update(patch).eq("id", orgId);
   return { error: error ? new Error(error.message) : null };
 }
 
 /** Every organization the current user is a member of (RLS-scoped). */
 export async function getMyOrgs(): Promise<OrgRow[]> {
-  const { data } = await supabase
-    .from("organizations")
+  const { data } = await orgTable()
     .select(ORG_COLS)
     .order("created_at", { ascending: true });
   return (data as OrgRow[]) ?? [];

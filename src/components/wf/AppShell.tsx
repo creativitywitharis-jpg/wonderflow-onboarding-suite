@@ -330,10 +330,130 @@ function AiPanel({ onClose }: { onClose: () => void }) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────
+ * Help — "how do I..." product Q&A, grounded in a written reference of how
+ * WonderFlow's real features actually work (not business data, unlike
+ * AiPanel). ai-chat's system prompt is a fixed business-advisor persona, so
+ * the reference + role override are prepended to the user message itself.
+ * ─────────────────────────────────────────────────────────────────── */
+
+const HELP_STARTERS = [
+  "How do I import customers from a CSV file?",
+  "How do I create an automation rule?",
+  "How do I invite a teammate?",
+  "How do I connect Slack?",
+];
+
+const HELP_PROMPT = `You are now acting as WonderFlow OS's in-app Help assistant, not a business advisor — a user needs to know how to USE the software. Answer ONLY using the reference below, in short numbered steps naming the exact tab/button. If something isn't covered by the reference, say plainly you don't have exact steps for that yet and point to the closest relevant tab — never invent button labels or steps you're not certain of. Keep answers brief.
+
+Reference — how WonderFlow OS actually works:
+
+IMPORTING DATA (CSV):
+- CRM → Customers: click "Import CSV" (top toolbar, or the empty-state button) to bulk-import customers from a spreadsheet.
+- Team → People: click "Add staff" then choose the CSV import option to bulk-import your staff roster.
+
+AUTOMATION — creating a rule (Automation module), four ways:
+1. Dashboard tab → "New rule": pick a trigger (new order / new customer / invoice paid / manual) and an action (draft an AI note, email the owner, email the customer, call a webhook, send a Slack message). Toggle "Multi-step workflow" to chain actions with waits, conditions, or a human-approval step.
+2. AI creator tab: describe the automation in plain English (e.g. "when an order is over $500, ask me to approve it"), review the generated steps, click "Open in builder" to save it.
+3. Templates tab: one-click deploy a ready-made rule (welcome email, thank-you + review request, etc.).
+4. Workflow builder tab: visually assemble a trigger + steps on a canvas, then click "Use this workflow" to open it in the Dashboard form and save.
+
+TEAM WORKSPACE:
+- People: add staff manually or via CSV import; each person has a status (Active/On leave/Offboarded).
+- Tasks: create, assign, and track tasks on a board (To do/In progress/Review/Done).
+- Schedule: click any day/employee cell to set shift hours or mark someone off, covers the full week.
+- Performance: completion-rate and on-time stats derived from real tasks.
+- Training: create courses, assign them to specific people, track completion.
+- Communication: create channels and assign them to all team members or specific people; post messages.
+- Staff Assistant: an AI chat grounded in real team data (who's working today, overdue tasks, etc.).
+
+SETTINGS / ADMINISTRATION (gear icon in the sidebar):
+- Business settings: company name, industry (changing it updates which modules are visible), timezone, currency.
+- Billing & plan: choose or switch plans, manage payment via the Stripe customer portal.
+- Users: invite a teammate by email (owner/admin only) — pick a role and an optional job title label; click the pencil icon next to an existing member to edit their role/title.
+- Roles / Permissions: view-only reference for what each role can do — not editable, permissions are fixed.
+- AI configuration: choose which Claude model tier (Precision/Balanced/Fast) powers every AI feature in the app.
+- Integrations: connect Stripe (automatic), Slack (paste an Incoming Webhook URL from api.slack.com/apps), a website/form endpoint for capturing leads, and outbound webhooks for Zapier/Make/n8n.
+- Security: enable two-factor authentication (scan a QR code with an authenticator app, confirm with a 6-digit code); sign out of other sessions.
+- Audit logs: a real log of team-membership and integration changes.
+- System monitoring: real seat and AI-message usage against your plan.
+
+For anything about Finance, Orders, Inventory, Suppliers, Growth, Analytics, or AI Advisor, give general orientation (which tab it's under, what it's broadly for) without inventing specific button labels.
+
+Question: `;
+
+type HelpMsg = { role: "user" | "ai"; text: string };
+
+function HelpPanel({ onClose }: { onClose: () => void }) {
+  const { org } = useOrg();
+  const [messages, setMessages] = useState<HelpMsg[]>([]);
+  const [input, setInput] = useState("");
+  const [thinking, setThinking] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, thinking]);
+
+  async function send(text: string) {
+    const q = text.trim();
+    if (!q || thinking) return;
+    const next: HelpMsg[] = [...messages, { role: "user", text: q }];
+    setMessages(next);
+    setInput("");
+    setThinking(true);
+    try {
+      const reply = await askAI(
+        [{ role: "user", content: `${HELP_PROMPT}${q}` }],
+        { id: org?.id, name: org?.name, industry: org?.industry },
+      );
+      setMessages((m) => [...m, { role: "ai", text: reply || "I don't have an answer for that yet — try browsing the relevant tab." }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "ai", text: e instanceof Error ? e.message : "I couldn't reach the help assistant. Please try again." }]);
+    } finally {
+      setThinking(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="glass relative flex h-[36rem] max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl">
+        <div className="flex items-center justify-between border-b border-border p-5">
+          <div className="flex items-center gap-3">
+            <span className="orb grid size-9 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><HelpCircle className="size-4" stroke="oklch(0.2 0.02 70)" /></span>
+            <div><p className="text-sm font-semibold tracking-tight">Help</p><p className="text-xs text-muted-foreground">Ask how to do anything in WonderFlow</p></div>
+          </div>
+          <button onClick={onClose} aria-label="Close help" className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:text-foreground"><X className="size-4" /></button>
+        </div>
+
+        <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-5">
+          {messages.length === 0 && !thinking && (
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Try asking</p>
+              {HELP_STARTERS.map((q) => (
+                <button key={q} onClick={() => send(q)} className="block w-full rounded-xl border border-border bg-background/30 px-3 py-2.5 text-left text-sm text-foreground/85 transition-colors hover:border-gold/40">{q}</button>
+              ))}
+            </div>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
+              <div className={cn("max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed", m.role === "user" ? "rounded-br-sm bg-glass text-foreground/90" : "rounded-bl-sm border border-border bg-background/40 text-foreground/85")}>{m.text}</div>
+            </div>
+          ))}
+          {thinking && <div className="flex justify-start"><div className="typing flex items-center gap-1 rounded-2xl rounded-bl-sm border border-border bg-background/40 px-3.5 py-3"><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /></div></div>}
+        </div>
+
+        <form onSubmit={(e) => { e.preventDefault(); void send(input); }} className="flex items-center gap-2 border-t border-border p-4">
+          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask how to do something…" className="min-w-0 flex-1 rounded-full border border-border bg-background/40 px-4 py-2.5 text-sm text-foreground outline-none focus:border-gold/50" />
+          <button type="submit" aria-label="Send" disabled={!input.trim() || thinking} className="grid size-9 shrink-0 place-items-center rounded-full transition-all hover:brightness-110 active:scale-95 disabled:opacity-40" style={{ background: "var(--gradient-gold)" }}><Send className="size-4" stroke="oklch(0.2 0.02 70)" /></button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
  * Sidebar
  * ─────────────────────────────────────────────────────────────────── */
 
-function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+function Sidebar({ collapsed, onToggle, onHelp }: { collapsed: boolean; onToggle: () => void; onHelp: () => void }) {
   const { org, orgs, role, userName, userEmail, switchOrg } = useOrg();
   const navigate = useNavigate();
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -476,7 +596,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       {/* bottom */}
       <div className="space-y-0.5 border-t border-border pt-2">
         <Link to="/admin" search={{ tab: "settings" }} title={collapsed ? "Settings" : undefined} className={cn("flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><Settings className="size-4 shrink-0" />{!collapsed && "Settings"}</Link>
-        <button title={collapsed ? "Help" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><HelpCircle className="size-4 shrink-0" />{!collapsed && "Help"}</button>
+        <button onClick={onHelp} title={collapsed ? "Help" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><HelpCircle className="size-4 shrink-0" />{!collapsed && "Help"}</button>
         <button onClick={doSignOut} title={collapsed ? "Sign out" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><LogOut className="size-4 shrink-0" />{!collapsed && "Sign out"}</button>
         <div className={cn("flex items-center gap-3 rounded-xl px-2 py-2", collapsed && "justify-center px-0")}>
           <span className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-glass text-xs font-semibold text-foreground/80">{initials(userName)}</span>
@@ -621,6 +741,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileAiOpen, setMobileAiOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const { signedIn, authLoading, loading, orgs } = useOrg();
   const navigate = useNavigate();
 
@@ -641,7 +762,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="relative flex min-h-screen">
       <Backdrop intensity={0.22} />
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
+      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} onHelp={() => setHelpOpen(true)} />
 
       <MobileNav open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
 
@@ -668,6 +789,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       )}
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onAsk={() => setAiOpen(true)} />
+
+      {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}
 
       {/* floating AI open button when closed */}
       {!aiOpen && (

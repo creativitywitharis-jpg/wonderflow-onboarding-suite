@@ -33,6 +33,7 @@ import {
   TrendingUp,
   Users,
   UsersRound,
+  X,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -68,11 +69,13 @@ import {
 } from "@/lib/tasks";
 import { listShifts, upsertShift, WEEKDAYS, type DbShift, type Weekday } from "@/lib/shifts";
 import {
+  assignTraining,
   createCourse,
   deleteCourse,
   listCourses,
   listProgress,
   setProgress,
+  unassignTraining,
   updateCourse,
   type DbCourse,
   type DbProgress,
@@ -1068,21 +1071,33 @@ function CourseCard({
   course,
   employees,
   progress,
+  onAssign,
+  onUnassign,
   onToggle,
   onEdit,
   onDelete,
 }: {
   course: DbCourse;
   employees: DbEmployee[];
-  progress: DbProgress[];
+  progress: DbProgress[]; // this course's assignments only
+  onAssign: (employeeId: string) => void;
+  onUnassign: (progressId: string) => void;
   onToggle: (employeeId: string, completed: boolean) => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const completedIds = new Set(progress.filter((p) => p.completed).map((p) => p.employee_id));
-  const doneCount = employees.filter((e) => completedIds.has(e.id)).length;
-  const pct = employees.length ? Math.round((doneCount / employees.length) * 100) : 0;
+  const [pickEmployee, setPickEmployee] = useState("");
+  const assignedIds = new Set(progress.map((p) => p.employee_id));
+  const unassigned = employees.filter((e) => !assignedIds.has(e.id));
+  const doneCount = progress.filter((p) => p.completed).length;
+  const pct = progress.length ? Math.round((doneCount / progress.length) * 100) : 0;
+
+  const assign = () => {
+    if (!pickEmployee) return;
+    onAssign(pickEmployee);
+    setPickEmployee("");
+  };
 
   return (
     <GlassCard className="flex h-full flex-col p-6">
@@ -1097,26 +1112,45 @@ function CourseCard({
       <p className="mt-4 text-sm font-semibold text-foreground">{course.title}</p>
       <p className="mt-1 text-xs text-muted-foreground">{course.lessons} lesson{course.lessons === 1 ? "" : "s"}</p>
       <div className="mt-4">
-        <div className="flex items-baseline justify-between text-xs"><span className="text-muted-foreground">{doneCount} of {employees.length} completed</span><span className="tabular-nums text-gold">{pct}%</span></div>
-        <div className="mt-1.5"><Bar value={pct} /></div>
+        {progress.length > 0 ? (
+          <>
+            <div className="flex items-baseline justify-between text-xs"><span className="text-muted-foreground">{doneCount} of {progress.length} assigned completed</span><span className="tabular-nums text-gold">{pct}%</span></div>
+            <div className="mt-1.5"><Bar value={pct} /></div>
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">Not assigned to anyone yet.</p>
+        )}
       </div>
       <button onClick={() => setExpanded((v) => !v)} className="mt-4 flex items-center justify-center gap-2 rounded-full border border-border bg-glass px-4 py-2 text-xs text-foreground/80 transition-colors hover:border-gold/40">
-        {expanded ? "Hide" : "Manage"} completions
+        {expanded ? "Hide" : "Manage"} assignments
       </button>
       {expanded && (
-        <div className="mt-3 max-h-48 space-y-1.5 overflow-y-auto border-t border-border pt-3">
+        <div className="mt-3 space-y-3 border-t border-border pt-3">
+          <div className="max-h-40 space-y-1.5 overflow-y-auto">
+            {progress.length === 0 && <p className="text-center text-xs text-muted-foreground">No one assigned yet.</p>}
+            {progress.map((p) => {
+              const emp = employees.find((e) => e.id === p.employee_id);
+              return (
+                <div key={p.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-glass">
+                  <input type="checkbox" checked={p.completed} onChange={(ev) => onToggle(p.employee_id, ev.target.checked)} className="size-3.5 accent-[oklch(0.84_0.14_84)]" />
+                  <Avatar name={emp?.name ?? "?"} className="size-5 text-[0.55rem]" />
+                  <span className={cn("flex-1 truncate", p.completed ? "text-foreground" : "text-muted-foreground")}>{emp?.name ?? "Unknown"}</span>
+                  {p.completed && <CheckCircle2 className="size-3.5 shrink-0 text-emerald-400" />}
+                  <button onClick={() => onUnassign(p.id)} aria-label="Unassign" className="shrink-0 text-muted-foreground hover:text-rose-300"><X className="size-3.5" /></button>
+                </div>
+              );
+            })}
+          </div>
+          {unassigned.length > 0 && (
+            <div className="flex gap-2">
+              <select value={pickEmployee} onChange={(e) => setPickEmployee(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-border bg-background/40 px-2 py-1.5 text-xs text-foreground outline-none focus:border-gold/50">
+                <option value="">Assign to…</option>
+                {unassigned.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+              </select>
+              <button onClick={assign} disabled={!pickEmployee} className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>Assign</button>
+            </div>
+          )}
           {employees.length === 0 && <p className="text-center text-xs text-muted-foreground">Add employees in the People tab first.</p>}
-          {employees.map((e) => {
-            const done = completedIds.has(e.id);
-            return (
-              <label key={e.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-glass">
-                <input type="checkbox" checked={done} onChange={(ev) => onToggle(e.id, ev.target.checked)} className="size-3.5 accent-[oklch(0.84_0.14_84)]" />
-                <Avatar name={e.name} className="size-5 text-[0.55rem]" />
-                <span className={cn("flex-1 truncate", done ? "text-foreground" : "text-muted-foreground")}>{e.name}</span>
-                {done && <CheckCircle2 className="size-3.5 text-emerald-400" />}
-              </label>
-            );
-          })}
         </div>
       )}
     </GlassCard>
@@ -1146,9 +1180,61 @@ function CourseForm({ initial, onCancel, onSave, saving }: { initial?: Partial<N
   );
 }
 
+function AssignmentsTable({
+  progress,
+  employees,
+  courses,
+  onToggle,
+  onUnassign,
+}: {
+  progress: DbProgress[];
+  employees: DbEmployee[];
+  courses: DbCourse[];
+  onToggle: (courseId: string, employeeId: string, completed: boolean) => void;
+  onUnassign: (id: string) => void;
+}) {
+  const [filter, setFilter] = useState<"All" | "Pending" | "Completed">("All");
+  const rows = progress
+    .filter((p) => filter === "All" || (filter === "Completed" ? p.completed : !p.completed))
+    .map((p) => ({ p, emp: employees.find((e) => e.id === p.employee_id), course: courses.find((c) => c.id === p.course_id) }))
+    .sort((a, b) => new Date(b.p.assigned_at).getTime() - new Date(a.p.assigned_at).getTime());
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        {(["All", "Pending", "Completed"] as const).map((f) => (
+          <button key={f} onClick={() => setFilter(f)} className={cn("rounded-full border px-3 py-1.5 text-xs transition-colors", filter === f ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground hover:text-foreground")} style={filter === f ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>
+            {f}
+          </button>
+        ))}
+      </div>
+      <GlassCard className="p-4 sm:p-6">
+        {rows.length === 0 && <p className="py-10 text-center text-sm text-muted-foreground">No assignments{filter !== "All" ? ` (${filter.toLowerCase()})` : ""} yet.</p>}
+        <div className="space-y-1">
+          {rows.map(({ p, emp, course }) => (
+            <div key={p.id} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 rounded-xl px-2 py-2.5 hover:bg-glass sm:grid-cols-[auto_1fr_1fr_auto_auto_auto]">
+              <Avatar name={emp?.name ?? "?"} className="size-7 text-[0.6rem]" />
+              <span className="truncate text-sm text-foreground/90">{emp?.name ?? "Unknown"}</span>
+              <span className="hidden truncate text-sm text-muted-foreground sm:block">{course?.title ?? "Unknown course"}</span>
+              <span className={cn("rounded-full px-2.5 py-0.5 text-[0.65rem] font-medium", p.completed ? "text-emerald-400" : "text-gold")} style={{ background: p.completed ? "oklch(0.72 0.14 155 / 14%)" : "oklch(0.84 0.14 84 / 12%)" }}>
+                {p.completed ? "Completed" : "Pending"}
+              </span>
+              <button onClick={() => onToggle(p.course_id, p.employee_id, !p.completed)} className="rounded-full border border-border px-2.5 py-1 text-[0.65rem] text-foreground/80 transition-colors hover:border-gold/40">
+                {p.completed ? "Mark pending" : "Mark done"}
+              </button>
+              <button onClick={() => onUnassign(p.id)} aria-label="Unassign" className="grid size-6 place-items-center rounded-lg border border-border text-muted-foreground hover:border-rose-400/50 hover:text-rose-300"><X className="size-3.5" /></button>
+            </div>
+          ))}
+        </div>
+      </GlassCard>
+    </div>
+  );
+}
+
 function TrainingView() {
   const { org } = useOrg();
   const { employees } = useEmployeesData();
+  const [tab, setTab] = useState<"courses" | "assignments">("courses");
   const [courses, setCourses] = useState<DbCourse[]>([]);
   const [progress, setProgressList] = useState<DbProgress[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1181,11 +1267,26 @@ function TrainingView() {
     await setProgress(org.id, courseId, employeeId, completed);
     await load();
   };
+  const assign = async (courseId: string, employeeId: string) => {
+    if (!org) return;
+    await assignTraining(org.id, courseId, employeeId);
+    await load();
+  };
+  const unassign = async (progressId: string) => {
+    await unassignTraining(progressId);
+    await load();
+  };
 
-  const totalPairs = courses.length * employees.length;
-  const donePairs = progress.filter((p) => p.completed).length;
-  const teamCompletion = totalPairs ? Math.round((donePairs / totalPairs) * 100) : 0;
-  const fullyTrained = employees.filter((e) => courses.length > 0 && courses.every((c) => progress.some((p) => p.course_id === c.id && p.employee_id === e.id && p.completed))).length;
+  // Real, honest stats — teamCompletion is over actual assignments (not every
+  // course x employee pair, since courses no longer implicitly apply to
+  // everyone); fullyTrained excludes anyone with zero assignments (otherwise
+  // an employee assigned nothing would vacuously count as "fully trained").
+  const teamCompletion = progress.length ? Math.round((progress.filter((p) => p.completed).length / progress.length) * 100) : 0;
+  const fullyTrained = employees.filter((e) => {
+    const mine = progress.filter((p) => p.employee_id === e.id);
+    return mine.length > 0 && mine.every((p) => p.completed);
+  }).length;
+  const pendingCount = progress.filter((p) => !p.completed).length;
 
   if (!loading && courses.length === 0 && !adding) {
     return (
@@ -1194,7 +1295,7 @@ function TrainingView() {
           <GraduationCap className="size-6" stroke="oklch(0.2 0.02 70)" />
         </span>
         <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>No courses yet</h2>
-        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">Add your first training course and track who on your team has completed it.</p>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">Add your first training course, then assign it to whoever needs it.</p>
         <button onClick={() => setAdding(true)} className="mt-6 flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] mx-auto" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
           <Plus className="size-4" /> New course
         </button>
@@ -1204,37 +1305,52 @@ function TrainingView() {
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-4">
         <StatTile label="Courses" value={courses.length} icon={GraduationCap} />
         <StatTile label="Team completion" value={teamCompletion} suffix="%" icon={Target} />
+        <StatTile label="Pending" value={pendingCount} positive={pendingCount === 0} icon={Play} />
         <StatTile label="Fully trained" value={fullyTrained} icon={CheckCircle2} />
       </div>
 
-      <div className="flex justify-end">
-        <button onClick={() => { setAdding((a) => !a); setEditingId(null); }} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
-          <Plus className="size-3.5" /> New course
-        </button>
-      </div>
-      {adding && <CourseForm onCancel={() => setAdding(false)} onSave={save} saving={busy} />}
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        {courses.map((c, i) =>
-          editingId === c.id ? (
-            <CourseForm key={c.id} initial={c} onCancel={() => setEditingId(null)} onSave={save} saving={busy} />
-          ) : (
-            <Reveal key={c.id} delay={i * 50} className="h-full">
-              <CourseCard
-                course={c}
-                employees={employees}
-                progress={progress.filter((p) => p.course_id === c.id)}
-                onToggle={(empId, completed) => toggle(c.id, empId, completed)}
-                onEdit={() => { setEditingId(c.id); setAdding(false); }}
-                onDelete={() => remove(c.id)}
-              />
-            </Reveal>
-          ),
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-2">
+          <button onClick={() => setTab("courses")} className={cn("rounded-full border px-3 py-1.5 text-xs transition-colors", tab === "courses" ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground hover:text-foreground")} style={tab === "courses" ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>Courses</button>
+          <button onClick={() => setTab("assignments")} className={cn("rounded-full border px-3 py-1.5 text-xs transition-colors", tab === "assignments" ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground hover:text-foreground")} style={tab === "assignments" ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>Assignments</button>
+        </div>
+        {tab === "courses" && (
+          <button onClick={() => { setAdding((a) => !a); setEditingId(null); }} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
+            <Plus className="size-3.5" /> New course
+          </button>
         )}
       </div>
+
+      {tab === "courses" ? (
+        <>
+          {adding && <CourseForm onCancel={() => setAdding(false)} onSave={save} saving={busy} />}
+          <div className="grid gap-4 sm:grid-cols-2">
+            {courses.map((c, i) =>
+              editingId === c.id ? (
+                <CourseForm key={c.id} initial={c} onCancel={() => setEditingId(null)} onSave={save} saving={busy} />
+              ) : (
+                <Reveal key={c.id} delay={i * 50} className="h-full">
+                  <CourseCard
+                    course={c}
+                    employees={employees}
+                    progress={progress.filter((p) => p.course_id === c.id)}
+                    onAssign={(empId) => assign(c.id, empId)}
+                    onUnassign={unassign}
+                    onToggle={(empId, completed) => toggle(c.id, empId, completed)}
+                    onEdit={() => { setEditingId(c.id); setAdding(false); }}
+                    onDelete={() => remove(c.id)}
+                  />
+                </Reveal>
+              ),
+            )}
+          </div>
+        </>
+      ) : (
+        <AssignmentsTable progress={progress} employees={employees} courses={courses} onToggle={toggle} onUnassign={unassign} />
+      )}
     </div>
   );
 }

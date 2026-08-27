@@ -16,11 +16,12 @@ export type DbProgress = {
   employee_id: string;
   completed: boolean;
   completed_at: string | null;
+  assigned_at: string;
 };
 
 const COURSE_COLS = "id,title,category,lessons,created_at";
-const PROGRESS_COLS = "id,course_id,employee_id,completed,completed_at";
-// Ships in migration 0034 — reach the tables untyped until Lovable regenerates DB types.
+const PROGRESS_COLS = "id,course_id,employee_id,completed,completed_at,assigned_at";
+// Ships in migrations 0034/0035 — reach the tables untyped until Lovable regenerates DB types.
 const coursesTable = () => (supabase as unknown as { from: (t: string) => any }).from("courses");
 const progressTable = () => (supabase as unknown as { from: (t: string) => any }).from("training_progress");
 
@@ -45,14 +46,31 @@ export async function deleteCourse(id: string) {
   return { error: error ? new Error(error.message) : null };
 }
 
-/** All completion records for an org (every course x employee that's been touched). */
+/** All assignments for an org (every course x employee that's been explicitly assigned). */
 export async function listProgress(orgId: string): Promise<DbProgress[]> {
   const { data, error } = await progressTable().select(PROGRESS_COLS).eq("org_id", orgId);
   if (error) return [];
   return (data as DbProgress[]) ?? [];
 }
 
-/** Mark one employee's completion for one course. Upserts on (course_id, employee_id). */
+/** Assign a course to an employee (a training_progress row = "assigned"). A
+ *  no-op if already assigned — never resets an existing completion. */
+export async function assignTraining(orgId: string, courseId: string, employeeId: string) {
+  const { error } = await progressTable().upsert(
+    { org_id: orgId, course_id: courseId, employee_id: employeeId, completed: false },
+    { onConflict: "course_id,employee_id", ignoreDuplicates: true },
+  );
+  return { error: error ? new Error(error.message) : null };
+}
+
+/** Remove an assignment entirely (unassign). */
+export async function unassignTraining(id: string) {
+  const { error } = await progressTable().delete().eq("id", id);
+  return { error: error ? new Error(error.message) : null };
+}
+
+/** Mark an existing assignment's completion. Doesn't touch assigned_at — only
+ *  set once, at assignment time. */
 export async function setProgress(orgId: string, courseId: string, employeeId: string, completed: boolean) {
   const { error } = await progressTable().upsert(
     { org_id: orgId, course_id: courseId, employee_id: employeeId, completed, completed_at: completed ? new Date().toISOString() : null },

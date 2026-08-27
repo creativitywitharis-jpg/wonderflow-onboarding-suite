@@ -5,9 +5,7 @@ import {
   ArrowLeft,
   BarChart3,
   Bell,
-  Boxes,
   Brain,
-  Calendar,
   CheckCircle2,
   ClipboardCheck,
   Clock,
@@ -17,7 +15,6 @@ import {
   Home,
   LayoutTemplate,
   Mail,
-  MessageSquare,
   Pencil,
   Plus,
   Send,
@@ -64,22 +61,6 @@ const kindColor: Record<BlockKind, string> = {
   decision: "oklch(0.84 0.14 84)",
   action: "oklch(0.72 0.14 155)",
 };
-
-const palette: { kind: BlockKind; label: string; icon: LucideIcon }[] = [
-  { kind: "trigger", label: "New order", icon: ShoppingCart },
-  { kind: "trigger", label: "Low stock", icon: Boxes },
-  { kind: "trigger", label: "New customer", icon: Users },
-  { kind: "trigger", label: "Scheduled", icon: Calendar },
-  { kind: "decision", label: "AI risk check", icon: Brain },
-  { kind: "decision", label: "AI sentiment", icon: Brain },
-  { kind: "decision", label: "If / else", icon: Split },
-  { kind: "action", label: "Send email", icon: Mail },
-  { kind: "action", label: "Create PO", icon: FileText },
-  { kind: "action", label: "Notify Slack", icon: MessageSquare },
-  { kind: "action", label: "Update CRM", icon: Users },
-  { kind: "action", label: "Wait", icon: Timer },
-];
-
 
 // Real, immediately-deployable templates — each maps to an actual trigger/action
 // this engine supports today (no illustrative capabilities like "low stock" or
@@ -687,31 +668,47 @@ function DashboardView({ prefill, onConsumePrefill, refreshKey }: { prefill: Pre
   );
 }
 
-type CanvasBlock = { id: string; kind: BlockKind; label: string; icon: LucideIcon; subtitle: string };
-let blockSeq = 0;
-const newBlockId = () => `b${++blockSeq}`;
-
-const DEFAULT_CANVAS: CanvasBlock[] = [
-  { id: newBlockId(), kind: "trigger", label: "Stock below reorder point", icon: Boxes, subtitle: "Trigger" },
-  { id: newBlockId(), kind: "decision", label: "AI checks demand forecast", icon: Brain, subtitle: "Decision" },
-  { id: newBlockId(), kind: "action", label: "Create purchase order", icon: FileText, subtitle: "Action" },
-  { id: newBlockId(), kind: "action", label: "Notify supplier & Slack", icon: Bell, subtitle: "Action" },
+const actionPalette: { action_key: ActionKey; label: string; icon: LucideIcon }[] = [
+  { action_key: "ai_draft_note", label: "Draft AI note", icon: FileText },
+  { action_key: "email_owner", label: "Email owner", icon: Mail },
+  { action_key: "email_customer", label: "Email customer", icon: Mail },
+  { action_key: "webhook", label: "Call webhook", icon: Zap },
 ];
 
-function BuilderView() {
-  const [blocks, setBlocks] = useState<CanvasBlock[]>(DEFAULT_CANVAS);
-  const [selected, setSelected] = useState<string | null>(null);
+// A real, click-to-build workflow: every block maps to an actual trigger or
+// step this engine can execute (no illustrative "AI risk check"/"Notify
+// Slack" capabilities that don't exist). "Use this workflow" hands the built
+// draft to the Dashboard form, exactly like the AI creator does, so saving
+// goes through the one real create/edit path instead of a second one here.
+function BuilderView({ onBuild }: { onBuild: (draft: PrefillDraft) => void }) {
+  const [name, setName] = useState("");
+  const [triggerKey, setTriggerKey] = useState<TriggerKey>("order.created");
+  const [steps, setSteps] = useState<StepDraft[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const addBlock = (kind: BlockKind, label: string, icon: LucideIcon) => {
-    const block: CanvasBlock = { id: newBlockId(), kind, label, icon, subtitle: kind === "trigger" ? "Trigger" : kind === "decision" ? "Decision" : "Action" };
-    setBlocks((bs) => (kind === "trigger" ? [block, ...bs.filter((b) => b.kind !== "trigger")] : [...bs, block]));
-    setSelected(block.id);
+  const addAction = (action_key: ActionKey) => {
+    const sd = { ...newStepDraft("action"), action_key };
+    setSteps((s) => [...s, sd]);
+    setSelectedId(sd.id);
   };
-  const removeBlock = (id: string) => {
-    setBlocks((bs) => bs.filter((b) => b.id !== id));
-    setSelected((s) => (s === id ? null : s));
+  const addStep = (kind: StepKind) => {
+    const sd = newStepDraft(kind);
+    setSteps((s) => [...s, sd]);
+    setSelectedId(sd.id);
   };
-  const clearCanvas = () => { setBlocks([]); setSelected(null); };
+  const removeStep = (id: string) => {
+    setSteps((s) => s.filter((st) => st.id !== id));
+    setSelectedId((s) => (s === id ? null : s));
+  };
+  const updateStep = (id: string, patch: Partial<StepDraft>) => setSteps((s) => s.map((st) => (st.id === id ? { ...st, ...patch } : st)));
+  const clearCanvas = () => { setSteps([]); setSelectedId(null); };
+
+  const selected = steps.find((s) => s.id === selectedId) ?? null;
+
+  const useWorkflow = () => {
+    if (steps.length === 0) return;
+    onBuild({ name: name.trim() || "Custom workflow", trigger_key: triggerKey, steps });
+  };
 
   return (
     <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
@@ -719,21 +716,42 @@ function BuilderView() {
       <Reveal>
         <GlassCard className="p-5">
           <p className="text-sm font-semibold">Blocks</p>
-          <p className="mt-1 text-xs text-muted-foreground">Click a block to add it to the flow below. Click a block on the canvas to select it; hover it to remove.</p>
-          {(["trigger", "decision", "action"] as BlockKind[]).map((kind) => (
-            <div key={kind} className="mt-4">
-              <p className="mb-2 text-[0.65rem] uppercase tracking-wide" style={{ color: kindColor[kind] }}>{kind}s{kind === "trigger" ? " (one active)" : ""}</p>
-              <div className="space-y-1.5">
-                {palette.filter((b) => b.kind === kind).map((b) => (
-                  <button key={b.label} onClick={() => addBlock(kind, b.label, b.icon)} className="flex w-full items-center gap-2.5 rounded-xl border border-border bg-background/30 px-3 py-2 text-left text-sm text-foreground/85 transition-colors hover:border-gold/40 hover:text-foreground">
-                    <b.icon className="size-4" style={{ color: kindColor[b.kind] }} />
-                    <span className="flex-1 truncate">{b.label}</span>
-                    <Plus className="size-3.5 text-muted-foreground" />
-                  </button>
-                ))}
-              </div>
+          <p className="mt-1 text-xs text-muted-foreground">Pick a trigger, then click blocks to build the sequence. Click a block on the canvas to edit it; hover it to remove.</p>
+
+          <div className="mt-4">
+            <p className="mb-2 text-[0.65rem] uppercase tracking-wide" style={{ color: kindColor.trigger }}>Trigger (one active)</p>
+            <select value={triggerKey} onChange={(e) => setTriggerKey(e.target.value as TriggerKey)} className={AUTO_INPUT}>
+              {TRIGGER_OPTS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+            </select>
+          </div>
+
+          <div className="mt-4">
+            <p className="mb-2 text-[0.65rem] uppercase tracking-wide" style={{ color: kindColor.action }}>Actions</p>
+            <div className="space-y-1.5">
+              {actionPalette.map((a) => (
+                <button key={a.action_key} onClick={() => addAction(a.action_key)} className="flex w-full items-center gap-2.5 rounded-xl border border-border bg-background/30 px-3 py-2 text-left text-sm text-foreground/85 transition-colors hover:border-gold/40 hover:text-foreground">
+                  <a.icon className="size-4" style={{ color: kindColor.action }} />
+                  <span className="flex-1 truncate">{a.label}</span>
+                  <Plus className="size-3.5 text-muted-foreground" />
+                </button>
+              ))}
+              <button onClick={() => addStep("wait")} className="flex w-full items-center gap-2.5 rounded-xl border border-border bg-background/30 px-3 py-2 text-left text-sm text-foreground/85 transition-colors hover:border-gold/40 hover:text-foreground">
+                <Timer className="size-4" style={{ color: kindColor.action }} /><span className="flex-1 truncate">Wait</span><Plus className="size-3.5 text-muted-foreground" />
+              </button>
             </div>
-          ))}
+          </div>
+
+          <div className="mt-4">
+            <p className="mb-2 text-[0.65rem] uppercase tracking-wide" style={{ color: kindColor.decision }}>Decisions</p>
+            <div className="space-y-1.5">
+              <button onClick={() => addStep("condition")} className="flex w-full items-center gap-2.5 rounded-xl border border-border bg-background/30 px-3 py-2 text-left text-sm text-foreground/85 transition-colors hover:border-gold/40 hover:text-foreground">
+                <Split className="size-4" style={{ color: kindColor.decision }} /><span className="flex-1 truncate">Condition</span><Plus className="size-3.5 text-muted-foreground" />
+              </button>
+              <button onClick={() => addStep("approval")} className="flex w-full items-center gap-2.5 rounded-xl border border-border bg-background/30 px-3 py-2 text-left text-sm text-foreground/85 transition-colors hover:border-gold/40 hover:text-foreground">
+                <ClipboardCheck className="size-4" style={{ color: kindColor.decision }} /><span className="flex-1 truncate">Approval</span><Plus className="size-3.5 text-muted-foreground" />
+              </button>
+            </div>
+          </div>
         </GlassCard>
       </Reveal>
 
@@ -741,24 +759,77 @@ function BuilderView() {
       <Reveal delay={80}>
         <GlassCard className="p-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <SectionLabel icon={GitBranch}>Workflow sandbox</SectionLabel>
-            <div className="flex gap-2">
-              <button onClick={clearCanvas} disabled={blocks.length === 0} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40">Clear</button>
-              <button title="This canvas is a visual sandbox — build & run real automations from the Dashboard tab" className="flex items-center gap-2 rounded-full border border-gold/30 bg-glass px-4 py-2 text-xs font-semibold text-foreground/85 transition-colors hover:border-gold/60"><Zap className="size-3.5 text-gold" /> Preview only</button>
+            <SectionLabel icon={GitBranch}>Workflow</SectionLabel>
+            <div className="flex flex-wrap items-center gap-2">
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Workflow name" className="w-40 rounded-full border border-border bg-background/40 px-3 py-1.5 text-xs text-foreground outline-none focus:border-gold/50" />
+              <button onClick={clearCanvas} disabled={steps.length === 0} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40">Clear</button>
+              <button onClick={useWorkflow} disabled={steps.length === 0} title="Opens this workflow in the Dashboard, ready to review and save as a real automation" className="flex items-center gap-2 rounded-full border border-gold/30 bg-glass px-4 py-2 text-xs font-semibold text-foreground/85 transition-colors hover:border-gold/60 disabled:opacity-40"><Zap className="size-3.5 text-gold" /> Use this workflow</button>
             </div>
           </div>
 
           <div className="mt-6 flex flex-col items-center">
-            {blocks.length === 0 && (
+            <Node kind="trigger" icon={Zap} title={triggerLabel(triggerKey)} subtitle="Trigger" />
+            {steps.map((sd) => {
+              const d = describeStepDraft(sd);
+              return (
+                <div key={sd.id} className="flex w-full flex-col items-center">
+                  <Connector />
+                  <Node kind={d.kind} icon={d.icon} title={d.title} subtitle={d.subtitle} selected={selectedId === sd.id} onSelect={() => setSelectedId((s) => (s === sd.id ? null : sd.id))} onRemove={() => removeStep(sd.id)} />
+                </div>
+              );
+            })}
+            {steps.length === 0 && (
               <p className="py-10 text-center text-sm text-muted-foreground">Empty canvas — click a block on the left to start building.</p>
             )}
-            {blocks.map((b, i) => (
-              <div key={b.id} className="flex w-full flex-col items-center">
-                {i > 0 && <Connector />}
-                <Node kind={b.kind} icon={b.icon} title={b.label} subtitle={b.subtitle} selected={selected === b.id} onSelect={() => setSelected((s) => (s === b.id ? null : b.id))} onRemove={() => removeBlock(b.id)} />
-              </div>
-            ))}
           </div>
+
+          {selected && (
+            <div className="mx-auto mt-6 w-full max-w-sm rounded-xl border border-gold/30 bg-background/30 p-3">
+              <p className="mb-2 text-[0.65rem] font-semibold uppercase tracking-wide text-gold">Edit block</p>
+              {selected.kind === "action" && (
+                <div className="space-y-2">
+                  <select value={selected.action_key} onChange={(e) => updateStep(selected.id, { action_key: e.target.value as ActionKey })} className={AUTO_INPUT}>
+                    {ACTION_OPTS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+                  </select>
+                  {selected.action_key === "webhook" && (
+                    <input value={selected.webhook_url} onChange={(e) => updateStep(selected.id, { webhook_url: e.target.value })} placeholder="Webhook URL (https://…)" className={AUTO_INPUT} />
+                  )}
+                  {(selected.action_key === "email_owner" || selected.action_key === "email_customer") && (
+                    <input value={selected.subject} onChange={(e) => updateStep(selected.id, { subject: e.target.value })} placeholder="Email subject (optional)" className={AUTO_INPUT} />
+                  )}
+                  {(selected.action_key === "ai_draft_note" || selected.action_key === "email_customer") && (
+                    <input value={selected.prompt} onChange={(e) => updateStep(selected.id, { prompt: e.target.value })} placeholder={selected.action_key === "email_customer" ? "What should the email say? (optional)" : "AI instruction (optional)"} className={AUTO_INPUT} />
+                  )}
+                </div>
+              )}
+              {selected.kind === "wait" && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Wait</span>
+                  <input type="number" min={0} step="any" value={selected.waitAmount} onChange={(e) => updateStep(selected.id, { waitAmount: e.target.value })} className={cn(AUTO_INPUT, "w-24")} />
+                  <select value={selected.waitUnit} onChange={(e) => updateStep(selected.id, { waitUnit: e.target.value as WaitUnit })} className="rounded-xl border border-border bg-background/40 px-2 py-2.5 text-sm text-foreground outline-none focus:border-gold/50">
+                    {WAIT_UNITS.map((u) => <option key={u.key} value={u.key}>{u.label}</option>)}
+                  </select>
+                  <span className="text-xs text-muted-foreground">before continuing</span>
+                </div>
+              )}
+              {selected.kind === "condition" && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Only continue if</span>
+                  <input value={selected.field} onChange={(e) => updateStep(selected.id, { field: e.target.value })} placeholder="field (e.g. total)" className={cn(AUTO_INPUT, "w-36")} />
+                  <select value={selected.op} onChange={(e) => updateStep(selected.id, { op: e.target.value as StepDraft["op"] })} className="rounded-xl border border-border bg-background/40 px-2 py-2.5 text-sm text-foreground outline-none focus:border-gold/50">
+                    {[">", "<", "=", ">=", "<="].map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <input type="number" value={selected.value} onChange={(e) => updateStep(selected.id, { value: e.target.value })} className={cn(AUTO_INPUT, "w-24")} />
+                </div>
+              )}
+              {selected.kind === "approval" && (
+                <div className="space-y-1.5">
+                  <input value={selected.note} onChange={(e) => updateStep(selected.id, { note: e.target.value })} placeholder="What should the approver decide on? (optional)" className={AUTO_INPUT} />
+                  <p className="text-[0.7rem] text-muted-foreground">Pauses here until someone approves or rejects it in the Approval center.</p>
+                </div>
+              )}
+            </div>
+          )}
         </GlassCard>
       </Reveal>
     </div>
@@ -840,6 +911,21 @@ function describeParsedStep(s: ParsedStep): { icon: LucideIcon; kind: BlockKind;
   const cfg = s.action_config ?? {};
   const detail = typeof cfg.subject === "string" && cfg.subject ? cfg.subject : typeof cfg.prompt === "string" && cfg.prompt ? cfg.prompt.slice(0, 40) : typeof cfg.webhook_url === "string" ? cfg.webhook_url : "";
   return { icon: m.icon, kind: "action", title: m.label, subtitle: detail ? `action · ${detail}` : "action" };
+}
+
+// Same idea as describeParsedStep, but reads a live-edited StepDraft (used by
+// the Workflow builder canvas) rather than AI-parsed JSON.
+function describeStepDraft(sd: StepDraft): { icon: LucideIcon; kind: BlockKind; title: string; subtitle: string } {
+  if (sd.kind === "wait") {
+    const amount = Number(sd.waitAmount) || 0;
+    const unitLabel = WAIT_UNITS.find((u) => u.key === sd.waitUnit)?.label.toLowerCase() ?? sd.waitUnit;
+    return { icon: Timer, kind: "action", title: `Wait ${amount} ${unitLabel}`, subtitle: "wait · pauses the sequence" };
+  }
+  if (sd.kind === "condition") return { icon: Split, kind: "decision", title: `If ${sd.field || "total"} ${sd.op} ${sd.value || 0}`, subtitle: "condition · stops if false" };
+  if (sd.kind === "approval") return { icon: ClipboardCheck, kind: "decision", title: sd.note ? `Approve: ${sd.note}` : "Wait for approval", subtitle: "approval · pauses for a human decision" };
+  const m = actionKindMeta[sd.action_key];
+  const detail = sd.subject || sd.prompt || sd.webhook_url || "";
+  return { icon: m.icon, kind: "action", title: m.label, subtitle: detail ? `action · ${detail.slice(0, 40)}` : "action" };
 }
 
 function CreatorView({ onBuild }: { onBuild: (draft: PrefillDraft) => void }) {
@@ -1268,7 +1354,7 @@ export function AutomationWorkspace() {
 
         <div key={active} className="rise">
           {active === "dashboard" && <DashboardView prefill={prefill} onConsumePrefill={() => setPrefill(null)} refreshKey={dashboardRefreshKey} />}
-          {active === "builder" && <BuilderView />}
+          {active === "builder" && <BuilderView onBuild={(draft) => { setPrefill(draft); setActive("dashboard"); }} />}
           {active === "creator" && <CreatorView onBuild={(draft) => { setPrefill(draft); setActive("dashboard"); }} />}
           {active === "templates" && <TemplatesView goToDashboard={() => { setDashboardRefreshKey((k) => k + 1); setActive("dashboard"); }} />}
           {active === "approvals" && <ApprovalsView />}

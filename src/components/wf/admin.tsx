@@ -411,6 +411,9 @@ function UsersView() {
               <p className="text-[0.65rem] text-muted-foreground sm:col-span-4">Job title is just a display label — the role dropdown is what actually controls permissions.</p>
             </div>
           )}
+          {!canManage && (
+            <p className="mt-4 text-xs text-muted-foreground">Only owners and admins can invite people or edit team members.</p>
+          )}
 
           <div className="mt-5 space-y-1">
             {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading team…</p>}
@@ -424,19 +427,19 @@ function UsersView() {
                 <button onClick={() => setEditingId(null)} className="rounded-full border border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground">Cancel</button>
               </div>
             ) : (
-              <div key={m.id} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_0.8fr_0.8fr_auto]">
+              <div key={m.id} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_11rem_7rem_9.5rem]">
                 <div className="flex items-center gap-3">
                   <Avatar name={m.name} />
                   <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{m.name}</p><p className="truncate text-xs text-muted-foreground">{m.email}</p></div>
                 </div>
-                <span className="hidden text-sm text-muted-foreground sm:block">
+                <span className="hidden truncate text-sm text-muted-foreground sm:block">
                   {m.title ? <><span className="text-foreground/85">{m.title}</span><span className="text-xs capitalize"> · {m.role}</span></> : <span className="capitalize">{m.role}</span>}
                 </span>
                 <span className="hidden items-center gap-1.5 text-xs capitalize sm:flex" style={{ color: memberStatusColor[m.status] ?? memberStatusColor.active }}><span className="size-1.5 rounded-full" style={{ background: memberStatusColor[m.status] ?? memberStatusColor.active }} />{m.status}</span>
                 {canManage && m.role !== "owner" ? (
                   <div className="flex items-center justify-end gap-1.5">
-                    <button onClick={() => startEdit(m)} aria-label="Edit member" className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground"><Pencil className="size-3.5" /></button>
-                    <button onClick={() => toggleStatus(m)} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40">{m.status === "disabled" ? "Enable" : "Disable"}</button>
+                    <button onClick={() => startEdit(m)} aria-label="Edit member" className="grid size-8 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground"><Pencil className="size-3.5" /></button>
+                    <button onClick={() => toggleStatus(m)} className="shrink-0 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40">{m.status === "disabled" ? "Enable" : "Disable"}</button>
                   </div>
                 ) : <span />}
               </div>

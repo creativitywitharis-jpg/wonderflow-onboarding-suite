@@ -66,6 +66,7 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "@/lib/tasks";
+import { listShifts, upsertShift, WEEKDAYS, type DbShift, type Weekday } from "@/lib/shifts";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -264,14 +265,6 @@ function formatDue(due: string | null): string {
   if (diffDays === -1) return "Yesterday";
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
-
-const scheduleDays = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-const shifts = [
-  { who: "Ava Chen", cells: ["9–5", "9–5", "9–5", "—", "9–5"] },
-  { who: "Marcus Reid", cells: ["8–4", "8–4", "8–4", "8–4", "—"] },
-  { who: "Sam Idris", cells: ["10–6", "10–6", "—", "10–6", "10–6"] },
-  { who: "Noah Reed", cells: ["7–3", "7–3", "7–3", "7–3", "7–3"] },
-];
 
 const leaderboard = [
   { label: "Ava Chen", value: 94 },
@@ -838,27 +831,126 @@ function AssistantView() {
   );
 }
 
+/** "09:00" -> "9a", "17:30" -> "5:30p" — compact 12h display for the grid. */
+function fmtShiftTime(t: string | null): string {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const period = h >= 12 ? "p" : "a";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return m ? `${h12}:${String(m).padStart(2, "0")}${period}` : `${h12}${period}`;
+}
+
+function ShiftCell({
+  shift,
+  onSave,
+}: {
+  shift: DbShift | undefined;
+  onSave: (patch: { start_time: string | null; end_time: string | null; is_off: boolean }) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [start, setStart] = useState(shift?.start_time ?? "09:00");
+  const [end, setEnd] = useState(shift?.end_time ?? "17:00");
+  const [off, setOff] = useState(shift?.is_off ?? false);
+  const [saving, setSaving] = useState(false);
+
+  const open = () => {
+    setStart(shift?.start_time ?? "09:00");
+    setEnd(shift?.end_time ?? "17:00");
+    setOff(shift?.is_off ?? false);
+    setEditing(true);
+  };
+  const save = async () => {
+    setSaving(true);
+    await onSave({ start_time: off ? null : start, end_time: off ? null : end, is_off: off });
+    setSaving(false);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="absolute inset-0 z-10 flex flex-col gap-1.5 rounded-lg border border-gold/40 bg-background p-2 shadow-lg">
+        <label className="flex items-center gap-1.5 text-[0.65rem] text-muted-foreground">
+          <input type="checkbox" checked={off} onChange={(e) => setOff(e.target.checked)} className="size-3 accent-[oklch(0.84_0.14_84)]" /> Off
+        </label>
+        {!off && (
+          <div className="flex gap-1">
+            <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="w-full rounded border border-border bg-background/60 px-1 py-0.5 text-[0.65rem] text-foreground outline-none" />
+            <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="w-full rounded border border-border bg-background/60 px-1 py-0.5 text-[0.65rem] text-foreground outline-none" />
+          </div>
+        )}
+        <div className="flex gap-1">
+          <button onClick={save} disabled={saving} className="flex-1 rounded bg-gold/90 py-0.5 text-[0.65rem] font-semibold text-background">{saving ? "…" : "Save"}</button>
+          <button onClick={() => setEditing(false)} className="flex-1 rounded border border-border py-0.5 text-[0.65rem] text-muted-foreground">✕</button>
+        </div>
+      </div>
+    );
+  }
+
+  const label = shift?.is_off ? "Off" : shift?.start_time && shift?.end_time ? `${fmtShiftTime(shift.start_time)}–${fmtShiftTime(shift.end_time)}` : "—";
+  return (
+    <button
+      onClick={open}
+      className="relative grid h-8 w-full place-items-center rounded-lg text-xs tabular-nums transition-colors hover:border hover:border-gold/40"
+      style={{ background: shift?.is_off || !shift ? "transparent" : "oklch(0.84 0.14 84 / 12%)", color: !shift || shift.is_off ? "var(--color-muted-foreground)" : "var(--color-foreground)" }}
+    >
+      {label}
+    </button>
+  );
+}
+
 function ScheduleView() {
+  const { org } = useOrg();
+  const { employees, loading: employeesLoading } = useEmployeesData();
+  const [shifts, setShifts] = useState<DbShift[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!org) { setShifts([]); setLoading(false); return; }
+    setLoading(true);
+    setShifts(await listShifts(org.id));
+    setLoading(false);
+  }, [org?.id]);
+  useEffect(() => { void load(); }, [load]);
+
+  const setCell = async (employeeId: string, day: Weekday, patch: { start_time: string | null; end_time: string | null; is_off: boolean }) => {
+    if (!org) return;
+    await upsertShift(org.id, employeeId, day, patch);
+    await load();
+  };
+
+  if (!employeesLoading && employees.length === 0) {
+    return (
+      <GlassCard className="p-8 text-center sm:p-10">
+        <span className="orb mx-auto grid size-14 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+          <CalendarDays className="size-6" stroke="oklch(0.2 0.02 70)" />
+        </span>
+        <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>No one to schedule yet</h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">Add employees in the People tab, then set their weekly shifts here.</p>
+      </GlassCard>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <Reveal>
-        <GlassCard className="glass-strong relative overflow-hidden p-5">
-          <div className="veil pointer-events-none absolute inset-0 opacity-50" />
-          <div className="relative flex items-center gap-3">
-            <span className="orb grid size-9 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Sparkles className="size-4" stroke="oklch(0.2 0.02 70)" /></span>
-            <p className="text-sm text-foreground/85">AI found a <span className="text-gold">coverage gap Thursday afternoon</span> in Support — I suggest shifting Sam Idris to 12–8. <button className="ml-1 text-gold underline-offset-2 hover:underline">Apply fix</button></p>
-          </div>
-        </GlassCard>
-      </Reveal>
-      <Reveal delay={60}>
         <GlassCard className="overflow-x-auto p-6">
-          <SectionLabel icon={CalendarDays}>This week</SectionLabel>
-          <div className="mt-4 min-w-[36rem]">
-            <div className="grid grid-cols-[8rem_repeat(5,1fr)] gap-2 border-b border-border pb-2 text-[0.7rem] uppercase tracking-wide text-muted-foreground"><span>Member</span>{scheduleDays.map((d) => <span key={d} className="text-center">{d}</span>)}</div>
-            {shifts.map((s) => (
-              <div key={s.who} className="grid grid-cols-[8rem_repeat(5,1fr)] items-center gap-2 border-b border-border/60 py-2.5">
-                <span className="flex items-center gap-2 text-sm text-foreground/85"><Avatar name={s.who} className="size-6 text-[0.55rem]" /> {s.who.split(" ")[0]}</span>
-                {s.cells.map((c, i) => <div key={i} className="grid h-8 place-items-center rounded-lg text-xs tabular-nums" style={{ background: c === "—" ? "transparent" : "oklch(0.84 0.14 84 / 12%)", color: c === "—" ? "var(--color-muted-foreground)" : "var(--color-foreground)" }}>{c}</div>)}
+          <div className="flex items-baseline justify-between">
+            <SectionLabel icon={CalendarDays}>This week</SectionLabel>
+            <span className="text-xs text-muted-foreground">Click a cell to set hours</span>
+          </div>
+          <div className="mt-4 min-w-[44rem]">
+            <div className="grid grid-cols-[8rem_repeat(7,1fr)] gap-2 border-b border-border pb-2 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+              <span>Member</span>{WEEKDAYS.map((d) => <span key={d} className="text-center">{d}</span>)}
+            </div>
+            {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>}
+            {!loading && employees.map((emp) => (
+              <div key={emp.id} className="grid grid-cols-[8rem_repeat(7,1fr)] items-center gap-2 border-b border-border/60 py-2.5">
+                <span className="flex items-center gap-2 text-sm text-foreground/85"><Avatar name={emp.name} className="size-6 text-[0.55rem]" /> {emp.name.split(" ")[0]}</span>
+                {WEEKDAYS.map((day) => (
+                  <div key={day} className="relative">
+                    <ShiftCell shift={shifts.find((s) => s.employee_id === emp.id && s.day === day)} onSave={(patch) => setCell(emp.id, day, patch)} />
+                  </div>
+                ))}
               </div>
             ))}
           </div>

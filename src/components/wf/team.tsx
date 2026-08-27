@@ -67,6 +67,17 @@ import {
   type TaskStatus,
 } from "@/lib/tasks";
 import { listShifts, upsertShift, WEEKDAYS, type DbShift, type Weekday } from "@/lib/shifts";
+import {
+  createCourse,
+  deleteCourse,
+  listCourses,
+  listProgress,
+  setProgress,
+  updateCourse,
+  type DbCourse,
+  type DbProgress,
+  type NewCourse,
+} from "@/lib/training";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -265,13 +276,6 @@ function formatDue(due: string | null): string {
   if (diffDays === -1) return "Yesterday";
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
-
-const courses = [
-  { id: "c1", title: "AI tools for daily work", cat: "Productivity", lessons: 8, progress: 62, icon: Sparkles },
-  { id: "c2", title: "Customer conversations that convert", cat: "Sales", lessons: 6, progress: 100, icon: Users },
-  { id: "c3", title: "Inventory & fulfilment basics", cat: "Operations", lessons: 10, progress: 30, icon: Building2 },
-  { id: "c4", title: "Brand voice & content", cat: "Marketing", lessons: 5, progress: 0, icon: BookOpen },
-];
 
 const channels = [{ name: "general", unread: 0 }, { name: "operations", unread: 3 }, { name: "marketing", unread: 1 }, { name: "wins", unread: 0 }];
 const seedMessages = [
@@ -1058,31 +1062,175 @@ function PerformanceView() {
   );
 }
 
+const TRN_INPUT = "w-full rounded-xl border border-border bg-background/40 px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-gold/50";
+
+function CourseCard({
+  course,
+  employees,
+  progress,
+  onToggle,
+  onEdit,
+  onDelete,
+}: {
+  course: DbCourse;
+  employees: DbEmployee[];
+  progress: DbProgress[];
+  onToggle: (employeeId: string, completed: boolean) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const completedIds = new Set(progress.filter((p) => p.completed).map((p) => p.employee_id));
+  const doneCount = employees.filter((e) => completedIds.has(e.id)).length;
+  const pct = employees.length ? Math.round((doneCount / employees.length) * 100) : 0;
+
+  return (
+    <GlassCard className="flex h-full flex-col p-6">
+      <div className="flex items-center justify-between">
+        <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><GraduationCap className="size-5 text-gold" /></span>
+        <div className="flex items-center gap-1.5">
+          {course.category && <span className="rounded-full border border-border bg-glass px-2.5 py-0.5 text-[0.65rem] text-muted-foreground">{course.category}</span>}
+          <button onClick={onEdit} aria-label="Edit course" className="grid size-6 place-items-center rounded-lg border border-border text-muted-foreground hover:border-gold/40 hover:text-foreground"><Pencil className="size-3" /></button>
+          <button onClick={onDelete} aria-label="Delete course" className="grid size-6 place-items-center rounded-lg border border-border text-muted-foreground hover:border-rose-400/50 hover:text-rose-300"><Trash2 className="size-3" /></button>
+        </div>
+      </div>
+      <p className="mt-4 text-sm font-semibold text-foreground">{course.title}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{course.lessons} lesson{course.lessons === 1 ? "" : "s"}</p>
+      <div className="mt-4">
+        <div className="flex items-baseline justify-between text-xs"><span className="text-muted-foreground">{doneCount} of {employees.length} completed</span><span className="tabular-nums text-gold">{pct}%</span></div>
+        <div className="mt-1.5"><Bar value={pct} /></div>
+      </div>
+      <button onClick={() => setExpanded((v) => !v)} className="mt-4 flex items-center justify-center gap-2 rounded-full border border-border bg-glass px-4 py-2 text-xs text-foreground/80 transition-colors hover:border-gold/40">
+        {expanded ? "Hide" : "Manage"} completions
+      </button>
+      {expanded && (
+        <div className="mt-3 max-h-48 space-y-1.5 overflow-y-auto border-t border-border pt-3">
+          {employees.length === 0 && <p className="text-center text-xs text-muted-foreground">Add employees in the People tab first.</p>}
+          {employees.map((e) => {
+            const done = completedIds.has(e.id);
+            return (
+              <label key={e.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-glass">
+                <input type="checkbox" checked={done} onChange={(ev) => onToggle(e.id, ev.target.checked)} className="size-3.5 accent-[oklch(0.84_0.14_84)]" />
+                <Avatar name={e.name} className="size-5 text-[0.55rem]" />
+                <span className={cn("flex-1 truncate", done ? "text-foreground" : "text-muted-foreground")}>{e.name}</span>
+                {done && <CheckCircle2 className="size-3.5 text-emerald-400" />}
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </GlassCard>
+  );
+}
+
+function CourseForm({ initial, onCancel, onSave, saving }: { initial?: Partial<NewCourse>; onCancel: () => void; onSave: (c: NewCourse) => void; saving: boolean }) {
+  const [f, setF] = useState({ title: initial?.title ?? "", category: initial?.category ?? "", lessons: String(initial?.lessons ?? 1) });
+  const submit = () => {
+    if (!f.title.trim()) return;
+    onSave({ title: f.title.trim(), category: f.category.trim() || undefined, lessons: Math.max(1, Number(f.lessons) || 1) });
+  };
+  return (
+    <div className="grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
+      <input value={f.title} onChange={(e) => setF((x) => ({ ...x, title: e.target.value }))} placeholder="Course title *" className={cn(TRN_INPUT, "sm:col-span-2")} />
+      <input value={f.category} onChange={(e) => setF((x) => ({ ...x, category: e.target.value }))} placeholder="Category (e.g. Sales)" className={TRN_INPUT} />
+      <input type="number" min={1} value={f.lessons} onChange={(e) => setF((x) => ({ ...x, lessons: e.target.value }))} placeholder="Lessons" className={TRN_INPUT} />
+      <div className="flex gap-2 sm:col-span-2">
+        <button onClick={submit} disabled={!f.title.trim() || saving} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{saving ? "Saving…" : "Save course"}</button>
+        <button onClick={onCancel} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 function TrainingView() {
-  const [list, setList] = useState(courses);
-  const cont = (id: string) => setList((cs) => cs.map((c) => (c.id === id ? { ...c, progress: Math.min(100, c.progress + 20) } : c)));
-  const completed = list.filter((c) => c.progress === 100).length;
+  const { org } = useOrg();
+  const { employees } = useEmployeesData();
+  const [courses, setCourses] = useState<DbCourse[]>([]);
+  const [progress, setProgressList] = useState<DbProgress[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!org) { setCourses([]); setProgressList([]); setLoading(false); return; }
+    setLoading(true);
+    const [c, p] = await Promise.all([listCourses(org.id), listProgress(org.id)]);
+    setCourses(c);
+    setProgressList(p);
+    setLoading(false);
+  }, [org?.id]);
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async (c: NewCourse) => {
+    if (!org) return;
+    setBusy(true);
+    if (editingId) await updateCourse(editingId, c);
+    else await createCourse(org.id, c);
+    setBusy(false);
+    setAdding(false);
+    setEditingId(null);
+    await load();
+  };
+  const remove = async (id: string) => { await deleteCourse(id); await load(); };
+  const toggle = async (courseId: string, employeeId: string, completed: boolean) => {
+    if (!org) return;
+    await setProgress(org.id, courseId, employeeId, completed);
+    await load();
+  };
+
+  const totalPairs = courses.length * employees.length;
+  const donePairs = progress.filter((p) => p.completed).length;
+  const teamCompletion = totalPairs ? Math.round((donePairs / totalPairs) * 100) : 0;
+  const fullyTrained = employees.filter((e) => courses.length > 0 && courses.every((c) => progress.some((p) => p.course_id === c.id && p.employee_id === e.id && p.completed))).length;
+
+  if (!loading && courses.length === 0 && !adding) {
+    return (
+      <GlassCard className="p-8 text-center sm:p-10">
+        <span className="orb mx-auto grid size-14 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+          <GraduationCap className="size-6" stroke="oklch(0.2 0.02 70)" />
+        </span>
+        <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>No courses yet</h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">Add your first training course and track who on your team has completed it.</p>
+        <button onClick={() => setAdding(true)} className="mt-6 flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] mx-auto" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
+          <Plus className="size-4" /> New course
+        </button>
+      </GlassCard>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile label="Courses completed" value={completed} icon={GraduationCap} />
-        <StatTile label="In progress" value={list.filter((c) => c.progress > 0 && c.progress < 100).length} icon={Play} />
-        <StatTile label="Team completion" value={Math.round(list.reduce((a, c) => a + c.progress, 0) / list.length)} suffix="%" icon={Target} />
+        <StatTile label="Courses" value={courses.length} icon={GraduationCap} />
+        <StatTile label="Team completion" value={teamCompletion} suffix="%" icon={Target} />
+        <StatTile label="Fully trained" value={fullyTrained} icon={CheckCircle2} />
       </div>
+
+      <div className="flex justify-end">
+        <button onClick={() => { setAdding((a) => !a); setEditingId(null); }} className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>
+          <Plus className="size-3.5" /> New course
+        </button>
+      </div>
+      {adding && <CourseForm onCancel={() => setAdding(false)} onSave={save} saving={busy} />}
+
       <div className="grid gap-4 sm:grid-cols-2">
-        {list.map((c, i) => (
-          <Reveal key={c.id} delay={i * 50} className="h-full">
-            <GlassCard className="flex h-full flex-col p-6">
-              <div className="flex items-center justify-between"><span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><c.icon className="size-5 text-gold" /></span><span className="rounded-full border border-border bg-glass px-2.5 py-0.5 text-[0.65rem] text-muted-foreground">{c.cat}</span></div>
-              <p className="mt-4 text-sm font-semibold text-foreground">{c.title}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{c.lessons} lessons</p>
-              <div className="mt-4"><div className="flex items-baseline justify-between text-xs"><span className="text-muted-foreground">Progress</span><span className="tabular-nums text-gold">{c.progress}%</span></div><div className="mt-1.5"><Bar value={c.progress} /></div></div>
-              <button onClick={() => cont(c.id)} disabled={c.progress === 100} className="mt-4 flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-semibold transition-all active:scale-[0.98] disabled:opacity-50" style={c.progress === 100 ? { border: "1px solid var(--color-border)", color: "var(--color-muted-foreground)" } : { background: "var(--gradient-gold)", color: "oklch(0.2 0.02 70)" }}>
-                {c.progress === 100 ? <><CheckCircle2 className="size-3.5" /> Completed</> : c.progress === 0 ? <><Play className="size-3.5" /> Start course</> : <><Play className="size-3.5" /> Continue</>}
-              </button>
-            </GlassCard>
-          </Reveal>
-        ))}
+        {courses.map((c, i) =>
+          editingId === c.id ? (
+            <CourseForm key={c.id} initial={c} onCancel={() => setEditingId(null)} onSave={save} saving={busy} />
+          ) : (
+            <Reveal key={c.id} delay={i * 50} className="h-full">
+              <CourseCard
+                course={c}
+                employees={employees}
+                progress={progress.filter((p) => p.course_id === c.id)}
+                onToggle={(empId, completed) => toggle(c.id, empId, completed)}
+                onEdit={() => { setEditingId(c.id); setAdding(false); }}
+                onDelete={() => remove(c.id)}
+              />
+            </Reveal>
+          ),
+        )}
       </div>
     </div>
   );

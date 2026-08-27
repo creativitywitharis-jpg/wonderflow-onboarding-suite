@@ -81,6 +81,8 @@ import {
   type DbProgress,
   type NewCourse,
 } from "@/lib/training";
+import { createPost, listPosts, type DbPost } from "@/lib/team-posts";
+import { askAI } from "@/lib/ai";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -280,12 +282,7 @@ function formatDue(due: string | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-const channels = [{ name: "general", unread: 0 }, { name: "operations", unread: 3 }, { name: "marketing", unread: 1 }, { name: "wins", unread: 0 }];
-const seedMessages = [
-  { author: "Marcus Reid", text: "Fulfilment SLA back to 97% — nice work team 💪", time: "12m" },
-  { author: "Ava Chen", text: "Referral campaign is live. Early CTR looks great.", time: "34m" },
-  { author: "WonderFlow AI", text: "Heads up: Thursday afternoon has a coverage gap in Support.", time: "1h" },
-];
+const TEAM_CHANNELS = ["general", "operations", "marketing", "wins"];
 
 /* ──────────────────────────────────────────────────────────────────────
  * Small pieces
@@ -862,37 +859,81 @@ function TasksView() {
 }
 
 type ChatMsg = { role: "ai" | "user"; text: string };
-const assistantPrompts = ["How many PTO days do I have?", "What are my tasks today?", "Who's on call this weekend?", "Start onboarding a new hire"];
+const assistantPrompts = ["Who's on leave right now?", "What tasks are overdue?", "Who still needs training assigned?", "Summarize today's schedule"];
 
 function AssistantView() {
-  const [messages, setMessages] = useState<ChatMsg[]>([{ role: "ai", text: "Hi! I'm your work assistant. Ask me about your tasks, schedule, PTO, policies, or getting a new hire set up." }]);
+  const { org } = useOrg();
+  const { employees } = useEmployeesData();
+  const { tasks } = useTasksData();
+  const [shifts, setShifts] = useState<DbShift[]>([]);
+  const [courses, setCourses] = useState<DbCourse[]>([]);
+  const [progress, setProgressList] = useState<DbProgress[]>([]);
+  const [messages, setMessages] = useState<ChatMsg[]>([{ role: "ai", text: "Hi — I'm your team assistant. Ask me about tasks, schedules, or training, and I'll answer from your real team data." }]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, thinking]);
-  const answerFor = (q: string) => {
-    const s = q.toLowerCase();
-    if (s.includes("pto") || s.includes("vacation")) return "You have 14 PTO days remaining this year, plus 3 sick days. Want me to draft a request?";
-    if (s.includes("task")) return "Today you have 3 tasks: launch the referral sequence (high), review the Q3 supplier contract, and resolve the top 5 support tickets.";
-    if (s.includes("call") || s.includes("weekend")) return "This weekend Noah Reed covers fulfilment and Sam Idris is on support. No gaps detected.";
-    if (s.includes("onboard") || s.includes("hire")) return "I'll set up a new-hire checklist: accounts, role & permissions, a training path, and a buddy. Who are we onboarding?";
-    return "I've noted that. I can help with tasks, scheduling, PTO, policies, and onboarding — just say the word.";
-  };
-  function send(text: string) { const q = text.trim(); if (!q || thinking) return; setMessages((m) => [...m, { role: "user", text: q }]); setInput(""); setThinking(true); window.setTimeout(() => { setThinking(false); setMessages((m) => [...m, { role: "ai", text: answerFor(q) }]); }, 1200); }
+
+  useEffect(() => {
+    if (!org?.id) return;
+    Promise.all([listShifts(org.id), listCourses(org.id), listProgress(org.id)]).then(([s, c, p]) => {
+      setShifts(s); setCourses(c); setProgressList(p);
+    }).catch(() => {});
+  }, [org?.id]);
+
+  // A real snapshot of the team's actual data — the AI answers from this,
+  // not invented policy/PTO numbers this app doesn't track.
+  function buildSnapshot(): string {
+    const onLeave = employees.filter((e) => e.status === "On leave").map((e) => e.name);
+    const today = new Date();
+    const todayCode = today.toLocaleDateString("en-US", { weekday: "short" }) as Weekday;
+    const todayShifts = shifts.filter((s) => s.day === todayCode);
+    const working = todayShifts.filter((s) => !s.is_off).map((s) => { const e = employees.find((x) => x.id === s.employee_id); return `${e?.name ?? "?"} (${s.start_time ?? "?"}-${s.end_time ?? "?"})`; });
+    const off = todayShifts.filter((s) => s.is_off).map((s) => employees.find((e) => e.id === s.employee_id)?.name).filter(Boolean);
+    const overdue = tasks.filter((t) => t.status !== "Done" && t.due_date && new Date(t.due_date) < new Date(new Date().toDateString()));
+    const openTasks = tasks.filter((t) => t.status !== "Done");
+    const pendingTraining = progress.filter((p) => !p.completed).map((p) => { const e = employees.find((x) => x.id === p.employee_id); const c = courses.find((x) => x.id === p.course_id); return `${e?.name ?? "?"} — ${c?.title ?? "?"}`; });
+
+    return [
+      `Team: ${employees.length} people (${onLeave.length} on leave${onLeave.length ? ": " + onLeave.join(", ") : ""}).`,
+      `Today (${todayCode}) schedule: working — ${working.join("; ") || "none set"}. Off — ${off.join(", ") || "none set"}.`,
+      `Tasks: ${openTasks.length} open, ${overdue.length} overdue${overdue.length ? " (" + overdue.map((t) => t.title).join(", ") + ")" : ""}.`,
+      `Training: ${courses.length} courses, ${pendingTraining.length} pending assignment(s)${pendingTraining.length ? " — " + pendingTraining.join(", ") : ""}.`,
+    ].join("\n");
+  }
+
+  async function send(text: string) {
+    const q = text.trim();
+    if (!q || thinking) return;
+    setMessages((m) => [...m, { role: "user", text: q }]);
+    setInput("");
+    setThinking(true);
+    try {
+      const reply = await askAI(
+        [{ role: "user", content: `Here is the current real team data:\n${buildSnapshot()}\n\nUsing ONLY this data, answer concisely. If asked about something this data doesn't cover (e.g. PTO balances, HR policy), say plainly that WonderFlow doesn't track that yet — never invent a number.\n\nQuestion: ${q}` }],
+        { id: org?.id, name: org?.name, industry: org?.industry },
+      );
+      setMessages((m) => [...m, { role: "ai", text: reply || "I couldn't generate a response — try rephrasing." }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "ai", text: e instanceof Error ? e.message : "Something went wrong." }]);
+    }
+    setThinking(false);
+  }
+
   return (
     <Reveal>
       <GlassCard className="glass-strong mx-auto flex h-[32rem] max-w-3xl flex-col p-5">
         <div className="flex items-center gap-3 border-b border-border pb-4">
           <span className="orb grid size-9 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Bot className="size-4" stroke="oklch(0.2 0.02 70)" /></span>
-          <div><p className="text-sm font-semibold tracking-tight">Staff Assistant</p><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="size-1.5 rounded-full bg-emerald-400" /> Here to help you succeed</p></div>
+          <div><p className="text-sm font-semibold tracking-tight">Team Assistant</p><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="size-1.5 rounded-full bg-emerald-400" /> Grounded in your real team data</p></div>
         </div>
         <div ref={scrollRef} className="mt-4 flex-1 space-y-3 overflow-y-auto pr-1">
           {messages.map((m, i) => (<div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}><div className={cn("max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed", m.role === "user" ? "rounded-br-sm bg-glass text-foreground/90" : "rounded-bl-sm border border-border bg-background/40 text-foreground/85")}>{m.text}</div></div>))}
           {thinking && <div className="flex justify-start"><div className="typing flex items-center gap-1 rounded-2xl rounded-bl-sm border border-border bg-background/40 px-3.5 py-3"><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /></div></div>}
         </div>
         <div className="mt-4 flex flex-wrap gap-2">{assistantPrompts.map((p) => <button key={p} onClick={() => send(p)} className="rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground">{p}</button>)}</div>
-        <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="mt-3 flex items-center gap-2 rounded-2xl border border-border bg-background/40 px-3 py-2 focus-within:border-gold/50">
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask your assistant…" className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70" />
+        <form onSubmit={(e) => { e.preventDefault(); void send(input); }} className="mt-3 flex items-center gap-2 rounded-2xl border border-border bg-background/40 px-3 py-2 focus-within:border-gold/50">
+          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask about your team…" className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70" />
           <button type="submit" aria-label="Send" disabled={!input.trim() || thinking} className="grid size-8 shrink-0 place-items-center rounded-full transition-all hover:brightness-110 active:scale-95 disabled:opacity-40" style={{ background: "var(--gradient-gold)" }}><Send className="size-3.5" stroke="oklch(0.2 0.02 70)" /></button>
         </form>
       </GlassCard>
@@ -901,6 +942,16 @@ function AssistantView() {
 }
 
 /** "09:00" -> "9a", "17:30" -> "5:30p" — compact 12h display for the grid. */
+function postTimeAgo(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 function fmtShiftTime(t: string | null): string {
   if (!t) return "";
   const [h, m] = t.split(":").map(Number);
@@ -1418,19 +1469,48 @@ function TrainingView() {
 }
 
 function CommsView() {
-  const [active, setActive] = useState("operations");
-  const [messages, setMessages] = useState(seedMessages);
+  const { org, userName } = useOrg();
+  const [active, setActive] = useState("general");
+  const [posts, setPosts] = useState<DbPost[]>([]);
+  const [loading, setLoading] = useState(true);
   const [input, setInput] = useState("");
-  const post = () => { const t = input.trim(); if (!t) return; setMessages((m) => [...m, { author: "You", text: t, time: "now" }]); setInput(""); };
+  const [sending, setSending] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async () => {
+    if (!org) { setPosts([]); setLoading(false); return; }
+    setLoading(true);
+    setPosts(await listPosts(org.id));
+    setLoading(false);
+  }, [org?.id]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [posts, active]);
+
+  const post = async () => {
+    const t = input.trim();
+    if (!t || !org || sending) return;
+    setSending(true);
+    setInput("");
+    await createPost(org.id, { channel: active, author_name: userName, body: t });
+    await load();
+    setSending(false);
+  };
+
+  const channelPosts = posts.filter((p) => p.channel === active);
+  // A post count per channel — there's no read/unread tracking (no per-user
+  // last-seen timestamp), so this badge means "activity," not "unread."
+  const countByChannel = new Map<string, number>();
+  for (const p of posts) countByChannel.set(p.channel, (countByChannel.get(p.channel) ?? 0) + 1);
+
   return (
     <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
       <Reveal className="hidden lg:block">
         <GlassCard className="p-4">
           <p className="px-2 text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">Channels</p>
           <div className="mt-2 space-y-1">
-            {channels.map((c) => (
-              <button key={c.name} onClick={() => setActive(c.name)} className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-colors", active === c.name ? "bg-glass text-foreground" : "text-muted-foreground hover:bg-glass hover:text-foreground")}>
-                <Hash className="size-3.5 shrink-0" /><span className="flex-1 truncate">{c.name}</span>{c.unread > 0 && <span className="rounded-full bg-gold/20 px-1.5 text-[0.6rem] text-gold">{c.unread}</span>}
+            {TEAM_CHANNELS.map((name) => (
+              <button key={name} onClick={() => setActive(name)} className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-colors", active === name ? "bg-glass text-foreground" : "text-muted-foreground hover:bg-glass hover:text-foreground")}>
+                <Hash className="size-3.5 shrink-0" /><span className="flex-1 truncate">{name}</span>{(countByChannel.get(name) ?? 0) > 0 && <span className="rounded-full bg-gold/20 px-1.5 text-[0.6rem] text-gold">{countByChannel.get(name)}</span>}
               </button>
             ))}
           </div>
@@ -1440,18 +1520,19 @@ function CommsView() {
       <Reveal>
         <GlassCard className="flex h-[32rem] flex-col p-6">
           <div className="flex items-center gap-2 border-b border-border pb-4"><Hash className="size-4 text-gold" /><p className="text-sm font-semibold">{active}</p></div>
-          <div className="mt-4 flex items-center gap-2 rounded-2xl border border-gold/25 bg-glass p-3"><Megaphone className="size-4 shrink-0 text-gold" /><p className="text-xs text-foreground/80">Pinned: All-hands Friday 10 AM. AI notes will be shared after.</p></div>
-          <div className="mt-4 flex-1 space-y-4 overflow-y-auto pr-1">
-            {messages.map((m, i) => (
-              <div key={i} className="flex gap-3">
-                <Avatar name={m.author === "You" ? "Y O" : m.author} />
-                <div className="min-w-0"><p className="flex items-center gap-2 text-sm"><span className="font-medium text-foreground">{m.author}</span><span className="text-[0.65rem] text-muted-foreground">{m.time}</span></p><p className="mt-0.5 text-sm text-foreground/85">{m.text}</p></div>
+          <div ref={scrollRef} className="mt-4 flex-1 space-y-4 overflow-y-auto pr-1">
+            {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>}
+            {!loading && channelPosts.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No posts in #{active} yet — say something.</p>}
+            {channelPosts.map((m) => (
+              <div key={m.id} className="flex gap-3">
+                <Avatar name={m.author_name} />
+                <div className="min-w-0"><p className="flex items-center gap-2 text-sm"><span className="font-medium text-foreground">{m.author_name}</span><span className="text-[0.65rem] text-muted-foreground">{postTimeAgo(m.created_at)}</span></p><p className="mt-0.5 whitespace-pre-wrap text-sm text-foreground/85">{m.body}</p></div>
               </div>
             ))}
           </div>
-          <form onSubmit={(e) => { e.preventDefault(); post(); }} className="mt-3 flex items-center gap-2 rounded-2xl border border-border bg-background/40 px-3 py-2 focus-within:border-gold/50">
+          <form onSubmit={(e) => { e.preventDefault(); void post(); }} className="mt-3 flex items-center gap-2 rounded-2xl border border-border bg-background/40 px-3 py-2 focus-within:border-gold/50">
             <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Message #${active}…`} className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70" />
-            <button type="submit" aria-label="Send" disabled={!input.trim()} className="grid size-8 shrink-0 place-items-center rounded-full transition-all hover:brightness-110 active:scale-95 disabled:opacity-40" style={{ background: "var(--gradient-gold)" }}><Send className="size-3.5" stroke="oklch(0.2 0.02 70)" /></button>
+            <button type="submit" aria-label="Send" disabled={!input.trim() || sending} className="grid size-8 shrink-0 place-items-center rounded-full transition-all hover:brightness-110 active:scale-95 disabled:opacity-40" style={{ background: "var(--gradient-gold)" }}><Send className="size-3.5" stroke="oklch(0.2 0.02 70)" /></button>
           </form>
         </GlassCard>
       </Reveal>

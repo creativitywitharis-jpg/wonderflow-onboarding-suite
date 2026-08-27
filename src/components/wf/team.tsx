@@ -866,21 +866,26 @@ function ShiftCell({
     setEditing(false);
   };
 
+  // Renders inline (normal document flow, not absolutely positioned) so it can
+  // never be clipped by the table's horizontal-scroll container — an
+  // overflow-x-auto ancestor silently clips vertical overflow too, which cut
+  // off the Save button when this was an absolute overlay. The row simply
+  // grows a bit taller while a cell is being edited.
   if (editing) {
     return (
-      <div className="absolute inset-0 z-10 flex flex-col gap-1.5 rounded-lg border border-gold/40 bg-background p-2 shadow-lg">
+      <div className="flex flex-col gap-1.5 rounded-lg border border-gold/40 bg-background p-2 shadow-lg">
         <label className="flex items-center gap-1.5 text-[0.65rem] text-muted-foreground">
           <input type="checkbox" checked={off} onChange={(e) => setOff(e.target.checked)} className="size-3 accent-[oklch(0.84_0.14_84)]" /> Off
         </label>
         {!off && (
-          <div className="flex gap-1">
-            <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="w-full rounded border border-border bg-background/60 px-1 py-0.5 text-[0.65rem] text-foreground outline-none" />
-            <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="w-full rounded border border-border bg-background/60 px-1 py-0.5 text-[0.65rem] text-foreground outline-none" />
+          <div className="flex flex-col gap-1">
+            <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="w-full rounded border border-border bg-background/60 px-1 py-1 text-[0.65rem] text-foreground outline-none" />
+            <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="w-full rounded border border-border bg-background/60 px-1 py-1 text-[0.65rem] text-foreground outline-none" />
           </div>
         )}
         <div className="flex gap-1">
-          <button onClick={save} disabled={saving} className="flex-1 rounded bg-gold/90 py-0.5 text-[0.65rem] font-semibold text-background">{saving ? "…" : "Save"}</button>
-          <button onClick={() => setEditing(false)} className="flex-1 rounded border border-border py-0.5 text-[0.65rem] text-muted-foreground">✕</button>
+          <button onClick={save} disabled={saving} className="flex-1 rounded bg-gold/90 py-1 text-[0.65rem] font-semibold text-background">{saving ? "…" : "Save"}</button>
+          <button onClick={() => setEditing(false)} className="flex-1 rounded border border-border py-1 text-[0.65rem] text-muted-foreground">Cancel</button>
         </div>
       </div>
     );
@@ -938,13 +943,13 @@ function ScheduleView() {
             <SectionLabel icon={CalendarDays}>This week</SectionLabel>
             <span className="text-xs text-muted-foreground">Click a cell to set hours</span>
           </div>
-          <div className="mt-4 min-w-[44rem]">
+          <div className="mt-4 min-w-[54rem]">
             <div className="grid grid-cols-[8rem_repeat(7,1fr)] gap-2 border-b border-border pb-2 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
               <span>Member</span>{WEEKDAYS.map((d) => <span key={d} className="text-center">{d}</span>)}
             </div>
             {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>}
             {!loading && employees.map((emp) => (
-              <div key={emp.id} className="grid grid-cols-[8rem_repeat(7,1fr)] items-center gap-2 border-b border-border/60 py-2.5">
+              <div key={emp.id} className="grid grid-cols-[8rem_repeat(7,1fr)] items-start gap-2 border-b border-border/60 py-2.5">
                 <span className="flex items-center gap-2 text-sm text-foreground/85"><Avatar name={emp.name} className="size-6 text-[0.55rem]" /> {emp.name.split(" ")[0]}</span>
                 {WEEKDAYS.map((day) => (
                   <div key={day} className="relative">

@@ -118,6 +118,30 @@ export async function leaveOrganization(orgId: string): Promise<{ error: Error |
   return { error: error ? new Error(error.message) : null };
 }
 
+/** Untyped RPC caller — every fn here ships in a migration not yet reflected in generated types. */
+const rpcUntyped = (fn: string, args: Record<string, unknown>) =>
+  (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }> }).rpc(fn, args);
+
+/**
+ * Hand full ownership to another active member — they become owner, the
+ * caller becomes admin. Atomic (owner-only RPC): never a moment with zero
+ * or two owners.
+ */
+export async function transferOwnership(orgId: string, newOwnerUserId: string): Promise<{ error: Error | null }> {
+  const { error } = await rpcUntyped("transfer_ownership", { p_org_id: orgId, p_new_owner_user_id: newOwnerUserId });
+  return { error: error ? new Error(error.message) : null };
+}
+
+/**
+ * Permanently delete a business and everything in it. Only the owner can
+ * call this, and only when they're the sole member — the RPC raises
+ * otherwise (transfer ownership or remove teammates first).
+ */
+export async function deleteOrganization(orgId: string): Promise<{ error: Error | null }> {
+  const { error } = await rpcUntyped("delete_organization", { p_org_id: orgId });
+  return { error: error ? new Error(error.message) : null };
+}
+
 /** Every organization the current user is a member of (RLS-scoped). */
 export async function getMyOrgs(): Promise<OrgRow[]> {
   const { data } = await orgTable()

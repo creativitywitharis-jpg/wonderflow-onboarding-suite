@@ -37,13 +37,13 @@ import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
 import { supabase } from "@/lib/supabase";
-import { enabledModulesFor, INDUSTRIES, leaveOrganization, updateOrganization } from "@/lib/org";
+import { deleteOrganization, enabledModulesFor, INDUSTRIES, leaveOrganization, transferOwnership, updateOrganization } from "@/lib/org";
 import { signOut } from "@/lib/use-auth";
 import { connectSlack, disconnectSlack, listConnections, syncStripe, testSlack, type DbConnection } from "@/lib/connections";
 import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
 import { PLANS, getAiUsage, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
-import { cancelInvitation, inviteMember, listInvitations, listMembers, setMemberStatus, updateMember, type Invitation, type Member } from "@/lib/team";
+import { cancelInvitation, deleteMember, inviteMember, listInvitations, listMembers, setMemberStatus, updateMember, type Invitation, type Member } from "@/lib/team";
 import { listAuditLog, logAudit, type AuditEntry } from "@/lib/audit";
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -236,16 +236,42 @@ function SettingsView() {
 
 // Self-service "delete my account" — removes only the caller's own
 // membership (leaveOrganization is a SECURITY DEFINER RPC, since the
-// memberships table's own RLS restricts writes to owner/admin). Blocked for
-// owners: there's no ownership-transfer or whole-business-deletion feature,
-// so an owner leaving would orphan the business.
+// memberships table's own RLS restricts writes to owner/admin).
+//
+// Owners can't use that same action directly — leaving would orphan the
+// business — so this card gives them two real exits instead: transfer
+// ownership to another active teammate (after which they're an admin and
+// can leave normally), or, if they're the business's only member, delete
+// the whole business outright since there's no one else it would affect.
 function LeaveOrgCard() {
-  const { org, role } = useOrg();
+  const { org, role, refresh } = useOrg();
+  const isOwner = role === "owner";
+  const navigate = useNavigate();
+
+  // Leave (non-owner path)
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const navigate = useNavigate();
-  const isOwner = role === "owner";
+
+  // Owner path: who else is in the business
+  const [members, setMembers] = useState<Member[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+  useEffect(() => {
+    if (!org || !isOwner) { setLoadingMembers(false); return; }
+    setLoadingMembers(true);
+    listMembers(org.id).then(setMembers).catch(() => setMembers([])).finally(() => setLoadingMembers(false));
+  }, [org?.id, isOwner]);
+  const others = members.filter((m) => m.role !== "owner" && m.status === "active");
+  const isSolo = !loadingMembers && others.length === 0;
+
+  // Transfer ownership
+  const [transferTo, setTransferTo] = useState("");
+  const [transferring, setTransferring] = useState(false);
+
+  // Delete the whole business (solo owner only)
+  const [deletingBiz, setDeletingBiz] = useState(false);
+  const [confirmName, setConfirmName] = useState("");
+  const [bizBusy, setBizBusy] = useState(false);
 
   const leave = async () => {
     if (!org || busy) return;
@@ -257,12 +283,74 @@ function LeaveOrgCard() {
     navigate({ to: "/auth" });
   };
 
+  const doTransfer = async () => {
+    if (!org || !transferTo || transferring) return;
+    setTransferring(true);
+    setError(null);
+    const { error: err } = await transferOwnership(org.id, transferTo);
+    setTransferring(false);
+    if (err) { setError(err.message); return; }
+    setTransferTo("");
+    await refresh();
+  };
+
+  const doDeleteBusiness = async () => {
+    if (!org || bizBusy || confirmName.trim() !== org.name) return;
+    setBizBusy(true);
+    setError(null);
+    const { error: err } = await deleteOrganization(org.id);
+    if (err) { setBizBusy(false); setError(err.message); return; }
+    await signOut();
+    navigate({ to: "/auth" });
+  };
+
   return (
     <Reveal delay={80}>
       <GlassCard className="border-rose-400/20 p-6">
         <SectionLabel icon={AlertTriangle}>Danger zone</SectionLabel>
+
         {isOwner ? (
-          <p className="mt-3 text-sm text-muted-foreground">You're the owner of {org?.name ?? "this business"} — owners can't leave their own business, since there'd be no one left to manage it. There's no ownership-transfer or business-deletion option yet.</p>
+          <div className="mt-3 space-y-5">
+            {!loadingMembers && !isSolo && (
+              <div>
+                <p className="text-sm text-foreground/85">Transfer ownership</p>
+                <p className="mt-1 text-xs text-muted-foreground">Hand full control to another active team member — you'll become an admin and can delete your own account afterward if you want to.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <select value={transferTo} onChange={(e) => setTransferTo(e.target.value)} className={cn(inputCls, "flex-1")}>
+                    <option value="">Choose a team member…</option>
+                    {others.map((m) => <option key={m.userId} value={m.userId}>{m.name} ({m.email})</option>)}
+                  </select>
+                  <button onClick={doTransfer} disabled={!transferTo || transferring} className="shrink-0 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{transferring ? "Transferring…" : "Transfer ownership"}</button>
+                </div>
+              </div>
+            )}
+
+            <div className={cn(!isSolo && "border-t border-border pt-5")}>
+              {loadingMembers ? (
+                <p className="text-sm text-muted-foreground">Checking your team…</p>
+              ) : isSolo ? (
+                deletingBiz ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-foreground/85">This permanently deletes <span className="text-foreground">{org?.name}</span> and everything in it — customers, orders, invoices, automations, all of it. This cannot be undone.</p>
+                    <p className="text-xs text-muted-foreground">Type <span className="font-medium text-foreground">{org?.name}</span> to confirm.</p>
+                    <input value={confirmName} onChange={(e) => setConfirmName(e.target.value)} className={inputCls} />
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={doDeleteBusiness} disabled={bizBusy || confirmName.trim() !== org?.name} className="rounded-full bg-rose-500/90 px-4 py-2 text-xs font-semibold text-white transition-all hover:brightness-110 disabled:opacity-50">{bizBusy ? "Deleting…" : "Permanently delete this business"}</button>
+                      <button onClick={() => { setDeletingBiz(false); setConfirmName(""); setError(null); }} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm text-muted-foreground">You're the only member of {org?.name ?? "this business"} — there's no one to transfer ownership to. Deleting closes the business entirely.</p>
+                    <button onClick={() => setDeletingBiz(true)} className="mt-3 rounded-full border border-rose-400/40 px-4 py-2 text-xs text-rose-300 transition-colors hover:bg-rose-500/10">Delete this business</button>
+                  </>
+                )
+              ) : (
+                <p className="text-sm text-muted-foreground">You can't leave while you're the owner — transfer ownership above first.</p>
+              )}
+            </div>
+            {error && <p className="text-xs text-rose-300">{error}</p>}
+          </div>
         ) : confirming ? (
           <div className="mt-3 space-y-3">
             <p className="text-sm text-foreground/85">Are you sure? You'll lose access to <span className="text-foreground">{org?.name}</span> immediately and need a new invite to rejoin. This doesn't delete the business's data — only your own access.</p>
@@ -305,6 +393,8 @@ function UsersView() {
   const [editRole, setEditRole] = useState("member");
   const [editTitle, setEditTitle] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const reload = useCallback(async () => {
     if (!org) return;
@@ -388,6 +478,18 @@ function UsersView() {
     await reload();
   }
 
+  async function removeMember() {
+    if (!org || !deletingId || deleteBusy) return;
+    const member = members.find((m) => m.id === deletingId);
+    setDeleteBusy(true);
+    const { error: err } = await deleteMember(deletingId);
+    setDeleteBusy(false);
+    if (err) { setError(err.message); return; }
+    setDeletingId(null);
+    if (member) await logAudit(org.id, `removed ${member.name} from the team`, "Users");
+    await reload();
+  }
+
   return (
     <div className="space-y-4">
       <Reveal>
@@ -458,8 +560,16 @@ function UsersView() {
                 <button onClick={saveEdit} disabled={editBusy} className="rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{editBusy ? "Saving…" : "Save"}</button>
                 <button onClick={() => setEditingId(null)} className="rounded-full border border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground">Cancel</button>
               </div>
+            ) : deletingId === m.id ? (
+              <div key={m.id} className="flex flex-wrap items-center gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/5 p-4">
+                <p className="flex-1 text-sm text-foreground/85">Permanently remove <span className="font-medium text-foreground">{m.name}</span>'s access? They'd need a brand-new invite to come back — this isn't the same as Disable.</p>
+                <div className="flex gap-2">
+                  <button onClick={removeMember} disabled={deleteBusy} className="shrink-0 rounded-full bg-rose-500/90 px-4 py-2 text-xs font-semibold text-white transition-all hover:brightness-110 disabled:opacity-50">{deleteBusy ? "Removing…" : "Yes, remove"}</button>
+                  <button onClick={() => setDeletingId(null)} className="shrink-0 rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                </div>
+              </div>
             ) : (
-              <div key={m.id} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_11rem_7rem_9.5rem]">
+              <div key={m.id} className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-2xl border border-transparent px-3 py-3 hover:border-border sm:grid-cols-[1.6fr_11rem_7rem_12rem]">
                 <div className="flex items-center gap-3">
                   <Avatar name={m.name} />
                   <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{m.name}</p><p className="truncate text-xs text-muted-foreground">{m.email}</p></div>
@@ -472,6 +582,7 @@ function UsersView() {
                   <div className="flex items-center justify-end gap-1.5">
                     <button onClick={() => startEdit(m)} aria-label="Edit member" className="grid size-8 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground"><Pencil className="size-3.5" /></button>
                     <button onClick={() => toggleStatus(m)} className="shrink-0 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-gold/40">{m.status === "disabled" ? "Enable" : "Disable"}</button>
+                    <button onClick={() => setDeletingId(m.id)} aria-label="Remove member" className="grid size-8 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300"><Trash2 className="size-3.5" /></button>
                   </div>
                 ) : <span />}
               </div>

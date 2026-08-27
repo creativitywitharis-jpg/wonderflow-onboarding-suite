@@ -123,6 +123,17 @@ export async function setMemberStatus(id: string, status: "active" | "disabled")
   return { error: error ? new Error(error.message) : null };
 }
 
+/**
+ * Permanently remove someone's access — a real delete, not a disable.
+ * Owner/admin only (per RLS); admins can't touch an owner's row. Use when
+ * the business is done working with that person for good, not for a
+ * temporary pause (use setMemberStatus for that).
+ */
+export async function deleteMember(id: string) {
+  const { error } = await supabase.from("memberships").delete().eq("id", id);
+  return { error: error ? new Error(error.message) : null };
+}
+
 /** Edit an existing member's role and/or custom title (owner/admin only, per RLS). */
 export async function updateMember(id: string, patch: { role?: string; title?: string | null }) {
   const { error } = await membershipsTable().update(patch).eq("id", id);

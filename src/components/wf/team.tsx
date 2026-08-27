@@ -82,6 +82,17 @@ import {
   type NewCourse,
 } from "@/lib/training";
 import { createPost, listPosts, type DbPost } from "@/lib/team-posts";
+import {
+  addChannelMember,
+  createChannel,
+  listChannelMembers,
+  listChannels,
+  removeChannelMember,
+  renameChannel,
+  setChannelAudience,
+  type DbChannel,
+  type DbChannelMember,
+} from "@/lib/team-channels";
 import { askAI } from "@/lib/ai";
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -282,7 +293,6 @@ function formatDue(due: string | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-const TEAM_CHANNELS = ["general", "operations", "marketing", "wins"];
 
 /* ──────────────────────────────────────────────────────────────────────
  * Small pieces
@@ -1468,61 +1478,202 @@ function TrainingView() {
   );
 }
 
+function ChannelForm({
+  initial,
+  employees,
+  initialMemberIds,
+  onCancel,
+  onSave,
+  saving,
+}: {
+  initial?: { name: string; allMembers: boolean };
+  employees: DbEmployee[];
+  initialMemberIds: string[];
+  onCancel: () => void;
+  onSave: (v: { name: string; allMembers: boolean; memberIds: string[] }) => Promise<{ error: Error | null }>;
+  saving: boolean;
+}) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [allMembers, setAllMembers] = useState(initial?.allMembers ?? true);
+  const [memberIds, setMemberIds] = useState<Set<string>>(new Set(initialMemberIds));
+  const [error, setError] = useState<string | null>(null);
+
+  const toggleMember = (id: string) => {
+    setMemberIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const submit = async () => {
+    if (!name.trim()) return;
+    setError(null);
+    const { error: err } = await onSave({ name: name.trim(), allMembers, memberIds: Array.from(memberIds) });
+    if (err) setError(err.message);
+  };
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-border bg-background/40 p-4">
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Channel name" className="w-full rounded-lg border border-border bg-background/60 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
+      <div className="flex gap-2 text-xs">
+        <button type="button" onClick={() => setAllMembers(true)} className={cn("flex-1 rounded-lg border px-3 py-2 transition-colors", allMembers ? "border-gold/50 bg-gold/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground")}>All team members</button>
+        <button type="button" onClick={() => setAllMembers(false)} className={cn("flex-1 rounded-lg border px-3 py-2 transition-colors", !allMembers ? "border-gold/50 bg-gold/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground")}>Specific people</button>
+      </div>
+      {!allMembers && (
+        <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border p-2">
+          {employees.length === 0 && <p className="text-center text-xs text-muted-foreground">Add employees in the People tab first.</p>}
+          {employees.map((e) => (
+            <label key={e.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-glass">
+              <input type="checkbox" checked={memberIds.has(e.id)} onChange={() => toggleMember(e.id)} className="size-3.5 accent-[oklch(0.84_0.14_84)]" />
+              <Avatar name={e.name} className="size-5 text-[0.55rem]" />
+              <span className="flex-1 truncate text-foreground/85">{e.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {error && <p className="text-xs text-rose-300">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+        <button type="button" onClick={() => void submit()} disabled={!name.trim() || saving} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{saving ? "Saving…" : "Save"}</button>
+      </div>
+    </div>
+  );
+}
+
 function CommsView() {
   const { org, userName } = useOrg();
-  const [active, setActive] = useState("general");
+  const { employees } = useEmployeesData();
+  const [channels, setChannels] = useState<DbChannel[]>([]);
+  const [members, setMembers] = useState<DbChannelMember[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [posts, setPosts] = useState<DbPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [savingChannel, setSavingChannel] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
-    if (!org) { setPosts([]); setLoading(false); return; }
+    if (!org) { setChannels([]); setMembers([]); setPosts([]); setLoading(false); return; }
     setLoading(true);
-    setPosts(await listPosts(org.id));
+    const [c, m, p] = await Promise.all([listChannels(org.id), listChannelMembers(org.id), listPosts(org.id)]);
+    setChannels(c);
+    setMembers(m);
+    setPosts(p);
+    setActiveId((prev) => (prev && c.some((ch) => ch.id === prev) ? prev : (c[0]?.id ?? null)));
     setLoading(false);
   }, [org?.id]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [posts, active]);
+  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [posts, activeId]);
+
+  const active = channels.find((c) => c.id === activeId) ?? null;
 
   const post = async () => {
     const t = input.trim();
-    if (!t || !org || sending) return;
+    if (!t || !org || !activeId || sending) return;
     setSending(true);
     setInput("");
-    await createPost(org.id, { channel: active, author_name: userName, body: t });
+    await createPost(org.id, { channel_id: activeId, author_name: userName, body: t });
     await load();
     setSending(false);
   };
 
-  const channelPosts = posts.filter((p) => p.channel === active);
+  const channelPosts = posts.filter((p) => p.channel_id === activeId);
   // A post count per channel — there's no read/unread tracking (no per-user
   // last-seen timestamp), so this badge means "activity," not "unread."
   const countByChannel = new Map<string, number>();
-  for (const p of posts) countByChannel.set(p.channel, (countByChannel.get(p.channel) ?? 0) + 1);
+  for (const p of posts) countByChannel.set(p.channel_id, (countByChannel.get(p.channel_id) ?? 0) + 1);
+
+  const saveNewChannel = async ({ name, allMembers, memberIds }: { name: string; allMembers: boolean; memberIds: string[] }) => {
+    if (!org) return { error: new Error("No organization") };
+    setSavingChannel(true);
+    const { data, error } = await createChannel(org.id, name, allMembers);
+    if (error || !data) { setSavingChannel(false); return { error }; }
+    if (!allMembers) await Promise.all(memberIds.map((id) => addChannelMember(org.id, data.id, id)));
+    await load();
+    setActiveId(data.id);
+    setSavingChannel(false);
+    setShowNew(false);
+    return { error: null };
+  };
+
+  const saveEditChannel = async ({ name, allMembers, memberIds }: { name: string; allMembers: boolean; memberIds: string[] }) => {
+    if (!org || !active) return { error: new Error("No channel selected") };
+    setSavingChannel(true);
+    const { error: e1 } = await renameChannel(active.id, name);
+    const { error: e2 } = await setChannelAudience(active.id, allMembers);
+    const err = e1 ?? e2;
+    if (err) { setSavingChannel(false); return { error: err }; }
+    if (!allMembers) {
+      const current = members.filter((m) => m.channel_id === active.id);
+      const currentIds = new Set(current.map((m) => m.employee_id));
+      const nextIds = new Set(memberIds);
+      const toAdd = memberIds.filter((id) => !currentIds.has(id));
+      const toRemove = current.filter((m) => !nextIds.has(m.employee_id));
+      await Promise.all([
+        ...toAdd.map((id) => addChannelMember(org.id, active.id, id)),
+        ...toRemove.map((m) => removeChannelMember(m.id)),
+      ]);
+    }
+    await load();
+    setSavingChannel(false);
+    setShowEdit(false);
+    return { error: null };
+  };
 
   return (
     <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
       <Reveal className="hidden lg:block">
         <GlassCard className="p-4">
-          <p className="px-2 text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">Channels</p>
+          <div className="flex items-center justify-between px-2">
+            <p className="text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">Channels</p>
+            <button onClick={() => { setShowNew((v) => !v); setShowEdit(false); }} aria-label="New channel" className="grid size-5 place-items-center rounded-md text-muted-foreground hover:text-gold"><Plus className="size-3.5" /></button>
+          </div>
           <div className="mt-2 space-y-1">
-            {TEAM_CHANNELS.map((name) => (
-              <button key={name} onClick={() => setActive(name)} className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-colors", active === name ? "bg-glass text-foreground" : "text-muted-foreground hover:bg-glass hover:text-foreground")}>
-                <Hash className="size-3.5 shrink-0" /><span className="flex-1 truncate">{name}</span>{(countByChannel.get(name) ?? 0) > 0 && <span className="rounded-full bg-gold/20 px-1.5 text-[0.6rem] text-gold">{countByChannel.get(name)}</span>}
+            {channels.map((c) => (
+              <button key={c.id} onClick={() => { setActiveId(c.id); setShowNew(false); setShowEdit(false); }} className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-colors", activeId === c.id ? "bg-glass text-foreground" : "text-muted-foreground hover:bg-glass hover:text-foreground")}>
+                <Hash className="size-3.5 shrink-0" /><span className="flex-1 truncate">{c.name}</span>{(countByChannel.get(c.id) ?? 0) > 0 && <span className="rounded-full bg-gold/20 px-1.5 text-[0.6rem] text-gold">{countByChannel.get(c.id)}</span>}
               </button>
             ))}
+            {channels.length === 0 && !loading && <p className="px-2 py-4 text-center text-xs text-muted-foreground">No channels yet.</p>}
           </div>
+          {showNew && (
+            <div className="mt-3">
+              <ChannelForm employees={employees} initialMemberIds={[]} onCancel={() => setShowNew(false)} onSave={saveNewChannel} saving={savingChannel} />
+            </div>
+          )}
         </GlassCard>
       </Reveal>
 
       <Reveal>
         <GlassCard className="flex h-[32rem] flex-col p-6">
-          <div className="flex items-center gap-2 border-b border-border pb-4"><Hash className="size-4 text-gold" /><p className="text-sm font-semibold">{active}</p></div>
+          <div className="flex items-center justify-between border-b border-border pb-4">
+            <div className="flex items-center gap-2">
+              <Hash className="size-4 text-gold" />
+              <p className="text-sm font-semibold">{active?.name ?? "—"}</p>
+              {active && !active.all_members && <span className="rounded-full border border-border bg-glass px-2 py-0.5 text-[0.6rem] text-muted-foreground">Specific people</span>}
+            </div>
+            {active && <button onClick={() => { setShowEdit((v) => !v); setShowNew(false); }} aria-label="Edit channel" className="grid size-6 place-items-center rounded-lg border border-border text-muted-foreground hover:border-gold/40 hover:text-foreground"><Pencil className="size-3" /></button>}
+          </div>
+          {showEdit && active && (
+            <div className="mt-4">
+              <ChannelForm
+                initial={{ name: active.name, allMembers: active.all_members }}
+                employees={employees}
+                initialMemberIds={members.filter((m) => m.channel_id === active.id).map((m) => m.employee_id)}
+                onCancel={() => setShowEdit(false)}
+                onSave={saveEditChannel}
+                saving={savingChannel}
+              />
+            </div>
+          )}
           <div ref={scrollRef} className="mt-4 flex-1 space-y-4 overflow-y-auto pr-1">
             {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>}
-            {!loading && channelPosts.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No posts in #{active} yet — say something.</p>}
+            {!loading && channels.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">Create a channel to get started.</p>}
+            {!loading && active && channelPosts.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No posts in #{active.name} yet — say something.</p>}
             {channelPosts.map((m) => (
               <div key={m.id} className="flex gap-3">
                 <Avatar name={m.author_name} />
@@ -1531,8 +1682,8 @@ function CommsView() {
             ))}
           </div>
           <form onSubmit={(e) => { e.preventDefault(); void post(); }} className="mt-3 flex items-center gap-2 rounded-2xl border border-border bg-background/40 px-3 py-2 focus-within:border-gold/50">
-            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Message #${active}…`} className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70" />
-            <button type="submit" aria-label="Send" disabled={!input.trim() || sending} className="grid size-8 shrink-0 place-items-center rounded-full transition-all hover:brightness-110 active:scale-95 disabled:opacity-40" style={{ background: "var(--gradient-gold)" }}><Send className="size-3.5" stroke="oklch(0.2 0.02 70)" /></button>
+            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={active ? `Message #${active.name}…` : "Create a channel first…"} disabled={!active} className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70 disabled:opacity-50" />
+            <button type="submit" aria-label="Send" disabled={!input.trim() || sending || !active} className="grid size-8 shrink-0 place-items-center rounded-full transition-all hover:brightness-110 active:scale-95 disabled:opacity-40" style={{ background: "var(--gradient-gold)" }}><Send className="size-3.5" stroke="oklch(0.2 0.02 70)" /></button>
           </form>
         </GlassCard>
       </Reveal>

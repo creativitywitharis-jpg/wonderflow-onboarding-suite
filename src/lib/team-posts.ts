@@ -2,16 +2,16 @@ import { supabase } from "./supabase";
 
 export type DbPost = {
   id: string;
-  channel: string;
+  channel_id: string;
   author_name: string;
   body: string;
   created_at: string;
 };
 
-export type NewPost = { channel: string; author_name: string; body: string };
+export type NewPost = { channel_id: string; author_name: string; body: string };
 
-const COLS = "id,channel,author_name,body,created_at";
-// Ships in migration 0036 — reach the table untyped until Lovable regenerates DB types.
+const COLS = "id,channel_id,author_name,body,created_at";
+// Ships in migration 0036 (0037 adds channel_id) — reach the table untyped until Lovable regenerates DB types.
 const table = () => (supabase as unknown as { from: (t: string) => any }).from("team_posts");
 
 /** All posts for an org, oldest first (RLS-scoped to members). */

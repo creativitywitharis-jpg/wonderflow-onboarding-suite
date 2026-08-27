@@ -15,6 +15,7 @@ import {
   Home,
   Layers,
   LineChart,
+  Mail,
   Package,
   PackagePlus,
   RefreshCw,
@@ -45,6 +46,8 @@ import {
   type DbProduct,
   type NewProduct,
 } from "@/lib/products";
+import { listSuppliers, type DbSupplier } from "@/lib/suppliers";
+import { createPurchaseOrder } from "@/lib/purchase-orders";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -691,22 +694,44 @@ function ForecastView() {
   );
 }
 
+type SupplierGroup = { supplier: DbSupplier; items: { name: string; qty: number; cost: number }[]; totalCost: number };
+
 function ReorderView() {
-  const { products, adjust } = useInv();
+  const { org } = useOrg();
+  const { products } = useInv();
+  const [suppliers, setSuppliers] = useState<DbSupplier[]>([]);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
+  const [createdGroups, setCreatedGroups] = useState<SupplierGroup[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!org) { setSuppliers([]); return; }
+    listSuppliers(org.id).then(setSuppliers).catch(() => setSuppliers([]));
+  }, [org?.id]);
+
+  // Best-effort match to a real supplier by category — the same
+  // product-category linkage the Suppliers module already uses (there's no
+  // dedicated supplier_id on products).
+  const matchSupplier = useCallback(
+    (category: string) => suppliers.find((sup) => (sup.category ?? "").toLowerCase() === category.toLowerCase()) ?? null,
+    [suppliers],
+  );
+
   const suggestions = useMemo(
     () =>
       products
         .filter((p) => p.status === "Low" || p.status === "Critical")
         .concat(products.filter((p) => p.status === "Healthy" && p.daysLeft < 16))
-        .map((p) => ({
-          p,
-          qty: Math.max(p.reorder * 2 - p.stock - p.incoming, p.reorder),
-          lead: p.velocity === "High" ? "3 days" : "6 days",
-          supplier: p.category === "Oils" ? "Lumen Labs" : "Northwind Supply",
-        })),
-    [products],
+        .map((p) => {
+          const supplier = matchSupplier(p.category);
+          return {
+            p,
+            qty: Math.max(p.reorder * 2 - p.stock - p.incoming, p.reorder),
+            lead: supplier ? `${supplier.lead_time_days}d` : p.velocity === "High" ? "3 days" : "6 days",
+            supplier,
+          };
+        }),
+    [products, matchSupplier],
   );
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const isOn = (id: string) => selected[id] !== false; // default on
@@ -715,13 +740,48 @@ function ReorderView() {
   const totalCost = chosenList.reduce((a, s) => a + s.qty * s.p.price, 0);
   const totalUnits = chosenList.reduce((a, s) => a + s.qty, 0);
   const chosen = chosenList.length;
+  const unmatched = chosenList.filter((s) => !s.supplier).length;
+  const creatable = chosen - unmatched;
 
   const approve = async () => {
-    if (chosen === 0 || busy) return;
+    if (!org || creatable === 0 || busy) return;
     setBusy(true);
-    for (const s of chosenList) await adjust(s.p.id, s.qty);
+    setError(null);
+    // One purchase order per matched supplier, covering every SKU it supplies.
+    const groups = new Map<string, SupplierGroup>();
+    for (const s of chosenList) {
+      if (!s.supplier) continue;
+      const g = groups.get(s.supplier.id) ?? { supplier: s.supplier, items: [], totalCost: 0 };
+      const cost = s.qty * s.p.price;
+      g.items.push({ name: s.p.name, qty: s.qty, cost });
+      g.totalCost += cost;
+      groups.set(s.supplier.id, g);
+    }
+    const groupList = [...groups.values()];
+    try {
+      for (const g of groupList) {
+        const { error: err } = await createPurchaseOrder(org.id, {
+          supplier_id: g.supplier.id,
+          supplier_name: g.supplier.name,
+          items: g.items.length,
+          total: g.totalCost,
+          status: "Draft",
+          notes: g.items.map((i) => `${i.name} x${i.qty}`).join(", "),
+        });
+        if (err) throw err;
+      }
+      setCreatedGroups(groupList);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't create the purchase order(s).");
+    }
     setBusy(false);
-    setDone(true);
+  };
+
+  const mailtoFor = (g: SupplierGroup) => {
+    const subject = encodeURIComponent(`Purchase order — ${g.items.length} item${g.items.length === 1 ? "" : "s"}`);
+    const lines = g.items.map((i) => `- ${i.name}: ${i.qty} units`).join("\n");
+    const body = encodeURIComponent(`Hi ${g.supplier.contact_name || g.supplier.name},\n\nWe'd like to place a reorder:\n\n${lines}\n\nEstimated total: $${formatNum(g.totalCost)}\n\nThanks!`);
+    return `mailto:${g.supplier.email}?subject=${subject}&body=${body}`;
   };
 
   return (
@@ -734,7 +794,7 @@ function ReorderView() {
             </span>
             <div>
               <p className="text-sm font-semibold text-foreground">AI-suggested purchase orders</p>
-              <p className="text-xs text-muted-foreground">Optimized for lead time, velocity and cash</p>
+              <p className="text-xs text-muted-foreground">Matched to your real suppliers by category</p>
             </div>
           </div>
           <div className="mt-5 space-y-2">
@@ -749,7 +809,9 @@ function ReorderView() {
                 <input type="checkbox" checked={isOn(s.p.id)} onChange={() => toggle(s.p.id)} className="size-4 accent-[oklch(0.84_0.14_84)]" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-foreground">{s.p.name}</p>
-                  <p className="text-xs text-muted-foreground">{s.supplier} · lead {s.lead}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {s.supplier ? s.supplier.name : <span className="text-rose-300">No supplier on file for "{s.p.category}"</span>} · lead {s.lead}
+                  </p>
                 </div>
                 <StatusPill status={s.p.status} />
                 <div className="w-20 text-right">
@@ -767,17 +829,34 @@ function ReorderView() {
         <GlassCard className="glass-strong sticky top-6 p-6">
           <SectionLabel icon={RefreshCw}>Purchase summary</SectionLabel>
           <div className="mt-4 space-y-2 text-sm">
-            <div className="flex justify-between text-muted-foreground"><span>POs selected</span><span className="tabular-nums">{chosen}</span></div>
+            <div className="flex justify-between text-muted-foreground"><span>SKUs selected</span><span className="tabular-nums">{chosen}</span></div>
             <div className="flex justify-between text-muted-foreground"><span>Total units</span><span className="tabular-nums">{formatNum(totalUnits)}</span></div>
             <div className="flex justify-between border-t border-border pt-2 text-base font-semibold"><span>Total cost</span><span className="tabular-nums text-gold">${formatNum(totalCost)}</span></div>
           </div>
-          <button onClick={approve} disabled={chosen === 0 || busy} className="mt-5 flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-40" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
-            <CheckCircle2 className="size-4" /> {busy ? "Restocking…" : `Restock ${chosen} SKU${chosen === 1 ? "" : "s"}`}
-          </button>
-          {done ? (
-            <p className="mt-3 text-center text-xs text-emerald-300">Stock updated — levels are live across the workspace.</p>
+          {!createdGroups && unmatched > 0 && (
+            <p className="mt-3 text-xs text-rose-300">{unmatched} selected SKU{unmatched === 1 ? " has" : "s have"} no matching supplier — add one in Suppliers to include {unmatched === 1 ? "it" : "them"}.</p>
+          )}
+          {error && <p className="mt-3 text-xs text-rose-300">{error}</p>}
+          {!createdGroups ? (
+            <button onClick={approve} disabled={creatable === 0 || busy} className="mt-5 flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-40" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
+              <PackagePlus className="size-4" /> {busy ? "Creating…" : `Create ${creatable || ""} purchase order${creatable === 1 ? "" : "s"}`}
+            </button>
           ) : (
-            <p className="mt-3 text-center text-xs text-muted-foreground">Approving adds the units to stock immediately.</p>
+            <div className="mt-5 space-y-2">
+              <p className="flex items-center gap-1.5 text-xs text-emerald-300">
+                <CheckCircle2 className="size-3.5 shrink-0" /> {createdGroups.length} draft PO{createdGroups.length === 1 ? "" : "s"} created — find {createdGroups.length === 1 ? "it" : "them"} in Orders. Stock updates once you mark {createdGroups.length === 1 ? "it" : "them"} Received.
+              </p>
+              {createdGroups.map((g) => (
+                <div key={g.supplier.id} className="rounded-xl border border-border bg-background/30 p-3">
+                  <p className="text-xs font-medium text-foreground">{g.supplier.name} — {g.items.length} item{g.items.length === 1 ? "" : "s"}, ${formatNum(g.totalCost)}</p>
+                  {g.supplier.email ? (
+                    <a href={mailtoFor(g)} className="mt-1.5 flex items-center gap-1.5 text-xs text-gold hover:underline"><Mail className="size-3 shrink-0" /> Email {g.supplier.name}</a>
+                  ) : (
+                    <p className="mt-1.5 text-xs text-muted-foreground">No email on file — add one in Suppliers to reach out directly.</p>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </GlassCard>
       </Reveal>

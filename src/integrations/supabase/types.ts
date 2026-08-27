@@ -1948,6 +1948,7 @@ export type Database = {
     Functions: {
       accept_invitation: { Args: { p_token: string }; Returns: string }
       adjust_stock: { Args: { p_delta: number; p_id: string }; Returns: number }
+      delete_organization: { Args: { p_org_id: string }; Returns: undefined }
       has_org_role:
         | {
             Args: { _org_id: string; _roles: string[]; _user_id: string }
@@ -1963,6 +1964,10 @@ export type Database = {
         | { Args: { org: string }; Returns: boolean }
       leave_organization: { Args: { p_org_id: string }; Returns: undefined }
       shares_org: { Args: { other: string }; Returns: boolean }
+      transfer_ownership: {
+        Args: { p_new_owner_user_id: string; p_org_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never

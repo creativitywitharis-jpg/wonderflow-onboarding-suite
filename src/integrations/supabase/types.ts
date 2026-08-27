@@ -1084,6 +1084,7 @@ export type Database = {
       }
       orders: {
         Row: {
+          carrier: string | null
           channel: string | null
           city: string | null
           created_at: string
@@ -1100,9 +1101,11 @@ export type Database = {
           priority: string
           status: string
           total: number
+          tracking_number: string | null
           updated_at: string
         }
         Insert: {
+          carrier?: string | null
           channel?: string | null
           city?: string | null
           created_at?: string
@@ -1119,9 +1122,11 @@ export type Database = {
           priority?: string
           status?: string
           total?: number
+          tracking_number?: string | null
           updated_at?: string
         }
         Update: {
+          carrier?: string | null
           channel?: string | null
           city?: string | null
           created_at?: string
@@ -1138,6 +1143,7 @@ export type Database = {
           priority?: string
           status?: string
           total?: number
+          tracking_number?: string | null
           updated_at?: string
         }
         Relationships: [

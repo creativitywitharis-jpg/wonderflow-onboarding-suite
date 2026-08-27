@@ -105,6 +105,19 @@ export async function updateOrganization(
   return { error: error ? new Error(error.message) : null };
 }
 
+/**
+ * Leave a business — removes the caller's own membership, and only their
+ * own. Blocked for owners (would leave the business with no one able to
+ * manage it) — the RPC raises in that case.
+ */
+export async function leaveOrganization(orgId: string): Promise<{ error: Error | null }> {
+  // Ships in migration 0042 — not in the generated RPC union type until
+  // Lovable regenerates it.
+  const { error } = await (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }> })
+    .rpc("leave_organization", { p_org_id: orgId });
+  return { error: error ? new Error(error.message) : null };
+}
+
 /** Every organization the current user is a member of (RLS-scoped). */
 export async function getMyOrgs(): Promise<OrgRow[]> {
   const { data } = await orgTable()

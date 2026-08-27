@@ -44,6 +44,7 @@ import { Ring } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
 import { signOut } from "@/lib/use-auth";
 import { askAI } from "@/lib/ai";
+import { listHelpMessages, saveHelpMessage } from "@/lib/help";
 import { getAiUsage, planLimits } from "@/lib/billing";
 import { buildInsights, type Insight } from "@/lib/insights";
 
@@ -386,26 +387,41 @@ type HelpMsg = { role: "user" | "ai"; text: string };
 function HelpPanel({ onClose }: { onClose: () => void }) {
   const { org } = useOrg();
   const [messages, setMessages] = useState<HelpMsg[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, thinking]);
 
+  // Private, per-person history — reloads the same conversation next time
+  // this person opens Help, doesn't need re-asking.
+  useEffect(() => {
+    if (!org) { setLoadingHistory(false); return; }
+    setLoadingHistory(true);
+    listHelpMessages(org.id)
+      .then((rows) => setMessages(rows.map((r) => ({ role: r.role, text: r.text }))))
+      .finally(() => setLoadingHistory(false));
+  }, [org?.id]);
+
   async function send(text: string) {
     const q = text.trim();
-    if (!q || thinking) return;
+    if (!q || thinking || !org) return;
     const next: HelpMsg[] = [...messages, { role: "user", text: q }];
     setMessages(next);
     setInput("");
     setThinking(true);
+    void saveHelpMessage(org.id, "user", q);
     try {
       const reply = await askAI(
         [{ role: "user", content: `${HELP_PROMPT}${q}` }],
         { id: org?.id, name: org?.name, industry: org?.industry },
       );
-      setMessages((m) => [...m, { role: "ai", text: reply || "I don't have an answer for that yet — try browsing the relevant tab." }]);
+      const text2 = reply || "I don't have an answer for that yet — try browsing the relevant tab.";
+      setMessages((m) => [...m, { role: "ai", text: text2 }]);
+      void saveHelpMessage(org.id, "ai", text2);
     } catch (e) {
-      setMessages((m) => [...m, { role: "ai", text: e instanceof Error ? e.message : "I couldn't reach the help assistant. Please try again." }]);
+      const text2 = e instanceof Error ? e.message : "I couldn't reach the help assistant. Please try again.";
+      setMessages((m) => [...m, { role: "ai", text: text2 }]);
     } finally {
       setThinking(false);
     }
@@ -424,7 +440,8 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
         </div>
 
         <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-5">
-          {messages.length === 0 && !thinking && (
+          {loadingHistory && <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>}
+          {!loadingHistory && messages.length === 0 && !thinking && (
             <div className="space-y-2">
               <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Try asking</p>
               {HELP_STARTERS.map((q) => (

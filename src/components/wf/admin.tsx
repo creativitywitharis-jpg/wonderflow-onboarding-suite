@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Activity,
   AlertTriangle,
@@ -37,7 +37,8 @@ import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
 import { supabase } from "@/lib/supabase";
-import { enabledModulesFor, INDUSTRIES, updateOrganization } from "@/lib/org";
+import { enabledModulesFor, INDUSTRIES, leaveOrganization, updateOrganization } from "@/lib/org";
+import { signOut } from "@/lib/use-auth";
 import { connectSlack, disconnectSlack, listConnections, syncStripe, testSlack, type DbConnection } from "@/lib/connections";
 import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
@@ -185,7 +186,8 @@ function SettingsView() {
   };
 
   return (
-    <Reveal>
+    <div className="space-y-4">
+      <Reveal>
       <GlassCard className="p-6">
         <SectionLabel icon={Building2}>Business profile</SectionLabel>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -225,6 +227,57 @@ function SettingsView() {
         <button onClick={save} disabled={busy || !name.trim()} className="mt-5 flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
           <Check className="size-4" /> {busy ? "Saving…" : saved ? "Saved ✓" : "Save profile"}
         </button>
+      </GlassCard>
+      </Reveal>
+      <LeaveOrgCard />
+    </div>
+  );
+}
+
+// Self-service "delete my account" — removes only the caller's own
+// membership (leaveOrganization is a SECURITY DEFINER RPC, since the
+// memberships table's own RLS restricts writes to owner/admin). Blocked for
+// owners: there's no ownership-transfer or whole-business-deletion feature,
+// so an owner leaving would orphan the business.
+function LeaveOrgCard() {
+  const { org, role } = useOrg();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const isOwner = role === "owner";
+
+  const leave = async () => {
+    if (!org || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await leaveOrganization(org.id);
+    if (err) { setBusy(false); setError(err.message); return; }
+    await signOut();
+    navigate({ to: "/auth" });
+  };
+
+  return (
+    <Reveal delay={80}>
+      <GlassCard className="border-rose-400/20 p-6">
+        <SectionLabel icon={AlertTriangle}>Danger zone</SectionLabel>
+        {isOwner ? (
+          <p className="mt-3 text-sm text-muted-foreground">You're the owner of {org?.name ?? "this business"} — owners can't leave their own business, since there'd be no one left to manage it. There's no ownership-transfer or business-deletion option yet.</p>
+        ) : confirming ? (
+          <div className="mt-3 space-y-3">
+            <p className="text-sm text-foreground/85">Are you sure? You'll lose access to <span className="text-foreground">{org?.name}</span> immediately and need a new invite to rejoin. This doesn't delete the business's data — only your own access.</p>
+            {error && <p className="text-xs text-rose-300">{error}</p>}
+            <div className="flex gap-2">
+              <button onClick={leave} disabled={busy} className="rounded-full bg-rose-500/90 px-4 py-2 text-xs font-semibold text-white transition-all hover:brightness-110 disabled:opacity-50">{busy ? "Leaving…" : "Yes, delete my account"}</button>
+              <button onClick={() => { setConfirming(false); setError(null); }} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="mt-3 text-sm text-muted-foreground">Remove your own access to this business. This only affects your account — the business and its data stay intact for everyone else.</p>
+            <button onClick={() => setConfirming(true)} className="mt-4 rounded-full border border-rose-400/40 px-4 py-2 text-xs text-rose-300 transition-colors hover:bg-rose-500/10">Delete my account</button>
+          </>
+        )}
       </GlassCard>
     </Reveal>
   );

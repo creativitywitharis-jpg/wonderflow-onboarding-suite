@@ -2,6 +2,25 @@ import { supabase } from "./supabase";
 
 const ACTIVE_ORG_KEY = "wf-active-org";
 
+// The fixed industry list offered at onboarding and in Business settings —
+// shared so both stay in exact sync with COMMERCE_INDUSTRIES below.
+export const INDUSTRIES = [
+  "E-commerce",
+  "Retail",
+  "Professional services",
+  "SaaS / Software",
+  "Finance & banking",
+  "Healthcare",
+  "Manufacturing",
+  "Hospitality",
+  "Real estate",
+  "Education",
+  "Logistics & transport",
+  "Media & marketing",
+  "Nonprofit",
+  "Construction",
+];
+
 // Industry → which modules light up. Commerce businesses get the full pack;
 // everyone gets the universal core. This is the "any industry" strategy.
 const COMMERCE_INDUSTRIES = ["E-commerce", "Retail", "Manufacturing", "Hospitality"];
@@ -79,7 +98,7 @@ export async function createOrganization(input: {
 /** Update an organization (owner/admin only, enforced by RLS). */
 export async function updateOrganization(
   orgId: string,
-  patch: Partial<Pick<OrgRow, "name" | "industry" | "health_score" | "timezone" | "currency">>,
+  patch: Partial<Pick<OrgRow, "name" | "industry" | "health_score" | "timezone" | "currency" | "enabled_modules">>,
 ): Promise<{ error: Error | null }> {
   const { error } = await orgTable().update(patch).eq("id", orgId);
   return { error: error ? new Error(error.message) : null };

@@ -5,7 +5,7 @@ import { Backdrop } from "@/components/wf/Backdrop";
 import { Brand } from "@/components/wf/Brand";
 import { Field, GhostButton, GlassCard, GoldButton, inputClass } from "@/components/wf/ui";
 import { emptyOnboarding, saveOnboarding, type OnboardingData } from "@/lib/onboarding-store";
-import { createOrganization, enabledModulesFor } from "@/lib/org";
+import { createOrganization, enabledModulesFor, INDUSTRIES as industries } from "@/lib/org";
 import { useAuth } from "@/lib/use-auth";
 
 export const Route = createFileRoute("/onboarding")({
@@ -29,22 +29,6 @@ export const Route = createFileRoute("/onboarding")({
 
 const steps = ["Company", "Ambition", "Systems", "AI setup"] as const;
 
-const industries = [
-  "E-commerce",
-  "Retail",
-  "Professional services",
-  "SaaS / Software",
-  "Finance & banking",
-  "Healthcare",
-  "Manufacturing",
-  "Hospitality",
-  "Real estate",
-  "Education",
-  "Logistics & transport",
-  "Media & marketing",
-  "Nonprofit",
-  "Construction",
-];
 const sizes = ["1–9", "10–49", "50–199", "200+"];
 const revenues = ["< $500k", "$500k–$5M", "$5M–$50M", "$50M+"];
 const goalOptions = [

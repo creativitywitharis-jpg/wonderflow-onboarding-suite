@@ -35,7 +35,7 @@ import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Reveal, SectionLabel, StatTile } from "@/components/wf/primitives";
 import { useOrg } from "@/lib/org-context";
-import { updateOrganization } from "@/lib/org";
+import { enabledModulesFor, INDUSTRIES, updateOrganization } from "@/lib/org";
 import { connectSlack, disconnectSlack, listConnections, syncStripe, testSlack, type DbConnection } from "@/lib/connections";
 import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
@@ -179,6 +179,7 @@ function SettingsView() {
   const { org, refresh } = useOrg();
   const [name, setName] = useState("");
   const [industry, setIndustry] = useState("");
+  const [customIndustry, setCustomIndustry] = useState(false);
   const [timezone, setTimezone] = useState("America/Chicago");
   const [currency, setCurrency] = useState("USD");
   const [busy, setBusy] = useState(false);
@@ -187,6 +188,7 @@ function SettingsView() {
     if (org) {
       setName(org.name ?? "");
       setIndustry(org.industry ?? "");
+      setCustomIndustry(!!org.industry && !INDUSTRIES.includes(org.industry));
       setTimezone(org.timezone ?? "America/Chicago");
       setCurrency(org.currency ?? "USD");
     }
@@ -196,7 +198,13 @@ function SettingsView() {
     if (!org || busy) return;
     setBusy(true);
     setSaved(false);
-    const { error } = await updateOrganization(org.id, { name: name.trim() || org.name, industry: industry.trim() || null, timezone, currency });
+    const trimmedIndustry = industry.trim() || null;
+    const patch: Parameters<typeof updateOrganization>[1] = { name: name.trim() || org.name, industry: trimmedIndustry, timezone, currency };
+    // Re-provision the module set whenever industry actually changes, so
+    // correcting a mistaken pick at signup properly shows/hides Orders,
+    // Inventory, Suppliers & Growth instead of leaving the sidebar stale.
+    if (trimmedIndustry !== org.industry) patch.enabled_modules = enabledModulesFor(trimmedIndustry ?? undefined);
+    const { error } = await updateOrganization(org.id, patch);
     setBusy(false);
     if (!error) {
       setSaved(true);
@@ -210,7 +218,26 @@ function SettingsView() {
         <SectionLabel icon={Building2}>Business profile</SectionLabel>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Company name</span><input value={name} onChange={(e) => { setName(e.target.value); setSaved(false); }} className={inputCls} /></label>
-          <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Industry</span><input value={industry} onChange={(e) => { setIndustry(e.target.value); setSaved(false); }} placeholder="e.g. Retail, Finance & banking" className={inputCls} /></label>
+          <label className="block text-xs">
+            <span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Industry</span>
+            <select
+              value={customIndustry ? "__other__" : industry}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "__other__") { setCustomIndustry(true); setIndustry(""); }
+                else { setCustomIndustry(false); setIndustry(v); }
+                setSaved(false);
+              }}
+              className={inputCls}
+            >
+              <option value="">Select…</option>
+              {INDUSTRIES.map((i) => <option key={i} value={i}>{i}</option>)}
+              <option value="__other__">Other…</option>
+            </select>
+            {customIndustry && (
+              <input value={industry} onChange={(e) => { setIndustry(e.target.value); setSaved(false); }} placeholder="Your industry — e.g. Banking, Legal, Agriculture" className={cn(inputCls, "mt-2")} />
+            )}
+          </label>
           <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Timezone</span>
             <select value={timezone} onChange={(e) => { setTimezone(e.target.value); setSaved(false); }} className={inputCls}>
               {TIMEZONE_OPTS.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
@@ -222,7 +249,7 @@ function SettingsView() {
             </select>
           </label>
         </div>
-        <p className="mt-3 text-xs text-muted-foreground">Timezone and currency are saved as your business's stored preference. Dashboards and reports don't reformat amounts by currency yet — they still display in $.</p>
+        <p className="mt-3 text-xs text-muted-foreground">Changing industry updates which modules appear in your sidebar — commerce industries (E-commerce, Retail, Manufacturing, Hospitality) get Orders, Inventory, Suppliers &amp; Growth; others get the core set. Timezone and currency are saved as preferences, but dashboards and reports don't reformat amounts by currency yet — they still display in $.</p>
         <button onClick={save} disabled={busy || !name.trim()} className="mt-5 flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
           <Check className="size-4" /> {busy ? "Saving…" : saved ? "Saved ✓" : "Save profile"}
         </button>

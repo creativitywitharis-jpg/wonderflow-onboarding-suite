@@ -26,10 +26,10 @@ import {
   Rocket,
   Search,
   Send,
-  Settings,
   Shield,
   ShoppingCart,
   Sparkles,
+  Star,
   Users,
   UsersRound,
   Wallet,
@@ -45,6 +45,7 @@ import { useOrg } from "@/lib/org-context";
 import { signOut } from "@/lib/use-auth";
 import { askAI } from "@/lib/ai";
 import { listHelpMessages, saveHelpMessage } from "@/lib/help";
+import { listFeedback, submitFeedback, type FeedbackEntry, type FeedbackType } from "@/lib/feedback";
 import { getAiUsage, planLimits } from "@/lib/billing";
 import { buildInsights, type Insight } from "@/lib/insights";
 
@@ -466,11 +467,127 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+const FEEDBACK_TYPES: { key: FeedbackType; label: string }[] = [
+  { key: "concern", label: "Concern" },
+  { key: "integration_request", label: "Integration request" },
+  { key: "review", label: "Review" },
+];
+
+function feedbackTimeAgo(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+// A direct channel to WonderFlow — repurposes what used to be a dead
+// "Settings" link (it duplicated "Administration", which already covers
+// business settings). Distinct from Help: Help answers "how do I use this
+// software", this sends something TO WonderFlow itself.
+function FeedbackPanel({ onClose }: { onClose: () => void }) {
+  const { org } = useOrg();
+  const [type, setType] = useState<FeedbackType>("concern");
+  const [rating, setRating] = useState(0);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<FeedbackEntry[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+
+  const loadHistory = () => {
+    if (!org) { setLoadingHistory(false); return; }
+    setLoadingHistory(true);
+    listFeedback(org.id).then(setHistory).finally(() => setLoadingHistory(false));
+  };
+  useEffect(loadHistory, [org?.id]);
+
+  const submit = async () => {
+    if (!org || !message.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await submitFeedback(org.id, type, message.trim(), type === "review" && rating > 0 ? rating : null);
+    setBusy(false);
+    if (err) { setError(err.message); return; }
+    setMessage("");
+    setRating(0);
+    loadHistory();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="glass relative flex h-[36rem] max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl">
+        <div className="flex items-center justify-between border-b border-border p-5">
+          <div className="flex items-center gap-3">
+            <span className="orb grid size-9 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Megaphone className="size-4" stroke="oklch(0.2 0.02 70)" /></span>
+            <div><p className="text-sm font-semibold tracking-tight">Suggestions &amp; Reviews</p><p className="text-xs text-muted-foreground">Send a concern, an integration request, or a review to WonderFlow</p></div>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:text-foreground"><X className="size-4" /></button>
+        </div>
+
+        <div className="flex-1 space-y-5 overflow-y-auto p-5">
+          <div>
+            <div className="flex flex-wrap gap-2">
+              {FEEDBACK_TYPES.map((t) => (
+                <button key={t.key} onClick={() => setType(t.key)} className={cn("rounded-full border px-3 py-1.5 text-xs transition-colors", type === t.key ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground hover:text-foreground")} style={type === t.key ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>{t.label}</button>
+              ))}
+            </div>
+
+            {type === "review" && (
+              <div className="mt-3 flex items-center gap-1">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button key={n} type="button" onClick={() => setRating(n)} aria-label={`${n} star${n === 1 ? "" : "s"}`} className="p-0.5">
+                    <Star className={cn("size-5 transition-colors", n <= rating ? "fill-gold text-gold" : "text-muted-foreground/40")} />
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              rows={4}
+              placeholder={type === "concern" ? "What's on your mind?" : type === "integration_request" ? "Which tool or platform should WonderFlow connect to?" : "How's WonderFlow working for you?"}
+              className="mt-3 w-full resize-none rounded-2xl border border-border bg-background/40 px-4 py-3 text-sm text-foreground outline-none focus:border-gold/50"
+            />
+            {error && <p className="mt-2 text-xs text-rose-300">{error}</p>}
+            <button onClick={submit} disabled={busy || !message.trim()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>
+              <Send className="size-4" /> {busy ? "Sending…" : "Send"}
+            </button>
+          </div>
+
+          {(loadingHistory || history.length > 0) && (
+            <div className="border-t border-border pt-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Your past submissions</p>
+              {loadingHistory && <p className="mt-3 text-sm text-muted-foreground">Loading…</p>}
+              <div className="mt-3 space-y-2">
+                {history.map((h) => (
+                  <div key={h.id} className="rounded-xl border border-border bg-background/30 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-foreground/85">{FEEDBACK_TYPES.find((t) => t.key === h.type)?.label ?? h.type}</span>
+                      <span className="text-[0.65rem] text-muted-foreground">{feedbackTimeAgo(h.created_at)}</span>
+                    </div>
+                    {h.rating && <div className="mt-1 flex gap-0.5">{[1, 2, 3, 4, 5].map((n) => <Star key={n} className={cn("size-3", n <= h.rating! ? "fill-gold text-gold" : "text-muted-foreground/30")} />)}</div>}
+                    <p className="mt-1 text-sm text-foreground/80">{h.message}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ──────────────────────────────────────────────────────────────────────
  * Sidebar
  * ─────────────────────────────────────────────────────────────────── */
 
-function Sidebar({ collapsed, onToggle, onHelp }: { collapsed: boolean; onToggle: () => void; onHelp: () => void }) {
+function Sidebar({ collapsed, onToggle, onHelp, onFeedback }: { collapsed: boolean; onToggle: () => void; onHelp: () => void; onFeedback: () => void }) {
   const { org, orgs, role, userName, userEmail, switchOrg } = useOrg();
   const navigate = useNavigate();
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -613,7 +730,7 @@ function Sidebar({ collapsed, onToggle, onHelp }: { collapsed: boolean; onToggle
 
       {/* bottom */}
       <div className="space-y-0.5 border-t border-border pt-2">
-        <Link to="/admin" search={{ tab: "settings" }} title={collapsed ? "Settings" : undefined} className={cn("flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><Settings className="size-4 shrink-0" />{!collapsed && "Settings"}</Link>
+        <button onClick={onFeedback} title={collapsed ? "Suggestions & Reviews" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><Megaphone className="size-4 shrink-0" />{!collapsed && "Suggestions & Reviews"}</button>
         <button onClick={onHelp} title={collapsed ? "Help" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><HelpCircle className="size-4 shrink-0" />{!collapsed && "Help"}</button>
         <button onClick={doSignOut} title={collapsed ? "Sign out" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><LogOut className="size-4 shrink-0" />{!collapsed && "Sign out"}</button>
         <div className={cn("flex items-center gap-3 rounded-xl px-2 py-2", collapsed && "justify-center px-0")}>
@@ -760,6 +877,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileAiOpen, setMobileAiOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const { signedIn, authLoading, loading, orgs } = useOrg();
   const navigate = useNavigate();
 
@@ -780,7 +898,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="relative flex min-h-screen">
       <Backdrop intensity={0.22} />
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} onHelp={() => setHelpOpen(true)} />
+      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} onHelp={() => setHelpOpen(true)} onFeedback={() => setFeedbackOpen(true)} />
 
       <MobileNav open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
 
@@ -809,6 +927,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onAsk={() => setAiOpen(true)} />
 
       {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}
+      {feedbackOpen && <FeedbackPanel onClose={() => setFeedbackOpen(false)} />}
 
       {/* floating AI open button when closed */}
       {!aiOpen && (

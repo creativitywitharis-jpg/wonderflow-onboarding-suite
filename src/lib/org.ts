@@ -44,13 +44,17 @@ export type OrgRow = {
   timezone: string;
   currency: string;
   ai_model: string;
+  address: string | null;
+  phone: string | null;
+  website: string | null;
 };
 
-const ORG_COLS = "id,name,slug,industry,enabled_modules,plan,health_score,created_by,timezone,currency,ai_model";
+const ORG_COLS = "id,name,slug,industry,enabled_modules,plan,health_score,created_by,timezone,currency,ai_model,address,phone,website";
 
-// timezone/currency/ai_model ship in migrations 0038/0040 and aren't in the
-// generated Database types until Lovable regenerates them — reach the table
-// untyped. Runtime behaviour is unchanged once types regenerate.
+// timezone/currency/ai_model/address/phone/website ship in migrations
+// 0038/0040/0054 and aren't in the generated Database types until Lovable
+// regenerates them — reach the table untyped. Runtime behaviour is
+// unchanged once types regenerate.
 const orgTable = () => (supabase as unknown as { from: (t: string) => any }).from("organizations");
 
 export function getActiveOrgId(): string | null {
@@ -99,7 +103,7 @@ export async function createOrganization(input: {
 /** Update an organization (owner/admin only, enforced by RLS). */
 export async function updateOrganization(
   orgId: string,
-  patch: Partial<Pick<OrgRow, "name" | "industry" | "health_score" | "timezone" | "currency" | "enabled_modules" | "ai_model">>,
+  patch: Partial<Pick<OrgRow, "name" | "industry" | "health_score" | "timezone" | "currency" | "enabled_modules" | "ai_model" | "address" | "phone" | "website">>,
 ): Promise<{ error: Error | null }> {
   const { error } = await orgTable().update(patch).eq("id", orgId);
   return { error: error ? new Error(error.message) : null };

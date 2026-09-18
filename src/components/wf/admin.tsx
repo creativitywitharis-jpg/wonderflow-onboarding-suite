@@ -157,6 +157,9 @@ function SettingsView() {
   const [customIndustry, setCustomIndustry] = useState(false);
   const [timezone, setTimezone] = useState("America/Chicago");
   const [currency, setCurrency] = useState("USD");
+  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState("");
+  const [website, setWebsite] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   useEffect(() => {
@@ -166,6 +169,9 @@ function SettingsView() {
       setCustomIndustry(!!org.industry && !INDUSTRIES.includes(org.industry));
       setTimezone(org.timezone ?? "America/Chicago");
       setCurrency(org.currency ?? "USD");
+      setAddress(org.address ?? "");
+      setPhone(org.phone ?? "");
+      setWebsite(org.website ?? "");
     }
   }, [org?.id]);
 
@@ -174,7 +180,15 @@ function SettingsView() {
     setBusy(true);
     setSaved(false);
     const trimmedIndustry = industry.trim() || null;
-    const patch: Parameters<typeof updateOrganization>[1] = { name: name.trim() || org.name, industry: trimmedIndustry, timezone, currency };
+    const patch: Parameters<typeof updateOrganization>[1] = {
+      name: name.trim() || org.name,
+      industry: trimmedIndustry,
+      timezone,
+      currency,
+      address: address.trim() || null,
+      phone: phone.trim() || null,
+      website: website.trim() || null,
+    };
     // Re-provision the module set whenever industry actually changes, so
     // correcting a mistaken pick at signup properly shows/hides Orders,
     // Inventory, Suppliers & Growth instead of leaving the sidebar stale.
@@ -226,6 +240,17 @@ function SettingsView() {
           </label>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">Changing industry updates which modules appear in your sidebar — commerce industries (E-commerce, Retail, Manufacturing, Hospitality) get Orders, Inventory, Suppliers &amp; Growth; others get the core set. Timezone and currency are saved as preferences, but dashboards and reports don't reformat amounts by currency yet — they still display in $.</p>
+
+        <div className="mt-5 border-t border-border pt-5">
+          <p className="text-xs font-semibold text-foreground/85">Billing identity</p>
+          <p className="mt-1 text-xs text-muted-foreground">Shown on invoices you email to clients. Leave blank to omit.</p>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <label className="block text-xs sm:col-span-2"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Business address</span><input value={address} onChange={(e) => { setAddress(e.target.value); setSaved(false); }} placeholder="123 Innovation Drive, San Francisco, CA 94105" className={inputCls} /></label>
+            <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Phone</span><input value={phone} onChange={(e) => { setPhone(e.target.value); setSaved(false); }} placeholder="(415) 555-0199" className={inputCls} /></label>
+            <label className="block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Website</span><input value={website} onChange={(e) => { setWebsite(e.target.value); setSaved(false); }} placeholder="www.yourbusiness.com" className={inputCls} /></label>
+          </div>
+        </div>
+
         <button onClick={save} disabled={busy || !name.trim()} className="mt-5 flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
           <Check className="size-4" /> {busy ? "Saving…" : saved ? "Saved ✓" : "Save profile"}
         </button>

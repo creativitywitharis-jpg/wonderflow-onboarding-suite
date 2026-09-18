@@ -25,6 +25,9 @@ const esc = (s: string) => String(s).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">
 
 function invoiceHtml(o: {
   orgName: string;
+  orgAddress: string | null;
+  orgPhone: string | null;
+  orgWebsite: string | null;
   number: string;
   customerName: string;
   issueDate: string;
@@ -38,40 +41,55 @@ function invoiceHtml(o: {
   const rows = (o.items.length ? o.items : [{ description: "Services", qty: 1, price: o.subtotal }])
     .map(
       (it) => `<tr>
-        <td style="padding:10px 0;border-bottom:1px solid #26262b;color:#e8e6e1">${esc(it.description || "Item")}</td>
-        <td style="padding:10px 0;border-bottom:1px solid #26262b;text-align:center;color:#b8b5ad">${Number(it.qty) || 0}</td>
-        <td style="padding:10px 0;border-bottom:1px solid #26262b;text-align:right;color:#b8b5ad">${money(Number(it.price) || 0)}</td>
-        <td style="padding:10px 0;border-bottom:1px solid #26262b;text-align:right;color:#e8e6e1">${money((Number(it.qty) || 0) * (Number(it.price) || 0))}</td>
+        <td style="padding:12px 0;border-bottom:1px solid #ece7dc;color:#33394a">${esc(it.description || "Item")}</td>
+        <td style="padding:12px 0;border-bottom:1px solid #ece7dc;text-align:center;color:#8a8f98">${Number(it.qty) || 0}</td>
+        <td style="padding:12px 0;border-bottom:1px solid #ece7dc;text-align:right;color:#8a8f98">${money(Number(it.price) || 0)}</td>
+        <td style="padding:12px 0;border-bottom:1px solid #ece7dc;text-align:right;color:#33394a">${money((Number(it.qty) || 0) * (Number(it.price) || 0))}</td>
       </tr>`,
     )
     .join("");
-  return `<!doctype html><html><body style="margin:0;background:#0b0b0d;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#e8e6e1">
-  <div style="max-width:600px;margin:0 auto;padding:40px 28px">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start">
-      <div style="font-size:20px;font-weight:700;letter-spacing:-0.01em">${esc(o.orgName)}</div>
-      <div style="text-align:right"><div style="font-size:13px;color:#8a877f">Invoice</div><div style="font-size:16px;font-weight:600;color:#e3b341">${esc(o.number)}</div></div>
-    </div>
-    <div style="margin-top:24px;padding:28px;border:1px solid #26262b;border-radius:18px;background:#141416">
-      <p style="margin:0 0 4px;font-size:13px;color:#8a877f">Billed to</p>
-      <p style="margin:0 0 16px;font-size:16px;font-weight:600">${esc(o.customerName)}</p>
-      <p style="margin:0 0 20px;font-size:13px;color:#8a877f">Issued ${esc(o.issueDate)}${o.dueDate ? ` · Due ${esc(o.dueDate)}` : ""}</p>
-      <table style="width:100%;border-collapse:collapse;font-size:14px">
-        <thead><tr>
-          <th style="text-align:left;padding:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#8a877f">Description</th>
-          <th style="text-align:center;padding:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#8a877f">Qty</th>
-          <th style="text-align:right;padding:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#8a877f">Price</th>
-          <th style="text-align:right;padding:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#8a877f">Amount</th>
+  const contactLine = [o.orgAddress, o.orgPhone, o.orgWebsite].filter(Boolean).map(esc).join(" &nbsp;·&nbsp; ");
+  return `<!doctype html><html><body style="margin:0;background:#f2efe8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#33394a">
+  <div style="max-width:620px;margin:0 auto;padding:40px 20px">
+    <div style="border-radius:20px;border:1px solid #ece7dc;background:#fdfbf7;padding:36px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div style="font-size:19px;font-weight:700;letter-spacing:-0.01em;color:#262b38">${esc(o.orgName)}</div>
+          ${o.orgAddress ? `<div style="margin-top:4px;font-size:12px;line-height:1.6;color:#8a8f98">${esc(o.orgAddress)}</div>` : ""}
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#8a8f98">Invoice</div>
+          <div style="margin-top:4px;font-size:20px;font-weight:700;color:#c99a35">${esc(o.number)}</div>
+        </div>
+      </div>
+
+      <div style="margin-top:28px;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#8a8f98">Billed to</div>
+          <div style="margin-top:4px;font-size:15px;font-weight:600;color:#262b38">${esc(o.customerName)}</div>
+        </div>
+        <div style="font-size:12px;color:#8a8f98">Issued ${esc(o.issueDate)}${o.dueDate ? ` &nbsp;·&nbsp; Due ${esc(o.dueDate)}` : ""}</div>
+      </div>
+
+      <table style="width:100%;border-collapse:collapse;margin-top:22px;font-size:14px">
+        <thead><tr style="background:#f4f1ea">
+          <th style="text-align:left;padding:9px 0 9px 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#8a8f98;border-radius:8px 0 0 8px">Description</th>
+          <th style="text-align:center;padding:9px 0;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#8a8f98">Qty</th>
+          <th style="text-align:right;padding:9px 0;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#8a8f98">Unit price</th>
+          <th style="text-align:right;padding:9px 12px 9px 0;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#8a8f98;border-radius:0 8px 8px 0">Amount</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
-      <div style="margin-top:18px;margin-left:auto;width:240px;font-size:14px">
-        <div style="display:flex;justify-content:space-between;padding:4px 0;color:#b8b5ad"><span>Subtotal</span><span>${money(o.subtotal)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:4px 0;color:#b8b5ad"><span>Tax</span><span>${money(o.tax)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:10px 0 0;margin-top:6px;border-top:1px solid #26262b;font-size:18px;font-weight:700;color:#e3b341"><span>Total</span><span>${money(o.total)}</span></div>
+
+      <div style="margin-top:18px;margin-left:auto;width:260px;font-size:14px">
+        <div style="display:flex;justify-content:space-between;padding:4px 0;color:#6b7078"><span>Subtotal</span><span>${money(o.subtotal)}</span></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;color:#6b7078"><span>Tax</span><span>${money(o.tax)}</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding:10px 14px;border-radius:10px;background:#f4f1ea;font-size:17px;font-weight:700;color:#c99a35"><span>Total</span><span>${money(o.total)}</span></div>
       </div>
-      ${o.notes ? `<p style="margin:22px 0 0;padding-top:16px;border-top:1px solid #26262b;font-size:13px;line-height:1.6;color:#b8b5ad">${esc(o.notes)}</p>` : ""}
+
+      ${o.notes ? `<div style="margin-top:26px;padding-top:16px;border-top:1px solid #ece7dc"><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#8a8f98">Notes</div><p style="margin:6px 0 0;font-size:13px;line-height:1.6;color:#6b7078;white-space:pre-wrap">${esc(o.notes)}</p></div>` : ""}
     </div>
-    <p style="margin:18px 0 0;font-size:12px;color:#8a877f;text-align:center">Sent via WonderFlow OS on behalf of ${esc(o.orgName)}.</p>
+    <p style="margin:18px 0 0;font-size:11px;color:#9a9a92;text-align:center">${esc(o.orgName)}${contactLine ? ` &nbsp;·&nbsp; ${contactLine}` : ""}</p>
   </div></body></html>`;
 }
 
@@ -125,8 +143,9 @@ Deno.serve(async (req: Request) => {
   const resendKey = Deno.env.get("RESEND_API_KEY");
   if (!resendKey) return json({ sent: false, error: "Email isn't configured yet — add the RESEND_API_KEY secret." });
 
-  const { data: org } = await admin.from("organizations").select("name").eq("id", orgId).maybeSingle();
-  const orgName = (org as { name?: string } | null)?.name ?? "Your business";
+  const { data: org } = await admin.from("organizations").select("name,address,phone,website").eq("id", orgId).maybeSingle();
+  const o = org as { name?: string; address?: string; phone?: string; website?: string } | null;
+  const orgName = o?.name ?? "Your business";
   const from = Deno.env.get("EMAIL_FROM") || "WonderFlow OS <onboarding@resend.dev>";
 
   const items = (Array.isArray(inv.items) ? inv.items : []) as Item[];
@@ -144,6 +163,9 @@ Deno.serve(async (req: Request) => {
         subject: `Invoice ${inv.number ?? ""} from ${orgName} — ${money(total)}`,
         html: invoiceHtml({
           orgName,
+          orgAddress: o?.address || null,
+          orgPhone: o?.phone || null,
+          orgWebsite: o?.website || null,
           number: (inv.number as string) || "Invoice",
           customerName,
           issueDate: (inv.issue_date as string) || new Date().toISOString().slice(0, 10),

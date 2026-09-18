@@ -19,6 +19,7 @@ import {
   Phone,
   Package,
   Pencil,
+  Plus,
   Scale,
   Send,
   ShieldAlert,
@@ -26,6 +27,7 @@ import {
   Sparkles,
   Star,
   TrendingDown,
+  Trash2,
   Truck,
   Zap,
   type LucideIcon,
@@ -36,11 +38,11 @@ import { Brand } from "@/components/wf/Brand";
 import { Avatar, Bar, Delta, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
-import { listProducts } from "@/lib/products";
+import { listProducts, type DbProduct } from "@/lib/products";
 import { createSupplier, insertSuppliers, listSuppliers, updateSupplier, type NewSupplier } from "@/lib/suppliers";
 import { CsvImport } from "@/components/wf/CsvImport";
 import type { FieldSpec } from "@/lib/csv";
-import { createPurchaseOrder, listPurchaseOrders, updatePurchaseOrderStatus, type DbPurchaseOrder, type PoStatus } from "@/lib/purchase-orders";
+import { createPurchaseOrder, listPurchaseOrders, receivePurchaseOrder, updatePurchaseOrderStatus, type DbPurchaseOrder, type PoStatus } from "@/lib/purchase-orders";
 import { askAI } from "@/lib/ai";
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -163,6 +165,7 @@ const SAMPLE_SUPPLIERS: NewSupplier[] = [
 
 type SuppliersState = {
   suppliers: Supplier[];
+  products: DbProduct[];
   loading: boolean;
   addSupplier: (s: NewSupplier) => Promise<void>;
   editSupplier: (id: string, patch: Partial<NewSupplier>) => Promise<{ error: Error | null }>;
@@ -180,11 +183,13 @@ function useSuppliersData() {
 function SuppliersProvider({ children }: { children: ReactNode }) {
   const { org } = useOrg();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [products, setProducts] = useState<DbProduct[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!org) {
       setSuppliers([]);
+      setProducts([]);
       setLoading(false);
       return;
     }
@@ -197,6 +202,7 @@ function SuppliersProvider({ children }: { children: ReactNode }) {
         if (k) byCat[k] = (byCat[k] ?? 0) + 1;
       }
       setSuppliers(rows.map((r) => toUiSupplier(r, byCat)));
+      setProducts(prods);
     } catch {
       setSuppliers([]);
     }
@@ -254,7 +260,7 @@ function SuppliersProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <SuppliersCtx.Provider value={{ suppliers, loading, addSupplier, editSupplier, importSuppliers, setStatus, seed }}>
+    <SuppliersCtx.Provider value={{ suppliers, products, loading, addSupplier, editSupplier, importSuppliers, setStatus, seed }}>
       {children}
     </SuppliersCtx.Provider>
   );
@@ -894,14 +900,20 @@ function CompareView() {
 
 const PO_STATUSES: PoStatus[] = ["Draft", "Sent", "Confirmed", "In transit", "Received", "Cancelled"];
 
+type PoLine = { product_id: string; product_name: string; qty: number; cost: number };
+
 function OrdersView() {
   const { org } = useOrg();
-  const { suppliers } = useSuppliersData();
+  const { suppliers, products } = useSuppliersData();
   const [pos, setPos] = useState<DbPurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ supplierId: "", items: "1", total: "0", eta: "" });
+  const [form, setForm] = useState({ supplierId: "", eta: "" });
+  const [lines, setLines] = useState<PoLine[]>([]);
+  const [pickProduct, setPickProduct] = useState("");
+  const [pickQty, setPickQty] = useState("1");
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!org) {
@@ -926,24 +938,49 @@ function OrdersView() {
   const inTransit = pos.filter((p) => p.status === "In transit").reduce((a, p) => a + Number(p.total), 0);
   const totalValue = pos.reduce((a, p) => a + Number(p.total), 0);
 
+  const addLine = () => {
+    const p = products.find((x) => x.id === pickProduct);
+    const qty = Math.max(1, Number(pickQty) || 1);
+    if (!p) return;
+    setLines((ls) => [...ls, { product_id: p.id, product_name: p.name, qty, cost: qty * Number(p.cost || p.price) }]);
+    setPickProduct("");
+    setPickQty("1");
+  };
+  const removeLine = (i: number) => setLines((ls) => ls.filter((_, idx) => idx !== i));
+  const linesTotal = lines.reduce((a, l) => a + l.cost, 0);
+
   const submit = async () => {
-    if (!org || busy) return;
+    if (!org || busy || lines.length === 0) return;
     setBusy(true);
+    setError(null);
     const sup = suppliers.find((s) => s.id === form.supplierId);
-    await createPurchaseOrder(org.id, {
-      supplier_id: form.supplierId || null,
-      supplier_name: sup?.name ?? "Supplier",
-      items: Number(form.items) || 0,
-      total: Number(form.total) || 0,
-      eta: form.eta.trim() || null,
-      status: "Draft",
-    });
+    const { error: err } = await createPurchaseOrder(
+      org.id,
+      {
+        supplier_id: form.supplierId || null,
+        supplier_name: sup?.name ?? "Supplier",
+        items: lines.length,
+        total: linesTotal,
+        eta: form.eta.trim() || null,
+        status: "Draft",
+        notes: lines.map((l) => `${l.product_name} x${l.qty}`).join(", "),
+      },
+      lines,
+    );
     setBusy(false);
-    setForm({ supplierId: "", items: "1", total: "0", eta: "" });
+    if (err) { setError(err.message); return; }
+    setForm({ supplierId: "", eta: "" });
+    setLines([]);
     setAdding(false);
     await load();
   };
   const changeStatus = async (id: string, status: PoStatus) => {
+    if (status === "Received") {
+      if (!org) return;
+      await receivePurchaseOrder(org.id, id);
+      await load();
+      return;
+    }
     await updatePurchaseOrderStatus(id, status);
     await load();
   };
@@ -962,17 +999,46 @@ function OrdersView() {
             <button onClick={() => setAdding((a) => !a)} className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>New PO</button>
           </div>
           {adding && (
-            <div className="mt-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-2">
-              <select value={form.supplierId} onChange={(e) => setForm((f) => ({ ...f, supplierId: e.target.value }))} className={SUP_INPUT}>
-                <option value="">Select supplier…</option>
-                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <input value={form.eta} onChange={(e) => setForm((f) => ({ ...f, eta: e.target.value }))} placeholder="ETA (e.g. Aug 20)" className={SUP_INPUT} />
-              <input type="number" value={form.items} onChange={(e) => setForm((f) => ({ ...f, items: e.target.value }))} placeholder="Items" className={SUP_INPUT} />
-              <input type="number" value={form.total} onChange={(e) => setForm((f) => ({ ...f, total: e.target.value }))} placeholder="Total $" className={SUP_INPUT} />
-              <div className="flex gap-2 sm:col-span-2">
-                <button onClick={submit} disabled={busy} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Create PO"}</button>
-                <button onClick={() => setAdding(false)} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+            <div className="mt-4 space-y-3 rounded-2xl border border-border bg-background/30 p-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <select value={form.supplierId} onChange={(e) => setForm((f) => ({ ...f, supplierId: e.target.value }))} className={SUP_INPUT}>
+                  <option value="">Select supplier…</option>
+                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <input value={form.eta} onChange={(e) => setForm((f) => ({ ...f, eta: e.target.value }))} placeholder="ETA (e.g. Aug 20)" className={SUP_INPUT} />
+              </div>
+
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Line items</p>
+                {lines.length > 0 && (
+                  <div className="mt-2 space-y-1.5">
+                    {lines.map((l, i) => (
+                      <div key={i} className="flex items-center gap-2 rounded-lg border border-border bg-background/40 px-3 py-1.5 text-xs">
+                        <span className="flex-1 truncate text-foreground/85">{l.product_name} × {l.qty}</span>
+                        <span className="tabular-nums text-muted-foreground">${formatNum(l.cost)}</span>
+                        <button onClick={() => removeLine(i)} aria-label="Remove line" className="text-muted-foreground hover:text-rose-300"><Trash2 className="size-3.5" /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-2 flex gap-2">
+                  <select value={pickProduct} onChange={(e) => setPickProduct(e.target.value)} className={cn(SUP_INPUT, "flex-1")}>
+                    <option value="">Select product…</option>
+                    {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  <input type="number" min={1} value={pickQty} onChange={(e) => setPickQty(e.target.value)} className={cn(SUP_INPUT, "w-20")} />
+                  <button onClick={addLine} disabled={!pickProduct} className="shrink-0 rounded-lg border border-border px-3 text-xs text-foreground/80 transition-colors hover:border-gold/40 disabled:opacity-40"><Plus className="size-3.5" /></button>
+                </div>
+                {products.length === 0 && <p className="mt-1.5 text-xs text-muted-foreground">Add products in Inventory first to build a line-item PO.</p>}
+              </div>
+
+              {error && <p className="text-xs text-rose-300">{error}</p>}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold tabular-nums text-gold">${formatNum(linesTotal)}</span>
+                <div className="flex gap-2">
+                  <button onClick={submit} disabled={busy || lines.length === 0} className="rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Create PO"}</button>
+                  <button onClick={() => { setAdding(false); setLines([]); setError(null); }} className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                </div>
               </div>
             </div>
           )}

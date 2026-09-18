@@ -692,7 +692,7 @@ function ForecastView() {
   );
 }
 
-type SupplierGroup = { supplier: DbSupplier; items: { name: string; qty: number; cost: number }[]; totalCost: number };
+type SupplierGroup = { supplier: DbSupplier; items: { product_id: string; name: string; qty: number; cost: number }[]; totalCost: number };
 
 function ReorderView() {
   const { org } = useOrg();
@@ -751,21 +751,25 @@ function ReorderView() {
       if (!s.supplier) continue;
       const g = groups.get(s.supplier.id) ?? { supplier: s.supplier, items: [], totalCost: 0 };
       const cost = s.qty * s.p.price;
-      g.items.push({ name: s.p.name, qty: s.qty, cost });
+      g.items.push({ product_id: s.p.id, name: s.p.name, qty: s.qty, cost });
       g.totalCost += cost;
       groups.set(s.supplier.id, g);
     }
     const groupList = [...groups.values()];
     try {
       for (const g of groupList) {
-        const { error: err } = await createPurchaseOrder(org.id, {
-          supplier_id: g.supplier.id,
-          supplier_name: g.supplier.name,
-          items: g.items.length,
-          total: g.totalCost,
-          status: "Draft",
-          notes: g.items.map((i) => `${i.name} x${i.qty}`).join(", "),
-        });
+        const { error: err } = await createPurchaseOrder(
+          org.id,
+          {
+            supplier_id: g.supplier.id,
+            supplier_name: g.supplier.name,
+            items: g.items.length,
+            total: g.totalCost,
+            status: "Draft",
+            notes: g.items.map((i) => `${i.name} x${i.qty}`).join(", "),
+          },
+          g.items.map((i) => ({ product_id: i.product_id, product_name: i.name, qty: i.qty, cost: i.cost })),
+        );
         if (err) throw err;
       }
       setCreatedGroups(groupList);

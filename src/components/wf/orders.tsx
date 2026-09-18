@@ -38,7 +38,8 @@ import { Avatar, Bar, Reveal, SectionLabel, StatTile, formatNum } from "@/compon
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { listCustomers, type DbCustomer } from "@/lib/customers";
-import { listProducts, type DbProduct } from "@/lib/products";
+import { adjustStock, listProducts, type DbProduct } from "@/lib/products";
+import { logMovement } from "@/lib/stock-movements";
 import {
   createOrder,
   insertOrders,
@@ -201,6 +202,16 @@ function OrdersProvider({ children }: { children: ReactNode }) {
       if (!org) return;
       const { data } = await createOrder(org.id, o);
       if (data) {
+        // Real stock decrement for every matched catalog line — one movement
+        // per line, so the sale is genuinely reflected in stock and the log.
+        for (const it of data.items ?? []) {
+          if (!it.product_id || it.qty <= 0) continue;
+          const newStock = await adjustStock(it.product_id, -it.qty);
+          if (newStock !== null) {
+            const prod = products.find((p) => p.id === it.product_id);
+            void logMovement(org.id, { product_id: it.product_id, product_name: it.name, sku: prod?.sku, type: "Sold", qty: -it.qty });
+          }
+        }
         // Fold this order into its customer's running totals (orders + LTV),
         // which cascades to loyalty points, codes and segmentation.
         await rollUpOrder(org.id, {
@@ -219,13 +230,29 @@ function OrdersProvider({ children }: { children: ReactNode }) {
       await load();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [org?.id, load],
+    [org?.id, load, products],
   );
 
-  const advance = useCallback(async (id: string, status: OrderStatus) => {
-    await updateOrderStatus(id, status);
-    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, stage: status } : o)));
-  }, []);
+  const advance = useCallback(
+    async (id: string, status: OrderStatus) => {
+      const existing = orders.find((o) => o.id === id);
+      await updateOrderStatus(id, status);
+      setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, stage: status } : o)));
+      // Cancelling releases any stock the order held back — one real
+      // "Returned" movement per matched line, only on the transition in.
+      if (org && existing && status === "Cancelled" && existing.stage !== "Cancelled") {
+        for (const it of existing.lineItems) {
+          if (!it.product_id || it.qty <= 0) continue;
+          const newStock = await adjustStock(it.product_id, it.qty);
+          if (newStock !== null) {
+            const prod = products.find((p) => p.id === it.product_id);
+            void logMovement(org.id, { product_id: it.product_id, product_name: it.name, sku: prod?.sku, type: "Returned", qty: it.qty });
+          }
+        }
+      }
+    },
+    [org, orders, products],
+  );
 
   const setTracking = useCallback(async (id: string, patch: { tracking_number?: string | null; carrier?: string | null }) => {
     const { error } = await updateOrderTracking(id, patch);
@@ -781,7 +808,9 @@ function CreateView() {
     setBusy(true);
     const items: OrderItem[] = Object.entries(cart).map(([id, q]) => {
       const p = catalog.find((x) => x.id === id)!;
-      return { name: p.name, qty: q, price: p.price };
+      // Only a real catalog item (not the empty-state demo fallback) has a
+      // product_id that actually matches a row in products.
+      return { name: p.name, qty: q, price: p.price, product_id: dbProducts.length ? p.id : null };
     });
     const matched = customers.find((c) => c.name.toLowerCase() === customer.trim().toLowerCase());
     await addOrder({

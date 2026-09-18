@@ -1,6 +1,6 @@
 import { supabase } from "./supabase";
 
-export type OrderItem = { name: string; qty: number; price: number };
+export type OrderItem = { name: string; qty: number; price: number; product_id?: string | null };
 export type OrderStatus = "New" | "Paid" | "Processing" | "Packed" | "Shipped" | "Delivered" | "Cancelled";
 
 export type DbOrder = {

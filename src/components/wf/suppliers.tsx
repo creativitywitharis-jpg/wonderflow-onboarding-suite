@@ -1027,9 +1027,10 @@ function OrdersView() {
                     {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                   <input type="number" min={1} value={pickQty} onChange={(e) => setPickQty(e.target.value)} className={cn(SUP_INPUT, "w-20")} />
-                  <button onClick={addLine} disabled={!pickProduct} className="shrink-0 rounded-lg border border-border px-3 text-xs text-foreground/80 transition-colors hover:border-gold/40 disabled:opacity-40"><Plus className="size-3.5" /></button>
+                  <button onClick={addLine} disabled={!pickProduct} className="flex shrink-0 items-center gap-1 rounded-lg border border-gold/30 px-3 text-xs font-medium text-foreground/85 transition-colors hover:border-gold/60 disabled:opacity-40"><Plus className="size-3.5" /> Add line</button>
                 </div>
                 {products.length === 0 && <p className="mt-1.5 text-xs text-muted-foreground">Add products in Inventory first to build a line-item PO.</p>}
+                {products.length > 0 && lines.length === 0 && <p className="mt-1.5 text-xs text-muted-foreground">Pick a product and quantity, then click "Add line" — a PO needs at least one line item before it can be created.</p>}
               </div>
 
               {error && <p className="text-xs text-rose-300">{error}</p>}

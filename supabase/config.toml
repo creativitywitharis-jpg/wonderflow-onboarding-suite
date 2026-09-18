@@ -47,3 +47,6 @@ verify_jwt = true
 
 [functions.notify-feedback]
 verify_jwt = true
+
+[functions.email-customer]
+verify_jwt = true

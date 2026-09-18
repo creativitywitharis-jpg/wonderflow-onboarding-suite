@@ -40,7 +40,8 @@ import { Avatar, Bar, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@
 import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
-import { createCustomer, insertCustomers, listCustomers, updateCustomer, type DbCustomer, type NewCustomer } from "@/lib/customers";
+import { createCustomer, insertCustomers, listCustomers, sendCustomerMessage, updateCustomer, type DbCustomer, type NewCustomer } from "@/lib/customers";
+import { askAI } from "@/lib/ai";
 import { addInteraction, listCustomerInteractions, listInteractions, type DbInteraction, type InteractionChannel } from "@/lib/interactions";
 import { CsvImport } from "@/components/wf/CsvImport";
 import type { FieldSpec } from "@/lib/csv";
@@ -692,12 +693,19 @@ function ProfilesView({
   selectedId: string;
   onSelect: (id: string) => void;
 }) {
+  const { org } = useOrg();
   const { customers, editCustomer } = useCustomersData();
   const c = customers.find((x) => x.id === selectedId) ?? customers[0];
   const [timeline, setTimeline] = useState<{ icon: LucideIcon; t: string; d: string }[]>([]);
   const [editing, setEditing] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [ef, setEf] = useState({ name: "", company: "", email: "", tier: "New", ltv: 0, orders: 0, health: 0, since: "" });
+  const [composing, setComposing] = useState(false);
+  const [composeSubject, setComposeSubject] = useState("");
+  const [composeBody, setComposeBody] = useState("");
+  const [composeGenBusy, setComposeGenBusy] = useState(false);
+  const [sendBusy, setSendBusy] = useState(false);
+  const [sendMsg, setSendMsg] = useState<string | null>(null);
 
   const openEdit = () => {
     if (!c) return;
@@ -742,6 +750,39 @@ function ProfilesView({
       alive = false;
     };
   }, [c?.id]);
+
+  const startCompose = () => {
+    setComposing((v) => !v);
+    setSendMsg(null);
+  };
+  const generateDraft = async () => {
+    if (!c || composeGenBusy) return;
+    setComposeGenBusy(true);
+    try {
+      const reply = await askAI(
+        [{ role: "user", content: `Write a short, warm email to a customer named ${c.name}${c.company ? ` from ${c.company}` : ""}. Subject: ${composeSubject || "(write a fitting subject too, on its own first line prefixed with 'Subject:')"}. Reply with just the email body (no greeting boilerplate like 'I hope this finds you well'), 2-3 short paragraphs max.` }],
+        { id: org?.id, name: org?.name, industry: org?.industry },
+      );
+      setComposeBody(reply.replace(/^subject:.*\n+/i, "").trim());
+    } catch {
+      // best-effort — leave whatever the sender already typed
+    }
+    setComposeGenBusy(false);
+  };
+  const send = async () => {
+    if (!c || !composeSubject.trim() || !composeBody.trim() || sendBusy) return;
+    setSendBusy(true);
+    setSendMsg(null);
+    const { sent, error } = await sendCustomerMessage(c.id, composeSubject.trim(), composeBody.trim());
+    setSendBusy(false);
+    if (!sent) { setSendMsg(error ?? "Couldn't send that."); return; }
+    setSendMsg("✓ Sent.");
+    setComposeSubject("");
+    setComposeBody("");
+    setComposing(false);
+    const rows = await listCustomerInteractions(c.id).catch(() => []);
+    setTimeline(rows.map((r) => ({ icon: channelIconFor(r.channel), t: r.body, d: timeAgo(r.created_at) })));
+  };
 
   if (!c) {
     return (
@@ -810,7 +851,10 @@ function ProfilesView({
             </div>
             <div className="mt-5 flex w-full gap-2">
               <button
-                className="flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]"
+                onClick={startCompose}
+                disabled={!c.email}
+                title={c.email ? undefined : "No email on file for this customer"}
+                className="flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
                 style={{ background: "var(--gradient-gold)" }}
               >
                 <Mail className="size-3.5" /> Message
@@ -819,6 +863,24 @@ function ProfilesView({
                 <Sparkles className="size-3.5 text-gold" /> Ask AI
               </button>
             </div>
+
+            {composing && (
+              <div className="mt-3 w-full space-y-2 border-t border-border pt-3.5 text-left">
+                <input value={composeSubject} onChange={(e) => setComposeSubject(e.target.value)} placeholder="Subject" className={cn(CRM_INPUT, "w-full")} />
+                <textarea value={composeBody} onChange={(e) => setComposeBody(e.target.value)} rows={4} placeholder={`Write a note to ${c.name}…`} className={cn(CRM_INPUT, "w-full resize-none")} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button onClick={generateDraft} disabled={composeGenBusy} className="flex items-center gap-1.5 rounded-full border border-gold/30 bg-glass px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-gold/60 disabled:opacity-60">
+                    <Sparkles className="size-3.5 text-gold" /> {composeGenBusy ? "Drafting…" : "Draft with AI"}
+                  </button>
+                  <button onClick={send} disabled={sendBusy || !composeSubject.trim() || !composeBody.trim()} className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>
+                    <Send className="size-3.5" /> {sendBusy ? "Sending…" : "Send"}
+                  </button>
+                  <button onClick={() => setComposing(false)} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                </div>
+              </div>
+            )}
+            {sendMsg && <p className={cn("mt-2 w-full text-left text-xs", sendMsg.startsWith("✓") ? "text-emerald-400" : "text-rose-300")}>{sendMsg}</p>}
+
             <button
               onClick={editing ? () => setEditing(false) : openEdit}
               className="mt-2 flex w-full items-center justify-center gap-2 rounded-full border border-border bg-glass px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground"

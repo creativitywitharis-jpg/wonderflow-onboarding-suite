@@ -64,3 +64,22 @@ export async function updateCustomer(id: string, patch: Partial<NewCustomer>) {
     .single();
   return { data: data as DbCustomer | null, error: error ? new Error(error.message) : null };
 }
+
+/**
+ * Send a one-off direct email to a customer right now, with a subject/body
+ * the sender writes themselves -- the CRM profile's "Message" button.
+ * Distinct from the AI-only "email_customer" automation action. Logs a real
+ * interaction on success so it shows up in that customer's activity feed.
+ */
+export async function sendCustomerMessage(customerId: string, subject: string, message: string): Promise<{ sent: boolean; error: string | null }> {
+  try {
+    const { data, error } = await supabase.functions.invoke("email-customer", {
+      body: { customerId, subject, message },
+    });
+    if (error) return { sent: false, error: error.message };
+    if (data?.error) return { sent: false, error: data.error as string };
+    return { sent: !!data?.sent, error: null };
+  } catch (e) {
+    return { sent: false, error: e instanceof Error ? e.message : "Could not send the email." };
+  }
+}

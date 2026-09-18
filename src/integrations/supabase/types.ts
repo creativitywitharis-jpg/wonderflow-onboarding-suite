@@ -1591,6 +1591,32 @@ export type Database = {
           },
         ]
       }
+      stripe_credentials: {
+        Row: {
+          org_id: string
+          secret_key: string
+          updated_at: string
+        }
+        Insert: {
+          org_id: string
+          secret_key: string
+          updated_at?: string
+        }
+        Update: {
+          org_id?: string
+          secret_key?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stripe_credentials_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subscriptions: {
         Row: {
           created_at: string

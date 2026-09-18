@@ -59,6 +59,51 @@ export type Database = {
           },
         ]
       }
+      advisor_messages: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          id: string
+          org_id: string
+          role: string
+          text: string
+          user_id: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          id?: string
+          org_id: string
+          role: string
+          text: string
+          user_id: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          org_id?: string
+          role?: string
+          text?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "advisor_messages_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "advisor_messages_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_memory: {
         Row: {
           category: string
@@ -126,6 +171,54 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      analytics_saved_views: {
+        Row: {
+          chart: string
+          created_at: string
+          dim: string
+          id: string
+          metric: string
+          name: string
+          org_id: string
+          user_id: string | null
+        }
+        Insert: {
+          chart: string
+          created_at?: string
+          dim: string
+          id?: string
+          metric: string
+          name: string
+          org_id: string
+          user_id?: string | null
+        }
+        Update: {
+          chart?: string
+          created_at?: string
+          dim?: string
+          id?: string
+          metric?: string
+          name?: string
+          org_id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analytics_saved_views_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "analytics_saved_views_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

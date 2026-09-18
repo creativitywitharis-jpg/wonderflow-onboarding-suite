@@ -45,6 +45,7 @@ import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inb
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
 import { PLANS, getAiUsage, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
 import { cancelInvitation, deleteMember, inviteMember, listInvitations, listMembers, setMemberStatus, updateMember, type Invitation, type Member } from "@/lib/team";
+import { listEmployees, type DbEmployee } from "@/lib/employees";
 import { listAuditLog, logAudit, type AuditEntry } from "@/lib/audit";
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -431,11 +432,13 @@ function UsersView() {
 
   const [members, setMembers] = useState<Member[]>([]);
   const [invites, setInvites] = useState<Invitation[]>([]);
+  const [employees, setEmployees] = useState<DbEmployee[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
   const [inviteTitle, setInviteTitle] = useState("");
+  const [showPicker, setShowPicker] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -450,9 +453,10 @@ function UsersView() {
     if (!org) return;
     setLoading(true);
     try {
-      const [m, i] = await Promise.all([listMembers(org.id), listInvitations(org.id)]);
+      const [m, i, e] = await Promise.all([listMembers(org.id), listInvitations(org.id), listEmployees(org.id)]);
       setMembers(m);
       setInvites(i);
+      setEmployees(e);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load the team.");
     }
@@ -468,6 +472,24 @@ function UsersView() {
   const atCapacity = usedSeats >= seats;
 
   const filtered = members.filter((m) => m.name.toLowerCase().includes(q.toLowerCase()) || m.email.toLowerCase().includes(q.toLowerCase()));
+
+  // People directory entries that already have an email on file and aren't
+  // already a member/invited — so picking a name here only ever offers
+  // someone who's actually invitable, no manual retyping of what's already
+  // sitting in the employees table.
+  const takenEmails = new Set([...members.map((m) => m.email.toLowerCase()), ...invites.map((i) => i.email.toLowerCase())]);
+  const empSuggestions = inviteEmail.trim()
+    ? employees
+        .filter((e) => e.email && !takenEmails.has(e.email.toLowerCase()))
+        .filter((e) => (e.name + " " + (e.role ?? "") + " " + e.email).toLowerCase().includes(inviteEmail.trim().toLowerCase()))
+        .slice(0, 6)
+    : [];
+
+  function pickEmployee(e: DbEmployee) {
+    setInviteEmail(e.email ?? "");
+    if (e.role) setInviteTitle(e.role);
+    setShowPicker(false);
+  }
 
   async function submitInvite() {
     if (!org || !inviteEmail.trim() || busy) return;
@@ -583,7 +605,35 @@ function UsersView() {
             <div className="mt-4 grid gap-3 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-[1fr_1fr_auto_auto]">
               <div className="relative">
                 <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} type="email" placeholder="teammate@company.com" className={cn(inputCls, "pl-9")} />
+                <input
+                  value={inviteEmail}
+                  onChange={(e) => { setInviteEmail(e.target.value); setShowPicker(true); }}
+                  onFocus={() => setShowPicker(true)}
+                  onBlur={() => setTimeout(() => setShowPicker(false), 150)}
+                  type="email"
+                  placeholder="Search your People directory, or type an email"
+                  className={cn(inputCls, "pl-9")}
+                  autoComplete="off"
+                />
+                {showPicker && empSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full z-10 mt-1.5 overflow-hidden rounded-2xl border border-border bg-background/95 shadow-lg backdrop-blur-xl">
+                    {empSuggestions.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => { ev.preventDefault(); pickEmployee(e); }}
+                        className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-glass"
+                      >
+                        <Avatar name={e.name} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm text-foreground">{e.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">{[e.role, e.department].filter(Boolean).join(" · ") || e.email}</p>
+                        </div>
+                        {(e.role || e.department) && <span className="shrink-0 truncate text-xs text-muted-foreground">{e.email}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <input value={inviteTitle} onChange={(e) => setInviteTitle(e.target.value)} placeholder="Job title (optional) — e.g. Sales Lead" className={inputCls} />
               <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} className={inputCls}>
@@ -592,7 +642,7 @@ function UsersView() {
               <button onClick={submitInvite} disabled={!inviteEmail.trim() || busy || atCapacity} className="flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>
                 <UserPlus className="size-4" /> {busy ? "Inviting…" : "Invite"}
               </button>
-              <p className="text-[0.65rem] text-muted-foreground sm:col-span-4">Job title is just a display label — the role dropdown is what actually controls permissions.</p>
+              <p className="text-[0.65rem] text-muted-foreground sm:col-span-4">Start typing a name to pull them from your People directory, or type a new email directly. Job title is just a display label — the role dropdown is what actually controls permissions.</p>
             </div>
           )}
           {!canManage && (

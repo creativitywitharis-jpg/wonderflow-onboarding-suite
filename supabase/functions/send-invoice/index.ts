@@ -48,7 +48,10 @@ function invoiceHtml(o: {
       </tr>`,
     )
     .join("");
-  const contactLine = [o.orgAddress, o.orgPhone, o.orgWebsite].filter(Boolean).map(esc).join(" &nbsp;·&nbsp; ");
+  const contactLine = [o.orgAddress, o.orgPhone, o.orgWebsite]
+    .filter((v): v is string => !!v)
+    .map(esc)
+    .join(" &nbsp;·&nbsp; ");
   return `<!doctype html><html><body style="margin:0;background:#f2efe8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#33394a">
   <div style="max-width:620px;margin:0 auto;padding:40px 20px">
     <div style="border-radius:20px;border:1px solid #ece7dc;background:#fdfbf7;padding:36px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">

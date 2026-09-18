@@ -404,6 +404,25 @@ function CampaignsView() {
   const [channel, setChannel] = useState<Channel>("Email");
   const [audience, setAudience] = useState("Champions");
   const [name, setName] = useState("");
+  const [subject, setSubject] = useState<string | null>(null);
+  const [subjBusy, setSubjBusy] = useState(false);
+
+  // Any stale suggestion no longer matches once the inputs it was based on change.
+  useEffect(() => setSubject(null), [channel, audience, name]);
+
+  const suggestSubject = async () => {
+    if (subjBusy) return;
+    setSubjBusy(true);
+    try {
+      const prompt = `Write one short, compelling subject line for a ${channel} marketing campaign targeting the "${audience}" customer segment${name.trim() ? ` called "${name.trim()}"` : ""}. Return ONLY the subject line text — no quotes, no explanation.`;
+      const reply = await askAI([{ role: "user", content: prompt }], { id: org?.id, name: org?.name, industry: org?.industry });
+      setSubject((reply || "").trim().replace(/^["']|["']$/g, "") || null);
+    } catch {
+      setSubject(null);
+    } finally {
+      setSubjBusy(false);
+    }
+  };
 
   const load = useCallback(async () => {
     if (!org) {
@@ -488,7 +507,11 @@ function CampaignsView() {
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Summer Glow Launch" className="w-full rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
           </label>
           <div className="mt-3 rounded-xl border border-gold/25 bg-glass p-3 text-xs text-foreground/80">
-            <span className="text-gold">AI subject:</span> “Something glowing is coming for {audience.toLowerCase()} ✨”
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-gold">AI subject line</span>
+              <button type="button" onClick={suggestSubject} disabled={subjBusy} className="text-gold hover:underline disabled:opacity-50">{subjBusy ? "Thinking…" : subject ? "Regenerate" : "Suggest"}</button>
+            </div>
+            <p className="mt-1">{subjBusy ? "Generating…" : subject ? `“${subject}”` : "Click “Suggest” for a real AI subject line for this campaign."}</p>
           </div>
           <button onClick={launch} disabled={busy} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
             <Rocket className="size-4" /> {busy ? "Launching…" : "Launch campaign"}
@@ -510,12 +533,14 @@ function ContentView() {
   const [output, setOutput] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const generate = async () => {
     if (busy) return;
     setBusy(true);
     setOutput(null);
     setError(null);
+    setCopied(false);
     const forBiz = org?.name ? ` for ${org.name}` : "";
     const shape =
       type === "Email"
@@ -570,7 +595,13 @@ function ContentView() {
           </div>
           {output && !busy && (
             <div className="mt-4 flex gap-2">
-              <button className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110" style={{ background: "var(--gradient-gold)" }}><CheckCircle2 className="size-3.5" /> Use draft</button>
+              <button
+                onClick={async () => { try { await navigator.clipboard.writeText(output); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable */ } }}
+                className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110"
+                style={{ background: "var(--gradient-gold)" }}
+              >
+                <CheckCircle2 className="size-3.5" /> {copied ? "Copied to clipboard ✓" : "Use draft"}
+              </button>
               <button onClick={generate} className="rounded-full border border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground">Regenerate</button>
             </div>
           )}

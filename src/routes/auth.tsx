@@ -35,7 +35,20 @@ const perks = [
 ];
 
 function AuthScreen() {
-  const [mode, setMode] = useState<"signup" | "signin">("signup");
+  // Every real path into this page (sign-out redirects, the session-expired
+  // guard in __root.tsx, "Sign in" links on the landing page, the
+  // reset-password back-link) is a RETURNING user -- there's no actual
+  // "create account" entry point anywhere in the app (the landing page's
+  // signup path is the waitlist form, not this page). Defaulting to signup
+  // meant nearly everyone landed on the wrong tab and, combined with
+  // Supabase's silent no-error response for an already-registered email,
+  // saw a misleading "check your email to confirm" message instead of ever
+  // actually signing in. The one real exception: arriving via a fresh team
+  // invite link (?invite=...) usually means a brand-new teammate who has no
+  // account yet, so that specific case still defaults to Create account.
+  const [mode, setMode] = useState<"signup" | "signin">(() =>
+    new URLSearchParams(window.location.search).get("invite") ? "signup" : "signin",
+  );
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -90,6 +103,13 @@ function AuthScreen() {
         if (error) throw error;
         if (data.session) {
           await finishAuth("/onboarding");
+        } else if (data.user && data.user.identities?.length === 0) {
+          // Supabase returns a session-less, error-less response here on
+          // purpose (avoids leaking which emails are registered) -- an empty
+          // identities array is the documented signal that this email
+          // already has an account, not that a confirmation email went out.
+          setMode("signin");
+          setError("An account with this email already exists — sign in instead, or use \"Forgot password?\" if you don't remember it.");
         } else {
           setConfirmEmail(email);
           setNotice(`We sent a confirmation link to ${email}. Open it, then sign in.`);

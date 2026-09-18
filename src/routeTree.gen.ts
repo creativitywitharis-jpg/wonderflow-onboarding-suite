@@ -26,6 +26,7 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ScoreRouteImport } from './routes/score'
 import { Route as SuppliersRouteImport } from './routes/suppliers'
 import { Route as TeamRouteImport } from './routes/team'
+import { Route as UnsubscribeRouteImport } from './routes/unsubscribe'
 import { Route as LovableEmailAuthPreviewRouteImport } from './routes/lovable/email/auth/preview'
 import { Route as LovableEmailAuthWebhookRouteImport } from './routes/lovable/email/auth/webhook'
 
@@ -114,6 +115,11 @@ const TeamRoute = TeamRouteImport.update({
   path: '/team',
   getParentRoute: () => rootRouteImport,
 } as any)
+const UnsubscribeRoute = UnsubscribeRouteImport.update({
+  id: '/unsubscribe',
+  path: '/unsubscribe',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LovableEmailAuthPreviewRoute = LovableEmailAuthPreviewRouteImport.update({
   id: '/lovable/email/auth/preview',
   path: '/lovable/email/auth/preview',
@@ -143,6 +149,7 @@ export interface FileRoutesByFullPath {
   '/score': typeof ScoreRoute
   '/suppliers': typeof SuppliersRoute
   '/team': typeof TeamRoute
+  '/unsubscribe': typeof UnsubscribeRoute
   '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
   '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
 }
@@ -164,6 +171,7 @@ export interface FileRoutesByTo {
   '/score': typeof ScoreRoute
   '/suppliers': typeof SuppliersRoute
   '/team': typeof TeamRoute
+  '/unsubscribe': typeof UnsubscribeRoute
   '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
   '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
 }
@@ -186,6 +194,7 @@ export interface FileRoutesById {
   '/score': typeof ScoreRoute
   '/suppliers': typeof SuppliersRoute
   '/team': typeof TeamRoute
+  '/unsubscribe': typeof UnsubscribeRoute
   '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
   '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
 }
@@ -209,6 +218,7 @@ export interface FileRouteTypes {
     | '/score'
     | '/suppliers'
     | '/team'
+    | '/unsubscribe'
     | '/lovable/email/auth/preview'
     | '/lovable/email/auth/webhook'
   fileRoutesByTo: FileRoutesByTo
@@ -230,6 +240,7 @@ export interface FileRouteTypes {
     | '/score'
     | '/suppliers'
     | '/team'
+    | '/unsubscribe'
     | '/lovable/email/auth/preview'
     | '/lovable/email/auth/webhook'
   id:
@@ -251,6 +262,7 @@ export interface FileRouteTypes {
     | '/score'
     | '/suppliers'
     | '/team'
+    | '/unsubscribe'
     | '/lovable/email/auth/preview'
     | '/lovable/email/auth/webhook'
   fileRoutesById: FileRoutesById
@@ -273,6 +285,7 @@ export interface RootRouteChildren {
   ScoreRoute: typeof ScoreRoute
   SuppliersRoute: typeof SuppliersRoute
   TeamRoute: typeof TeamRoute
+  UnsubscribeRoute: typeof UnsubscribeRoute
   LovableEmailAuthPreviewRoute: typeof LovableEmailAuthPreviewRoute
   LovableEmailAuthWebhookRoute: typeof LovableEmailAuthWebhookRoute
 }
@@ -398,6 +411,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TeamRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/unsubscribe': {
+      id: '/unsubscribe'
+      path: '/unsubscribe'
+      fullPath: '/unsubscribe'
+      preLoaderRoute: typeof UnsubscribeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/lovable/email/auth/preview': {
       id: '/lovable/email/auth/preview'
       path: '/lovable/email/auth/preview'
@@ -433,6 +453,7 @@ const rootRouteChildren: RootRouteChildren = {
   ScoreRoute: ScoreRoute,
   SuppliersRoute: SuppliersRoute,
   TeamRoute: TeamRoute,
+  UnsubscribeRoute: UnsubscribeRoute,
   LovableEmailAuthPreviewRoute: LovableEmailAuthPreviewRoute,
   LovableEmailAuthWebhookRoute: LovableEmailAuthWebhookRoute,
 }

@@ -175,6 +175,54 @@ export type Database = {
           },
         ]
       }
+      analytics_saved_views: {
+        Row: {
+          chart: string
+          created_at: string
+          dim: string
+          id: string
+          metric: string
+          name: string
+          org_id: string
+          user_id: string | null
+        }
+        Insert: {
+          chart: string
+          created_at?: string
+          dim: string
+          id?: string
+          metric: string
+          name: string
+          org_id: string
+          user_id?: string | null
+        }
+        Update: {
+          chart?: string
+          created_at?: string
+          dim?: string
+          id?: string
+          metric?: string
+          name?: string
+          org_id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analytics_saved_views_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "analytics_saved_views_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       automation_executions: {
         Row: {
           automation_id: string | null

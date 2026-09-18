@@ -35,12 +35,15 @@ import {
 import { cn } from "@/lib/utils";
 import { GlassCard } from "@/components/wf/ui";
 import { Brand } from "@/components/wf/Brand";
-import { Avatar, Bar, Delta, Donut, Reveal, Ring, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
+import { Avatar, Bar, Delta, Reveal, Ring, SectionLabel, StatTile, formatNum } from "@/components/wf/primitives";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
 import { generateImage } from "@/lib/image-gen";
 import { createCampaign, listCampaigns, sendCampaign, updateCampaign, type CampaignStatus, type DbCampaign } from "@/lib/campaigns";
+import { listCustomers, type DbCustomer } from "@/lib/customers";
+import { listInvoices, type DbInvoice } from "@/lib/finance";
+import { DEFAULT_SETTINGS, getLoyaltySettings, gradeColor, gradeFor, listRewardCodes, pointsFor, type LoyaltySettings } from "@/lib/loyalty";
 import { DatePicker } from "@/components/wf/DatePicker";
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -114,46 +117,6 @@ type Campaign = {
   subject: string | null;
   body: string | null;
 };
-
-const channelMix = [
-  { label: "Email", share: 34, color: GOLD },
-  { label: "Social", share: 24, color: "oklch(0.7 0.11 60)" },
-  { label: "Ads", share: 18, color: "oklch(0.66 0.09 200)" },
-  { label: "Referral", share: 14, color: "oklch(0.75 0.13 150)" },
-  { label: "SMS", share: 10, color: "oklch(0.62 0.12 300)" },
-];
-
-const mrrSeries = [52, 55, 54, 58, 61, 60, 64, 68, 66, 72, 78, 84];
-const revenueBreakdown = [
-  { label: "New", value: 28, tone: "up" },
-  { label: "Expansion", value: 19, tone: "up" },
-  { label: "Contraction", value: -6, tone: "down" },
-  { label: "Churn", value: -9, tone: "down" },
-];
-const cohorts = [
-  { month: "Mar", retention: [100, 88, 79, 72, 68] },
-  { month: "Apr", retention: [100, 90, 82, 76, 0] },
-  { month: "May", retention: [100, 91, 84, 0, 0] },
-  { month: "Jun", retention: [100, 93, 0, 0, 0] },
-];
-
-const loyaltyTiers = [
-  { tier: "Platinum", members: 128, min: "10,000 pts", color: "oklch(0.9 0.05 250)" },
-  { tier: "Gold", members: 486, min: "5,000 pts", color: GOLD },
-  { tier: "Silver", members: 742, min: "2,000 pts", color: "oklch(0.8 0.02 250)" },
-  { tier: "Bronze", members: 1103, min: "0 pts", color: "oklch(0.62 0.08 55)" },
-];
-const rewards = [
-  { label: "$50 account credit", pts: "5,000 pts", icon: Gift },
-  { label: "Refer a friend → 2,000 pts", pts: "Earn", icon: Share2 },
-  { label: "Early feature access", pts: "12,000 pts", icon: Star },
-];
-
-const topCampaigns = [
-  { name: "Champions VIP Early Access", roi: 8.4, rev: 41200 },
-  { name: "Summer Glow Launch", roi: 5.2, rev: 62800 },
-  { name: "Cart Abandon Retarget", roi: 4.1, rev: 18400 },
-];
 
 /* ──────────────────────────────────────────────────────────────────────
  * Charts
@@ -812,25 +775,55 @@ function ContentView() {
   );
 }
 
+// A real view into the same loyalty engine CRM -> Loyalty manages (real
+// points from real customer spend, real reward codes) -- this used to be an
+// entirely separate hardcoded tab with fake tier counts and made-up names.
 function LoyaltyView() {
-  const topMembers = [
-    { name: "Noah Reed", pts: 24850, tier: "Platinum" },
-    { name: "Ava Chen", pts: 19420, tier: "Platinum" },
-    { name: "Leo Park", pts: 11200, tier: "Platinum" },
-    { name: "Ivy Zhou", pts: 8640, tier: "Gold" },
-  ];
+  const { org } = useOrg();
+  const [customers, setCustomers] = useState<DbCustomer[]>([]);
+  const [settings, setSettings] = useState<LoyaltySettings>(DEFAULT_SETTINGS);
+  const [codeCount, setCodeCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!org) { setLoading(false); return; }
+    setLoading(true);
+    Promise.all([listCustomers(org.id), getLoyaltySettings(org.id), listRewardCodes(org.id)])
+      .then(([cs, s, codes]) => { setCustomers(cs); setSettings(s); setCodeCount(codes.length); })
+      .finally(() => setLoading(false));
+  }, [org?.id]);
+
+  const withPoints = customers.map((c) => {
+    const pts = pointsFor(Number(c.ltv) || 0, settings);
+    return { name: c.name, pts, grade: gradeFor(pts, settings) };
+  });
+  const ladder = [...settings.grades].sort((a, b) => a.threshold - b.threshold);
+  const countByGrade: Record<string, number> = {};
+  for (const c of withPoints) if (c.grade) countByGrade[c.grade.grade] = (countByGrade[c.grade.grade] ?? 0) + 1;
+  const topMembers = [...withPoints].filter((c) => c.pts > 0).sort((a, b) => b.pts - a.pts).slice(0, 6);
+
+  if (!loading && !settings.enabled) {
+    return (
+      <Reveal>
+        <GlassCard className="p-10 text-center">
+          <p className="text-sm text-muted-foreground">Your loyalty program is currently turned off — enable it in CRM → Loyalty to start earning members points from real spend.</p>
+        </GlassCard>
+      </Reveal>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {loyaltyTiers.map((t, i) => (
-          <Reveal key={t.tier} delay={i * 60} className="h-full">
+        {ladder.map((t, i) => (
+          <Reveal key={t.grade} delay={i * 60} className="h-full">
             <GlassCard className="lift h-full p-5 hover:border-gold/40">
               <div className="flex items-center justify-between">
-                <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass"><Crown className="size-4" style={{ color: t.color }} /></span>
-                <span className="text-xs text-muted-foreground">{t.min}</span>
+                <span className="grid size-9 place-items-center rounded-xl border border-border bg-glass"><Crown className="size-4" style={{ color: gradeColor(i) }} /></span>
+                <span className="text-xs text-muted-foreground">{formatNum(t.threshold)} pts</span>
               </div>
-              <p className="mt-4 text-sm font-semibold" style={{ color: t.color }}>{t.tier}</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">{formatNum(t.members)}</p>
+              <p className="mt-4 text-sm font-semibold" style={{ color: gradeColor(i) }}>{t.grade}</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">{loading ? "—" : formatNum(countByGrade[t.grade] ?? 0)}</p>
               <p className="text-xs text-muted-foreground">members</p>
             </GlassCard>
           </Reveal>
@@ -841,11 +834,13 @@ function LoyaltyView() {
           <GlassCard className="h-full p-6">
             <SectionLabel icon={Award}>Top members</SectionLabel>
             <div className="mt-4 space-y-1">
+              {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>}
+              {!loading && topMembers.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No customers have earned points yet.</p>}
               {topMembers.map((m, i) => (
-                <div key={m.name} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
+                <div key={m.name + i} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
                   <span className="w-5 text-center text-sm font-semibold text-muted-foreground">{i + 1}</span>
                   <Avatar name={m.name} />
-                  <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-foreground">{m.name}</p><p className="text-xs text-muted-foreground">{m.tier}</p></div>
+                  <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-foreground">{m.name}</p><p className="text-xs text-muted-foreground">{m.grade?.grade ?? "Unranked"}</p></div>
                   <span className="text-sm font-semibold tabular-nums text-gold">{formatNum(m.pts)} pts</span>
                 </div>
               ))}
@@ -854,16 +849,24 @@ function LoyaltyView() {
         </Reveal>
         <Reveal className="h-full" delay={80}>
           <GlassCard className="h-full p-6">
-            <SectionLabel icon={Gift}>Rewards & referrals</SectionLabel>
+            <SectionLabel icon={Gift}>Reward ladder</SectionLabel>
             <div className="mt-4 space-y-3">
-              {rewards.map((r) => (
-                <div key={r.label} className="lift flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-4 hover:border-gold/40">
-                  <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-glass"><r.icon className="size-4 text-gold" /></span>
-                  <span className="flex-1 text-sm text-foreground/85">{r.label}</span>
-                  <span className="shrink-0 text-xs font-medium text-gold">{r.pts}</span>
+              {ladder.map((t, i) => (
+                <div key={t.grade} className="lift flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-4 hover:border-gold/40">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-glass"><Gift className="size-4" style={{ color: gradeColor(i) }} /></span>
+                  <span className="flex-1 text-sm text-foreground/85">{t.grade} — ${formatNum(t.value)} reward code</span>
+                  <span className="shrink-0 text-xs font-medium text-gold">{formatNum(t.threshold)} pts</span>
                 </div>
               ))}
+              {settings.repeat.enabled && (
+                <div className="lift flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-4 hover:border-gold/40">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-glass"><Star className="size-4 text-gold" /></span>
+                  <span className="flex-1 text-sm text-foreground/85">Elite — ${formatNum(settings.repeat.value)} every +{formatNum(settings.repeat.step)} pts</span>
+                  <span className="shrink-0 text-xs font-medium text-gold">from {formatNum(settings.repeat.start)} pts</span>
+                </div>
+              )}
             </div>
+            <p className="mt-4 text-xs text-muted-foreground">{formatNum(codeCount)} reward code{codeCount === 1 ? "" : "s"} issued to date.</p>
           </GlassCard>
         </Reveal>
       </div>
@@ -871,98 +874,111 @@ function LoyaltyView() {
   );
 }
 
+function sameMonth(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
+
+// Real revenue from real paid invoices — the exact same "paid" total Finance
+// itself uses, just viewed from Growth. Previously a fully fabricated MRR/
+// ARR/NRR dashboard with numbers that never moved and a subscription-style
+// framing that doesn't fit every business here.
 function RevenueView() {
+  const { org } = useOrg();
+  const [invoices, setInvoices] = useState<DbInvoice[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!org) { setLoading(false); return; }
+    setLoading(true);
+    listInvoices(org.id).then(setInvoices).finally(() => setLoading(false));
+  }, [org?.id]);
+
+  const paid = invoices.filter((i) => i.status === "paid");
+  const totalRevenue = paid.reduce((a, i) => a + Number(i.total), 0);
+  const now = new Date();
+  const revenueInMonth = (d: Date) => paid.filter((i) => i.paid_at && sameMonth(new Date(i.paid_at), d)).reduce((a, i) => a + Number(i.total), 0);
+  const thisMonthRev = revenueInMonth(now);
+  const lastMonthRev = revenueInMonth(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  const momDelta = lastMonthRev > 0 ? Math.round(((thisMonthRev - lastMonthRev) / lastMonthRev) * 100) : null;
+  const avgInvoice = paid.length ? totalRevenue / paid.length : 0;
+  const outstanding = invoices.filter((i) => i.status === "sent").reduce((a, i) => a + Number(i.total), 0);
+
+  const months = Array.from({ length: 6 }, (_, k) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - k), 1);
+    return { label: d.toLocaleDateString(undefined, { month: "short" }), value: revenueInMonth(d) };
+  });
+
+  const byCustomer = new Map<string, number>();
+  for (const i of paid) {
+    const key = i.customer_name ?? "Unknown";
+    byCustomer.set(key, (byCustomer.get(key) ?? 0) + Number(i.total));
+  }
+  const topCustomers = [...byCustomer.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="MRR" value={84200} prefix="$" delta="8.1%" icon={DollarSign} />
-        <StatTile label="ARR" value={1010400} prefix="$" delta="8.1%" icon={TrendingUp} />
-        <StatTile label="Net revenue retention" value={112} suffix="%" delta="3 pts" icon={Layers} />
-        <StatTile label="Avg revenue / user" value={124} prefix="$" delta="4%" icon={Users} />
+        <StatTile label="Revenue collected" value={totalRevenue} prefix="$" icon={DollarSign} />
+        <StatTile label="This month" value={thisMonthRev} prefix="$" delta={momDelta !== null ? `${momDelta > 0 ? "+" : ""}${momDelta}%` : undefined} icon={TrendingUp} />
+        <StatTile label="Avg invoice" value={Math.round(avgInvoice)} prefix="$" icon={Layers} />
+        <StatTile label="Outstanding" value={outstanding} prefix="$" positive={false} icon={Users} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
         <Reveal className="h-full">
           <GlassCard className="flex h-full flex-col p-6">
-            <div className="flex items-baseline justify-between"><SectionLabel icon={LineChart}>MRR trend</SectionLabel><span className="text-xs text-muted-foreground">Last 12 months · $K</span></div>
-            <div className="mt-5"><AreaChart data={mrrSeries} /></div>
+            <div className="flex items-baseline justify-between"><SectionLabel icon={LineChart}>Revenue trend</SectionLabel><span className="text-xs text-muted-foreground">Last 6 months</span></div>
+            {loading ? (
+              <p className="mt-5 py-8 text-center text-sm text-muted-foreground">Loading…</p>
+            ) : totalRevenue === 0 ? (
+              <p className="mt-5 py-8 text-center text-sm text-muted-foreground">No paid invoices yet — this fills in once Finance records real payments.</p>
+            ) : (
+              <>
+                <div className="mt-5"><AreaChart data={months.map((m) => m.value)} /></div>
+                <div className="mt-2 flex justify-between text-[0.65rem] text-muted-foreground">{months.map((m) => <span key={m.label}>{m.label}</span>)}</div>
+              </>
+            )}
           </GlassCard>
         </Reveal>
         <Reveal className="h-full" delay={80}>
           <GlassCard className="flex h-full flex-col p-6">
-            <SectionLabel icon={BarChart3}>MRR movement</SectionLabel>
-            <div className="mt-5 space-y-4">
-              {revenueBreakdown.map((r) => (
-                <div key={r.label}>
-                  <div className="flex items-baseline justify-between text-sm"><span className="text-foreground/80">{r.label}</span><span className={cn("tabular-nums", r.tone === "up" ? "text-emerald-300" : "text-rose-300")}>{r.value > 0 ? "+" : ""}{r.value}%</span></div>
-                  <div className="mt-1.5"><Bar value={Math.abs(r.value) * 3} tone={r.tone === "up" ? "gold" : "muted"} /></div>
+            <SectionLabel icon={Users}>Top customers by revenue</SectionLabel>
+            <div className="mt-4 space-y-1">
+              {!loading && topCustomers.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No paid invoices yet.</p>}
+              {topCustomers.map(([name, total], i) => (
+                <div key={name} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
+                  <span className="w-5 text-center text-sm font-semibold text-muted-foreground">{i + 1}</span>
+                  <Avatar name={name} />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{name}</span>
+                  <span className="text-sm font-semibold tabular-nums text-gold">${formatNum(total)}</span>
                 </div>
               ))}
             </div>
           </GlassCard>
         </Reveal>
       </div>
-
-      <Reveal>
-        <GlassCard className="overflow-x-auto p-6">
-          <SectionLabel icon={Users}>Cohort retention</SectionLabel>
-          <div className="mt-4 min-w-[30rem] space-y-1">
-            {cohorts.map((c) => (
-              <div key={c.month} className="flex items-center gap-2">
-                <span className="w-10 text-sm text-muted-foreground">{c.month}</span>
-                {c.retention.map((v, i) => (
-                  <div key={i} className="grid h-9 flex-1 place-items-center rounded-md text-xs tabular-nums" style={{ background: v ? `oklch(0.84 0.14 84 / ${(v / 100) * 0.35 + 0.05})` : "transparent", color: v ? "var(--color-foreground)" : "transparent" }}>
-                    {v ? `${v}%` : ""}
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-      </Reveal>
     </div>
   );
 }
 
+// Visitors, conversion rate, CAC, ROAS, and channel attribution have no real
+// data source anywhere in this app — no web traffic tracking, no ad spend
+// tracking. Rather than show fabricated-looking numbers with nothing behind
+// them, this is an honest explanation of what's missing and why.
 function AnalyticsView() {
   return (
-    <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Visitors (30d)" value={48200} delta="12%" icon={Globe} />
-        <StatTile label="Conversion rate" value={2.7} suffix="%" decimals={1} delta="0.3 pts" icon={Target} />
-        <StatTile label="Avg CAC" value={86} prefix="$" delta="12%" positive icon={DollarSign} />
-        <StatTile label="Blended ROAS" value={5.4} suffix="x" decimals={1} delta="0.5x" icon={TrendingUp} />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
-        <Reveal className="h-full">
-          <GlassCard className="flex h-full flex-col p-6">
-            <SectionLabel icon={Globe}>New customers by channel</SectionLabel>
-            <div className="mt-4 flex items-center gap-6">
-              <Donut data={channelMix} size={150} center={<div><div className="text-lg font-semibold tabular-nums gold-text">142</div><div className="text-[0.55rem] uppercase tracking-[0.2em] text-muted-foreground">new</div></div>} />
-              <ul className="min-w-0 flex-1 space-y-2">
-                {channelMix.map((c) => (<li key={c.label} className="flex items-center gap-2 text-sm"><span className="size-2.5 shrink-0 rounded-full" style={{ background: c.color }} /><span className="flex-1 truncate text-foreground/85">{c.label}</span><span className="tabular-nums text-muted-foreground">{c.share}%</span></li>))}
-              </ul>
-            </div>
-          </GlassCard>
-        </Reveal>
-
-        <Reveal className="h-full" delay={80}>
-          <GlassCard className="flex h-full flex-col p-6">
-            <SectionLabel icon={Megaphone}>Top campaigns by ROI</SectionLabel>
-            <div className="mt-4 space-y-1">
-              {topCampaigns.map((c, i) => (
-                <div key={c.name} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
-                  <span className="w-5 text-center text-sm font-semibold text-muted-foreground">{i + 1}</span>
-                  <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-foreground">{c.name}</p><p className="text-xs text-muted-foreground">${formatNum(c.rev)} revenue</p></div>
-                  <span className="text-sm font-semibold tabular-nums text-gold">{c.roi}x</span>
-                </div>
-              ))}
-            </div>
-          </GlassCard>
-        </Reveal>
-      </div>
-    </div>
+    <Reveal>
+      <GlassCard className="p-10 text-center">
+        <span className="orb mx-auto grid size-14 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+          <Globe className="size-6" stroke="oklch(0.2 0.02 70)" />
+        </span>
+        <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>Nothing real to show here yet</h2>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+          Visitors, conversion rate, cost per acquisition, ROAS, and channel attribution all need data WonderFlow doesn't collect yet — real website traffic tracking (like Google Analytics) and real ad spend from a connected ad platform. Neither exists in the app right now, so rather than show numbers with nothing behind them, this tab is honestly empty.
+        </p>
+        <p className="mx-auto mt-3 max-w-md text-xs text-muted-foreground">Real revenue and campaign performance you can already trust live in the Revenue and Campaigns tabs.</p>
+      </GlassCard>
+    </Reveal>
   );
 }
 

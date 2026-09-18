@@ -1765,6 +1765,7 @@ export function AdminWorkspace() {
   // component for a search-only navigation, so reading the URL once on mount
   // isn't enough — react to router search-string changes via useRouterState,
   // otherwise clicking "Settings" while already on /admin does nothing.
+  const { role } = useOrg();
   const searchStr = useRouterState({ select: (s) => s.location.searchStr });
   const [active, setActiveState] = useState<ViewKey>(tabFromUrl);
   useEffect(() => setActiveState(tabFromUrl()), [searchStr]);
@@ -1797,7 +1798,7 @@ export function AdminWorkspace() {
             <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{meta.sub}</p>
             <h1 className="mt-2 text-3xl tracking-tight sm:text-4xl" style={{ fontFamily: "var(--font-display)" }}><span className="gold-text italic">{meta.title}</span></h1>
           </div>
-          <span className="flex items-center gap-2 rounded-full border border-gold/25 bg-glass px-4 py-2 text-xs text-foreground/80"><ShieldCheck className="size-4 text-gold" /> Owner access</span>
+          <span className="flex items-center gap-2 rounded-full border border-gold/25 bg-glass px-4 py-2 text-xs capitalize text-foreground/80"><ShieldCheck className="size-4 text-gold" /> {role ?? "member"} access</span>
         </div>
 
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">

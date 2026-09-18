@@ -640,10 +640,12 @@ function CampaignsView() {
             <span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Channel</span>
             <div className="flex flex-wrap gap-1.5">
               {(Object.keys(channelIcon) as Channel[]).map((c) => (
-                <button key={c} onClick={() => setChannel(c)} className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors", channel === c ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={channel === c ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>{c}</button>
+                <button key={c} onClick={() => setChannel(c)} title={c !== "Email" ? `${c} campaigns are tracked here but don't send yet` : undefined} className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors", channel === c ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={channel === c ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>
+                  {c}{c !== "Email" && <span className="ml-0.5 text-gold">*</span>}
+                </button>
               ))}
             </div>
-            {channel !== "Email" && <p className="mt-1.5 text-[0.65rem] text-muted-foreground">{channel} campaigns are tracked here but don't send yet — only Email sends for real right now.</p>}
+            {channel !== "Email" && <p className="mt-1.5 text-[0.65rem] text-muted-foreground">* {channel} campaigns are tracked here but don't send yet — only Email sends for real right now.</p>}
           </label>
           <label className="mt-3 block text-xs">
             <span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Audience</span>

@@ -39,6 +39,7 @@ import { Avatar, Bar, Delta, Donut, Reveal, Ring, SectionLabel, StatTile, format
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
+import { generateImage } from "@/lib/image-gen";
 import { createCampaign, listCampaigns, sendCampaign, updateCampaign, type CampaignStatus, type DbCampaign } from "@/lib/campaigns";
 import { DatePicker } from "@/components/wf/DatePicker";
 
@@ -673,7 +674,7 @@ function CampaignsView() {
   );
 }
 
-const contentTypes = ["Email", "Social post", "Ad copy", "Blog intro"] as const;
+const contentTypes = ["Email", "Social post", "Ad copy", "Blog intro", "Design (image)"] as const;
 const tones = ["Bold", "Friendly", "Professional", "Playful"] as const;
 
 function ContentView() {
@@ -682,17 +683,30 @@ function ContentView() {
   const [tone, setTone] = useState<(typeof tones)[number]>("Bold");
   const [topic, setTopic] = useState("Summer product launch");
   const [output, setOutput] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const isImage = type === "Design (image)";
 
   const generate = async () => {
     if (busy) return;
     setBusy(true);
     setOutput(null);
+    setImageUrl(null);
     setError(null);
     setCopied(false);
     const forBiz = org?.name ? ` for ${org.name}` : "";
+
+    if (isImage) {
+      const prompt = `A ${tone.toLowerCase()}, professional marketing image${forBiz}. Subject: ${topic}. Clean, high-quality, suitable for social media or advertising — no text or logos in the image.`;
+      const { dataUrl, error: err } = await generateImage(prompt);
+      if (err) setError(err);
+      else setImageUrl(dataUrl);
+      setBusy(false);
+      return;
+    }
+
     const shape =
       type === "Email"
         ? "a short marketing email including a subject line"
@@ -737,12 +751,18 @@ function ContentView() {
 
       <Reveal delay={80}>
         <GlassCard className="flex min-h-[20rem] flex-col p-6">
-          <SectionLabel icon={PenTool}>Generated draft</SectionLabel>
+          <SectionLabel icon={PenTool}>{isImage ? "Generated design" : "Generated draft"}</SectionLabel>
           <div className="mt-4 flex-1">
-            {busy && <div className="typing flex items-center gap-1 py-4"><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /></div>}
+            {busy && (
+              <div className="flex flex-col items-center justify-center gap-2 py-10">
+                <div className="typing flex items-center gap-1"><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /><span className="size-1.5 rounded-full bg-gold" /></div>
+                {isImage && <p className="text-xs text-muted-foreground">Images can take up to 20-30 seconds…</p>}
+              </div>
+            )}
             {!busy && error && <p className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-200">{error}</p>}
             {!busy && output && <p className="whitespace-pre-line rounded-2xl border border-border bg-background/30 p-4 text-sm leading-relaxed text-foreground/90">{output}</p>}
-            {!busy && !output && !error && <p className="py-10 text-center text-sm text-muted-foreground">Pick a type and tone, then generate a draft.</p>}
+            {!busy && imageUrl && <img src={imageUrl} alt={topic} className="w-full rounded-2xl border border-border" />}
+            {!busy && !output && !imageUrl && !error && <p className="py-10 text-center text-sm text-muted-foreground">Pick a type and tone, then generate a draft.</p>}
           </div>
           {output && !busy && (
             <div className="mt-4 flex gap-2">
@@ -753,6 +773,19 @@ function ContentView() {
               >
                 <CheckCircle2 className="size-3.5" /> {copied ? "Copied to clipboard ✓" : "Use draft"}
               </button>
+              <button onClick={generate} className="rounded-full border border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground">Regenerate</button>
+            </div>
+          )}
+          {imageUrl && !busy && (
+            <div className="mt-4 flex gap-2">
+              <a
+                href={imageUrl}
+                download={`${topic.trim().replace(/\s+/g, "-").toLowerCase() || "design"}.png`}
+                className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110"
+                style={{ background: "var(--gradient-gold)" }}
+              >
+                <CheckCircle2 className="size-3.5" /> Download image
+              </a>
               <button onClick={generate} className="rounded-full border border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground">Regenerate</button>
             </div>
           )}

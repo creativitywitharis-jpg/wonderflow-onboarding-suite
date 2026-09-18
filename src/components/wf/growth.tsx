@@ -688,9 +688,13 @@ function ContentView() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const isImage = type === "Design (image)";
+  // Image generation costs real money per call (OpenAI) — gated to orgs with
+  // an actual paid plan, not the free trial default.
+  const isSubscribed = !!org?.plan && org.plan !== "trial";
+  const imageLocked = isImage && !isSubscribed;
 
   const generate = async () => {
-    if (busy) return;
+    if (busy || imageLocked) return;
     setBusy(true);
     setOutput(null);
     setImageUrl(null);
@@ -699,8 +703,9 @@ function ContentView() {
     const forBiz = org?.name ? ` for ${org.name}` : "";
 
     if (isImage) {
+      if (!org) { setBusy(false); return; }
       const prompt = `A ${tone.toLowerCase()}, professional marketing image${forBiz}. Subject: ${topic}. Clean, high-quality, suitable for social media or advertising — no text or logos in the image.`;
-      const { dataUrl, error: err } = await generateImage(prompt);
+      const { dataUrl, error: err } = await generateImage(org.id, prompt);
       if (err) setError(err);
       else setImageUrl(dataUrl);
       setBusy(false);
@@ -734,7 +739,13 @@ function ContentView() {
           <div className="relative">
             <div className="flex items-center gap-2"><Wand2 className="size-4 text-gold" /><p className="text-sm font-semibold">AI Content Studio</p></div>
             <label className="mt-4 block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Type</span>
-              <div className="flex flex-wrap gap-1.5">{contentTypes.map((t) => (<button key={t} onClick={() => setType(t)} className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors", type === t ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={type === t ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>{t}</button>))}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {contentTypes.map((t) => (<button key={t} onClick={() => setType(t)} className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors", type === t ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={type === t ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>{t}</button>))}
+                <button type="button" disabled title="Video generation — coming soon" className="cursor-not-allowed rounded-full border border-border bg-glass px-2.5 py-1 text-xs text-muted-foreground/50">
+                  Video <span className="text-gold">*</span>
+                </button>
+              </div>
+              {imageLocked && <p className="mt-1.5 text-[0.65rem] text-muted-foreground">Image generation is a paid-plan feature — costs real money per image, so it's not on the free trial.</p>}
             </label>
             <label className="mt-3 block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Tone</span>
               <div className="flex flex-wrap gap-1.5">{tones.map((t) => (<button key={t} onClick={() => setTone(t)} className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors", tone === t ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={tone === t ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>{t}</button>))}</div>
@@ -742,9 +753,15 @@ function ContentView() {
             <label className="mt-3 block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Topic</span>
               <input value={topic} onChange={(e) => setTopic(e.target.value)} className="w-full rounded-xl border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
             </label>
-            <button onClick={generate} disabled={busy} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
-              <Sparkles className="size-4" /> {busy ? "Generating…" : "Generate content"}
-            </button>
+            {imageLocked ? (
+              <Link to="/admin" search={{ tab: "billing" }} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full border border-gold/40 bg-glass px-4 py-2.5 text-sm font-semibold text-foreground/85 transition-colors hover:border-gold/70">
+                <Sparkles className="size-4 text-gold" /> Upgrade to generate images
+              </Link>
+            ) : (
+              <button onClick={generate} disabled={busy} className="mt-4 flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)", boxShadow: "var(--shadow-gold)" }}>
+                <Sparkles className="size-4" /> {busy ? "Generating…" : "Generate content"}
+              </button>
+            )}
           </div>
         </GlassCard>
       </Reveal>

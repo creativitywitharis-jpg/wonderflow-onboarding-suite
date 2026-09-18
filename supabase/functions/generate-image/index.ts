@@ -32,7 +32,7 @@ Deno.serve(async (req: Request) => {
   const { data: userData } = await userClient.auth.getUser();
   if (!userData.user) return json({ error: "Please sign in." });
 
-  let body: { prompt?: string; size?: string } = {};
+  let body: { prompt?: string; size?: string; orgId?: string } = {};
   try {
     body = await req.json();
   } catch {
@@ -40,6 +40,15 @@ Deno.serve(async (req: Request) => {
   }
   const prompt = (body.prompt ?? "").trim();
   if (!prompt) return json({ error: "Missing prompt." });
+  if (!body.orgId) return json({ error: "Missing organization." });
+
+  // Costs real money per call (OpenAI) — gated to orgs on an actual paid
+  // plan, enforced here (not just client-side) since this endpoint could
+  // otherwise be called directly to bypass a UI-only check. Read via the
+  // user's own client so RLS also confirms real membership in this org.
+  const { data: orgRow } = await userClient.from("organizations").select("plan").eq("id", body.orgId).maybeSingle();
+  const plan = (orgRow as { plan?: string } | null)?.plan;
+  if (!plan || plan === "trial") return json({ error: "Image generation is a paid-plan feature — upgrade to use it." });
 
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
   if (!openaiKey) return json({ error: "Image generation isn't configured yet — add the OPENAI_API_KEY secret." });

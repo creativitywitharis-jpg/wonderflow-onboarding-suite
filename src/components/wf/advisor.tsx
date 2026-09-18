@@ -35,10 +35,11 @@ import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
 import { listCustomers } from "@/lib/customers";
 import { listInvoices, listExpenses } from "@/lib/finance";
-import { buildOpportunities, buildRisks, buildPredictions, OPP_CATEGORIES, type Opportunity, type Prediction, type Risk, type Sev } from "@/lib/advisor";
+import { buildOpportunities, buildRisks, buildPredictions, OPP_CATEGORIES, type Conf, type Effort, type Opportunity, type Prediction, type Risk, type Sev } from "@/lib/advisor";
 import { addMemory, deleteMemory, listMemory, MEMORY_CATEGORIES, type DbMemory } from "@/lib/memory";
 import { addDecision, deleteDecision, listDecisions, setDecisionStatus, DECISION_STATUSES, type DbDecision, type DecisionStatus } from "@/lib/decisions";
 import { addInitiative, deleteInitiative, listInitiatives, progressOf, updateInitiative, INITIATIVE_STATUSES, type DbInitiative, type InitiativeStatus, type Step } from "@/lib/initiatives";
+import { listConversationMessages, listConversations, saveAdvisorMessage, type ConversationSummary } from "@/lib/advisor-chat";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -208,23 +209,47 @@ function OverviewView({ go }: { go: (v: ViewKey) => void }) {
 
 type ChatMsg = { role: "ai" | "user"; text: string };
 const consultantPrompts = ["Should I raise prices?", "Where should I focus next quarter?", "Am I ready to hire?", "How do I improve margins?", "What's my biggest risk right now?"];
-const threadHistory = ["Q4 pricing strategy", "Hiring plan review", "Cash runway scenarios", "Wholesale expansion"];
+
+function newConversationId(): string {
+  return crypto.randomUUID();
+}
 
 function ChatView() {
   const { org } = useOrg();
+  const [conversationId, setConversationId] = useState<string>(newConversationId);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, thinking]);
 
+  const refreshConversations = useCallback(async () => {
+    if (!org) { setConversations([]); return; }
+    setConversations(await listConversations(org.id));
+  }, [org?.id]);
+  useEffect(() => { void refreshConversations(); }, [refreshConversations]);
+
+  const openConversation = async (id: string) => {
+    if (!org || thinking) return;
+    setConversationId(id);
+    const rows = await listConversationMessages(org.id, id);
+    setMessages(rows.map((r) => ({ role: r.role, text: r.text })));
+  };
+  const startNew = () => {
+    if (thinking) return;
+    setConversationId(newConversationId());
+    setMessages([]);
+  };
+
   async function send(text: string) {
     const q = text.trim();
-    if (!q || thinking) return;
+    if (!q || thinking || !org) return;
     const next: ChatMsg[] = [...messages, { role: "user", text: q }];
     setMessages(next);
     setInput("");
     setThinking(true);
+    void saveAdvisorMessage(org.id, conversationId, "user", q);
     try {
       const convo = next
         .filter((m) => m.text.trim())
@@ -235,11 +260,14 @@ function ChatView() {
         trimmed[0] = { ...trimmed[0], content: `You are the strategic Business Advisor inside WonderFlow OS — a sharp COO/consultant. Give specific, prioritized advice on strategy, pricing, hiring, margins, cash and risk.\n\n${trimmed[0].content}` };
       }
       const reply = await askAI(trimmed, { id: org?.id, name: org?.name, industry: org?.industry });
-      setMessages((m) => [...m, { role: "ai", text: reply || "I don't have an answer for that yet." }]);
+      const text2 = reply || "I don't have an answer for that yet.";
+      setMessages((m) => [...m, { role: "ai", text: text2 }]);
+      void saveAdvisorMessage(org.id, conversationId, "ai", text2);
     } catch (e) {
       setMessages((m) => [...m, { role: "ai", text: e instanceof Error ? e.message : "I couldn't reach the AI service. Please try again." }]);
     } finally {
       setThinking(false);
+      void refreshConversations();
     }
   }
 
@@ -247,11 +275,15 @@ function ChatView() {
     <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
       <Reveal className="hidden lg:block">
         <GlassCard className="p-4">
-          <p className="px-2 text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">Recent</p>
+          <div className="flex items-center justify-between px-2">
+            <p className="text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">Recent</p>
+            <button onClick={startNew} aria-label="New conversation" className="grid size-5 place-items-center rounded-md text-muted-foreground hover:text-gold"><Plus className="size-3.5" /></button>
+          </div>
           <div className="mt-2 space-y-1">
-            {threadHistory.map((t) => (
-              <button key={t} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground">
-                <MessageSquare className="size-3.5 shrink-0" /> <span className="truncate">{t}</span>
+            {conversations.length === 0 && <p className="px-2 py-4 text-center text-xs text-muted-foreground">No past conversations yet.</p>}
+            {conversations.map((c) => (
+              <button key={c.conversationId} onClick={() => openConversation(c.conversationId)} className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-glass hover:text-foreground", c.conversationId === conversationId ? "bg-glass text-foreground" : "text-muted-foreground")}>
+                <MessageSquare className="size-3.5 shrink-0" /> <span className="truncate">{c.title}</span>
               </button>
             ))}
           </div>
@@ -498,16 +530,29 @@ function StrategyView() {
   );
 }
 
+const CONF_TO_IMPACT: Record<Conf, number> = { High: 85, Medium: 60, Low: 35 };
+const EFFORT_TO_SCORE: Record<Effort, number> = { Low: 25, Medium: 55, High: 85 };
+
 function OpportunitiesView() {
   const { org } = useOrg();
   const [cat, setCat] = useState("All");
   const [opps, setOpps] = useState<Opportunity[] | null>(null);
+  const [pursuing, setPursuing] = useState<string | null>(null);
+  const [pursued, setPursued] = useState<Set<string>>(new Set());
   useEffect(() => {
     let alive = true;
     if (org?.id) buildOpportunities(org.id).then((r) => alive && setOpps(r)).catch(() => alive && setOpps([]));
     else setOpps([]);
     return () => { alive = false; };
   }, [org?.id]);
+
+  const pursue = async (o: Opportunity) => {
+    if (!org || pursuing) return;
+    setPursuing(o.title);
+    await addInitiative(org.id, { title: o.title, impact: CONF_TO_IMPACT[o.conf], effort: EFFORT_TO_SCORE[o.effort], steps: [] });
+    setPursuing(null);
+    setPursued((s) => new Set(s).add(o.title));
+  };
 
   const filtered = (opps ?? []).filter((o) => cat === "All" || o.category === cat);
   return (
@@ -540,8 +585,13 @@ function OpportunitiesView() {
               <div className="mt-3 flex items-center justify-between text-[0.7rem] text-muted-foreground">
                 <span>{o.conf} confidence · {o.effort} effort</span>
               </div>
-              <button className="lift mt-4 flex items-center justify-center gap-2 rounded-full border border-gold/30 bg-glass py-2 text-xs font-semibold text-foreground/85 transition-colors hover:border-gold/60">
-                Pursue <ArrowUpRight className="size-3.5 text-gold" />
+              <button
+                onClick={() => pursue(o)}
+                disabled={pursuing === o.title || pursued.has(o.title)}
+                title="Adds this as a tracked initiative in Strategy Room"
+                className="lift mt-4 flex items-center justify-center gap-2 rounded-full border border-gold/30 bg-glass py-2 text-xs font-semibold text-foreground/85 transition-colors hover:border-gold/60 disabled:opacity-60"
+              >
+                {pursued.has(o.title) ? <><CheckCircle2 className="size-3.5 text-emerald-400" /> Added to Strategy Room</> : pursuing === o.title ? "Adding…" : <>Pursue <ArrowUpRight className="size-3.5 text-gold" /></>}
               </button>
             </GlassCard>
           </Reveal>

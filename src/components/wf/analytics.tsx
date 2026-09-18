@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
@@ -22,6 +22,7 @@ import {
   Target,
   TrendingDown,
   TrendingUp,
+  Trash2,
   Users,
   Wand2,
   type LucideIcon,
@@ -39,6 +40,7 @@ import { listInvoices, listExpenses, type DbInvoice, type DbExpense } from "@/li
 import { listProducts, type DbProduct } from "@/lib/products";
 import { listSuppliers, type DbSupplier } from "@/lib/suppliers";
 import { listCampaigns, type DbCampaign } from "@/lib/campaigns";
+import { deleteSavedView, listSavedViews, saveView, type SavedView } from "@/lib/analytics-views";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Chart toolkit
@@ -655,10 +657,37 @@ const builderDims = ["By month", "By channel", "By category", "By segment"] as c
 const builderCharts = ["Bars", "Area", "Donut"] as const;
 
 function BuilderView() {
+  const { org } = useOrg();
   const { revenueByMonth: revenueYr, salesChannels, categories, custSegments } = useAnalytics();
   const [metric, setMetric] = useState<(typeof builderMetrics)[number]>("Revenue");
   const [dim, setDim] = useState<(typeof builderDims)[number]>("By month");
   const [chart, setChart] = useState<(typeof builderCharts)[number]>("Bars");
+  const [saved, setSaved] = useState<SavedView[]>([]);
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const loadSaved = useCallback(async () => {
+    if (!org) { setSaved([]); return; }
+    setSaved(await listSavedViews(org.id));
+  }, [org?.id]);
+  useEffect(() => { void loadSaved(); }, [loadSaved]);
+
+  const applySaved = (v: SavedView) => {
+    if (builderMetrics.includes(v.metric as (typeof builderMetrics)[number])) setMetric(v.metric as (typeof builderMetrics)[number]);
+    if (builderDims.includes(v.dim as (typeof builderDims)[number])) setDim(v.dim as (typeof builderDims)[number]);
+    if (builderCharts.includes(v.chart as (typeof builderCharts)[number])) setChart(v.chart as (typeof builderCharts)[number]);
+  };
+  const confirmSave = async () => {
+    if (!org || !name.trim() || busy) return;
+    setBusy(true);
+    await saveView(org.id, { name: name.trim(), metric, dim, chart });
+    setBusy(false);
+    setName("");
+    setNaming(false);
+    await loadSaved();
+  };
+  const removeSaved = async (id: string) => { await deleteSavedView(id); await loadSaved(); };
 
   const dataset = useMemo(() => {
     const scale = metric === "Revenue" ? 1 : metric === "Orders" ? 0.09 : metric === "Customers" ? 0.008 : 0.33;
@@ -686,14 +715,35 @@ function BuilderView() {
               </div>
             </div>
           ))}
+          {saved.length > 0 && (
+            <div className="mt-5 border-t border-border pt-4">
+              <p className="mb-1.5 text-xs uppercase tracking-wide text-muted-foreground">Saved views</p>
+              <div className="space-y-1">
+                {saved.map((v) => (
+                  <div key={v.id} className="group flex items-center gap-1.5 rounded-lg px-1.5 py-1 hover:bg-glass">
+                    <button onClick={() => applySaved(v)} className="min-w-0 flex-1 truncate text-left text-xs text-foreground/80 hover:text-foreground">{v.name}</button>
+                    <button onClick={() => removeSaved(v.id)} aria-label="Delete saved view" className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-rose-300 group-hover:opacity-100"><Trash2 className="size-3.5" /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </GlassCard>
       </Reveal>
 
       <Reveal delay={80}>
         <GlassCard className="flex min-h-[24rem] flex-col p-6">
-          <div className="flex items-baseline justify-between">
+          <div className="flex items-baseline justify-between gap-2">
             <SectionLabel icon={BarChart3}>{metric} · {dim.toLowerCase()}</SectionLabel>
-            <button className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 hover:border-gold/40"><CheckCircle2 className="size-3.5 text-gold" /> Save view</button>
+            {naming ? (
+              <div className="flex items-center gap-1.5">
+                <input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && confirmSave()} placeholder="View name" autoFocus className="w-32 rounded-full border border-border bg-background/40 px-3 py-1.5 text-xs text-foreground outline-none focus:border-gold/50" />
+                <button onClick={confirmSave} disabled={busy || !name.trim()} className="rounded-full px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "…" : "Save"}</button>
+                <button onClick={() => { setNaming(false); setName(""); }} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+              </div>
+            ) : (
+              <button onClick={() => setNaming(true)} className="flex items-center gap-1.5 rounded-full border border-border bg-glass px-3 py-1.5 text-xs text-foreground/80 hover:border-gold/40"><CheckCircle2 className="size-3.5 text-gold" /> Save view</button>
+            )}
           </div>
           <div className="mt-6 flex-1">
             {dataset.kind === "series" && chart === "Bars" && <Bars data={dataset.values} labels={months} />}

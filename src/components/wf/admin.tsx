@@ -41,6 +41,7 @@ import { supabase } from "@/lib/supabase";
 import { deleteOrganization, enabledModulesFor, INDUSTRIES, leaveOrganization, transferOwnership, updateOrganization } from "@/lib/org";
 import { deleteMyAccount, signOut } from "@/lib/use-auth";
 import { connectSlack, disconnectSlack, listConnections, syncStripe, testSlack, type DbConnection } from "@/lib/connections";
+import { hasStripeKey, removeStripeKey, saveStripeKey } from "@/lib/stripe-credentials";
 import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
 import { PLANS, getAiUsage, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
@@ -129,12 +130,11 @@ const aiModels = [
   { id: "balanced", name: "Balanced", desc: "Great quality at lower cost — the everyday default." },
   { id: "fast", name: "Fast", desc: "Instant responses for high-volume automations." },
 ];
-const PROVIDERS: { id: string; name: string; desc: string; icon: LucideIcon; kind: "sync" | "soon" }[] = [
-  { id: "stripe", name: "Stripe", desc: "Import your customers & revenue into the CRM", icon: Zap, kind: "sync" },
-  { id: "shopify", name: "Shopify", desc: "Sync orders, products & inventory", icon: Globe, kind: "soon" },
-  { id: "quickbooks", name: "QuickBooks", desc: "Accounting & finance sync", icon: Database, kind: "soon" },
-  { id: "klaviyo", name: "Klaviyo", desc: "Email & SMS marketing", icon: Mail, kind: "soon" },
-  { id: "google_analytics", name: "Google Analytics", desc: "Web & marketing analytics", icon: Globe, kind: "soon" },
+const PROVIDERS: { id: string; name: string; desc: string; icon: LucideIcon }[] = [
+  { id: "shopify", name: "Shopify", desc: "Sync orders, products & inventory", icon: Globe },
+  { id: "quickbooks", name: "QuickBooks", desc: "Accounting & finance sync", icon: Database },
+  { id: "klaviyo", name: "Klaviyo", desc: "Email & SMS marketing", icon: Mail },
+  { id: "google_analytics", name: "Google Analytics", desc: "Web & marketing analytics", icon: Globe },
 ];
 
 const catColor: Record<string, string> = { Users: "oklch(0.66 0.09 200)", Integrations: "oklch(0.75 0.13 150)", Security: "oklch(0.68 0.16 25)" };
@@ -1158,11 +1158,105 @@ function SlackCard({ conn, onChange }: { conn?: DbConnection; onChange: () => vo
   );
 }
 
+// Real Stripe sync using the ORG'S OWN Stripe secret key (not WonderFlow's
+// platform key — see sync-stripe's header comment for why that distinction
+// matters). The key is write-only from the UI: once saved it's never read
+// back, only replaced or removed.
+function StripeCard({ conn, onChange }: { conn?: DbConnection; onChange: () => void }) {
+  const { org } = useOrg();
+  const lastSync = (conn?.config as { last_sync?: string } | undefined)?.last_sync;
+  const [hasKey, setHasKey] = useState<boolean | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    if (!org) return;
+    hasStripeKey(org.id).then(setHasKey);
+  }, [org?.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    if (!org || !key.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await saveStripeKey(org.id, key.trim());
+    setBusy(false);
+    if (err) { setError(err.message); return; }
+    setEditing(false);
+    setKey("");
+    await logAudit(org.id, hasKey ? "replaced the Stripe secret key" : "added a Stripe secret key", "Integrations");
+    setHasKey(true);
+  };
+
+  const remove = async () => {
+    if (!org || busy) return;
+    setBusy(true);
+    await removeStripeKey(org.id);
+    setBusy(false);
+    setMsg(null);
+    await logAudit(org.id, "removed the Stripe secret key", "Integrations");
+    setHasKey(false);
+    onChange();
+  };
+
+  const sync = async () => {
+    if (!org || busy) return;
+    setBusy(true);
+    setMsg(null);
+    const { synced, error: err } = await syncStripe(org.id);
+    setBusy(false);
+    setMsg(err ? `Sync failed: ${err.message}` : `✓ Synced ${synced} customer${synced === 1 ? "" : "s"} from Stripe into your CRM.`);
+    onChange();
+  };
+
+  return (
+    <Reveal className="h-full">
+      <GlassCard className="flex h-full flex-col p-6">
+        <div className="flex items-center justify-between">
+          <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><Zap className="size-5 text-gold" /></span>
+          {hasKey && <span className="flex items-center gap-1.5 text-xs text-emerald-300"><StatusDot tone="ok" /> Connected</span>}
+        </div>
+        <p className="mt-4 text-sm font-semibold text-foreground">Stripe</p>
+        <p className="mt-1 flex-1 text-xs text-muted-foreground">Import your own Stripe customers &amp; revenue into the CRM. Uses your Stripe account, not WonderFlow's.</p>
+        {lastSync && <p className="mt-1 text-[0.65rem] text-muted-foreground">Last sync {new Date(lastSync).toLocaleString()}</p>}
+
+        {hasKey === null ? null : !hasKey && !editing && (
+          <button onClick={() => setEditing(true)} className="mt-4 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98]" style={{ background: "var(--gradient-gold)" }}>Connect</button>
+        )}
+
+        {editing && (
+          <div className="mt-4 space-y-2">
+            <p className="text-[0.7rem] text-muted-foreground">In Stripe: Developers → API keys → copy your Secret key (starts with sk_live_ or sk_test_). It's stored securely and never shown again after saving.</p>
+            <input value={key} onChange={(e) => setKey(e.target.value)} type="password" placeholder="sk_live_…" className="w-full rounded-lg border border-border bg-background/40 px-3 py-2 text-xs text-foreground outline-none focus:border-gold/50" />
+            {error && <p className="text-[0.7rem] text-rose-300">{error}</p>}
+            <div className="flex gap-2">
+              <button onClick={save} disabled={busy || !key.trim()} className="rounded-full px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>{busy ? "Saving…" : "Save"}</button>
+              <button onClick={() => { setEditing(false); setError(null); setKey(""); }} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {hasKey && !editing && (
+          <div className="mt-4 space-y-2">
+            {msg && <p className="text-[0.7rem] text-muted-foreground">{msg}</p>}
+            <div className="flex flex-wrap gap-2">
+              <button onClick={sync} disabled={busy} className="rounded-full px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)" }}>{busy ? "Syncing…" : "Sync now"}</button>
+              <button onClick={() => setEditing(true)} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Replace key</button>
+              <button onClick={remove} disabled={busy} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-rose-300 disabled:opacity-60">Disconnect</button>
+            </div>
+          </div>
+        )}
+      </GlassCard>
+    </Reveal>
+  );
+}
+
 function IntegrationsView() {
   const { org } = useOrg();
   const [conns, setConns] = useState<DbConnection[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
 
   const load = async () => {
     if (!org) return;
@@ -1179,53 +1273,30 @@ function IntegrationsView() {
 
   const statusOf = (id: string) => conns.find((c) => c.provider === id);
 
-  const doSyncStripe = async () => {
-    if (!org || busy) return;
-    setBusy("stripe");
-    setMsg(null);
-    const { synced, error } = await syncStripe(org.id);
-    setBusy(null);
-    setMsg(error ? `Stripe sync failed: ${error.message}` : `✓ Synced ${synced} customer${synced === 1 ? "" : "s"} from Stripe into your CRM.`);
-    await load();
-  };
-
   return (
     <div className="space-y-4">
-      {msg && <p className="rounded-2xl border border-gold/25 bg-glass px-4 py-3 text-sm text-foreground/85">{msg}</p>}
       <FormEndpointCard />
       <WebhooksCard />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <SlackCard conn={statusOf("slack")} onChange={load} />
-        {PROVIDERS.map((p, i) => {
-          const conn = statusOf(p.id);
-          const connected = conn?.status === "connected";
-          const lastSync = (conn?.config as { last_sync?: string } | undefined)?.last_sync;
-          return (
-            <Reveal key={p.id} delay={i * 50} className="h-full">
-              <GlassCard className="flex h-full flex-col p-6">
-                <div className="flex items-center justify-between">
-                  <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><p.icon className="size-5 text-gold" /></span>
-                  {connected && <span className="flex items-center gap-1.5 text-xs text-emerald-300"><StatusDot tone="ok" /> Connected</span>}
-                  {p.kind === "soon" && !connected && <span className="rounded-full border border-border px-2 py-0.5 text-[0.65rem] text-muted-foreground">Setup required</span>}
-                </div>
-                <p className="mt-4 text-sm font-semibold text-foreground">{p.name}</p>
-                <p className="mt-1 flex-1 text-xs text-muted-foreground">{p.desc}</p>
-                {lastSync && <p className="mt-1 text-[0.65rem] text-muted-foreground">Last sync {new Date(lastSync).toLocaleString()}</p>}
-                {p.kind === "sync" ? (
-                  <button onClick={doSyncStripe} disabled={busy === p.id} className="mt-4 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)" }}>
-                    {busy === p.id ? "Syncing…" : connected ? "Sync now" : "Connect & sync"}
-                  </button>
-                ) : (
-                  <button disabled title="Needs a developer app — coming soon" className="mt-4 cursor-not-allowed rounded-full border border-border bg-glass px-4 py-2 text-xs text-muted-foreground/70">
-                    Available soon
-                  </button>
-                )}
-              </GlassCard>
-            </Reveal>
-          );
-        })}
+        <StripeCard conn={statusOf("stripe")} onChange={load} />
+        {PROVIDERS.map((p, i) => (
+          <Reveal key={p.id} delay={i * 50} className="h-full">
+            <GlassCard className="flex h-full flex-col p-6">
+              <div className="flex items-center justify-between">
+                <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><p.icon className="size-5 text-gold" /></span>
+                <span className="rounded-full border border-border px-2 py-0.5 text-[0.65rem] text-muted-foreground">Setup required</span>
+              </div>
+              <p className="mt-4 text-sm font-semibold text-foreground">{p.name}</p>
+              <p className="mt-1 flex-1 text-xs text-muted-foreground">{p.desc}</p>
+              <button disabled title="Needs a developer app — coming soon" className="mt-4 cursor-not-allowed rounded-full border border-border bg-glass px-4 py-2 text-xs text-muted-foreground/70">
+                Available soon
+              </button>
+            </GlassCard>
+          </Reveal>
+        ))}
       </div>
-      <p className="text-xs text-muted-foreground">Stripe reuses your existing key — no setup needed. OAuth connectors (Shopify, QuickBooks…) are on the roadmap.</p>
+      <p className="text-xs text-muted-foreground">Stripe uses your own Stripe secret key, not WonderFlow's. OAuth connectors (Shopify, QuickBooks…) are on the roadmap.</p>
     </div>
   );
 }

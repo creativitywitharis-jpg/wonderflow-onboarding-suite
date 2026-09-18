@@ -1,9 +1,13 @@
 // WonderFlow OS — Stripe → CRM sync.
 // Pulls the org's Stripe customers (and recent charge totals) and inserts any
-// not already in the CRM (deduped by email). Reuses the existing Stripe key —
-// no new dev app needed. Owner/admin only.
+// not already in the CRM (deduped by email). Owner/admin only.
 //
-// Secret: STRIPE_SECRET_KEY (or STRIPE_TEST_API_KEY)
+// Uses the ORG'S OWN Stripe secret key (stripe_credentials table, migration
+// 0052) — not WonderFlow's platform key. That platform key is a single
+// shared Stripe account used to bill orgs for their WonderFlow subscription
+// (see stripe-webhook); using it here would pull every org's sync from that
+// same one account instead of each business's own Stripe data.
+//
 // Auto-injected: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -27,9 +31,6 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY") ?? Deno.env.get("STRIPE_TEST_API_KEY");
-  if (!stripeKey) return json({ error: "Stripe isn't configured — add the Stripe API key." }, 500);
-
   let body: { orgId?: string } = {};
   try {
     body = await req.json();
@@ -51,6 +52,10 @@ Deno.serve(async (req: Request) => {
   if (role !== "owner" && role !== "admin") return json({ error: "Only owners and admins can sync integrations." }, 403);
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+  const { data: cred } = await admin.from("stripe_credentials").select("secret_key").eq("org_id", orgId).maybeSingle();
+  const stripeKey = (cred as { secret_key?: string } | null)?.secret_key;
+  if (!stripeKey) return json({ error: "Add your Stripe secret key below before syncing." }, 400);
 
   try {
     // Recent charges → spend per customer (one page is enough for a v1 sync).

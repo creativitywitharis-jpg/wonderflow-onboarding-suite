@@ -7,6 +7,7 @@ import {
   BarChart3,
   Brain,
   CheckCircle2,
+  Clock,
   Crown,
   DollarSign,
   Gift,
@@ -18,6 +19,7 @@ import {
   Megaphone,
   MessageSquare,
   PenTool,
+  Pencil,
   Rocket,
   Send,
   Share2,
@@ -37,7 +39,8 @@ import { Avatar, Bar, Delta, Donut, Reveal, Ring, SectionLabel, StatTile, format
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
 import { askAI } from "@/lib/ai";
-import { createCampaign, listCampaigns, updateCampaign, type CampaignStatus, type DbCampaign } from "@/lib/campaigns";
+import { createCampaign, listCampaigns, sendCampaign, updateCampaign, type CampaignStatus, type DbCampaign } from "@/lib/campaigns";
+import { DatePicker } from "@/components/wf/DatePicker";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -106,6 +109,9 @@ type Campaign = {
   open: number;
   click: number;
   roi: number;
+  scheduledAt: string | null;
+  subject: string | null;
+  body: string | null;
 };
 
 const channelMix = [
@@ -391,6 +397,9 @@ function toUiCampaign(c: DbCampaign): Campaign {
     open: Number(c.open_rate),
     click: Number(c.click_rate),
     roi: Number(c.roi),
+    scheduledAt: c.scheduled_at,
+    subject: c.subject,
+    body: c.body,
   };
 }
 
@@ -453,11 +462,100 @@ function CampaignsView() {
     setName("");
     await load();
   };
+
+  // Picking "Scheduled" opens a real date/time editor instead of silently
+  // applying a status that has nothing behind it — every other status
+  // still applies immediately.
+  const [schedulingId, setSchedulingId] = useState<string | null>(null);
+  const [schedDate, setSchedDate] = useState("");
+  const [schedTime, setSchedTime] = useState("09:00");
+  const startScheduling = (c: Campaign) => {
+    setSchedulingId(c.id);
+    const d = c.scheduledAt ? new Date(c.scheduledAt) : null;
+    setSchedDate(d ? d.toISOString().slice(0, 10) : "");
+    setSchedTime(d ? d.toTimeString().slice(0, 5) : "09:00");
+  };
+  const confirmSchedule = async () => {
+    if (!schedulingId || !schedDate) return;
+    const iso = new Date(`${schedDate}T${schedTime || "09:00"}`).toISOString();
+    await updateCampaign(schedulingId, { status: "Scheduled", scheduled_at: iso });
+    setSchedulingId(null);
+    await load();
+  };
   const changeStatus = async (id: string, status: CampaignStatus) => {
-    await updateCampaign(id, { status });
+    if (status === "Scheduled") {
+      const c = list.find((x) => x.id === id);
+      if (c) startScheduling(c);
+      return;
+    }
+    setSchedulingId(null);
+    await updateCampaign(id, { status, scheduled_at: null });
     await load();
   };
   const statusColor: Record<Campaign["status"], string> = { Active: "oklch(0.72 0.14 155)", Scheduled: "oklch(0.66 0.09 200)", Draft: "oklch(0.7 0.02 250)", Done: "oklch(0.84 0.14 84)" };
+  const fmtScheduled = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+  // Compose + send real Email campaigns. Separate from the create panel
+  // above — that's just a name/channel/audience shell; the actual subject
+  // and message (what genuinely goes out via Resend) live here.
+  const [composingId, setComposingId] = useState<string | null>(null);
+  const [composeSubject, setComposeSubject] = useState("");
+  const [composeBody, setComposeBody] = useState("");
+  const [composeGenBusy, setComposeGenBusy] = useState(false);
+  const [sendBusy, setSendBusy] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendResult, setSendResult] = useState<{ sent: number; failed: number; skipped: number } | null>(null);
+
+  const startCompose = (c: Campaign) => {
+    setComposingId(c.id);
+    setComposeSubject(c.subject ?? "");
+    setComposeBody(c.body ?? "");
+    setSendError(null);
+    setSendResult(null);
+  };
+  const [composeSubjBusy, setComposeSubjBusy] = useState(false);
+  const suggestComposeSubject = async () => {
+    if (composeSubjBusy) return;
+    setComposeSubjBusy(true);
+    try {
+      const c = list.find((x) => x.id === composingId);
+      const prompt = `Write one short, compelling email subject line for a campaign targeting the "${c?.audience ?? "customers"}" segment${c?.name ? ` called "${c.name}"` : ""}. Return ONLY the subject line — no quotes, no explanation.`;
+      const reply = await askAI([{ role: "user", content: prompt }], { id: org?.id, name: org?.name, industry: org?.industry });
+      const clean = (reply || "").trim().replace(/^["']|["']$/g, "");
+      if (clean) setComposeSubject(clean);
+    } catch {
+      // leave whatever the user already had
+    } finally {
+      setComposeSubjBusy(false);
+    }
+  };
+  const generateBody = async () => {
+    if (composeGenBusy) return;
+    setComposeGenBusy(true);
+    try {
+      const c = list.find((x) => x.id === composingId);
+      const prompt = `Write a short marketing email body (2-4 short paragraphs, no subject line, no sign-off placeholder) for a campaign targeting the "${c?.audience ?? "customers"}" segment${c?.name ? ` called "${c.name}"` : ""}. Return only the email body text.`;
+      const reply = await askAI([{ role: "user", content: prompt }], { id: org?.id, name: org?.name, industry: org?.industry });
+      if (reply) setComposeBody(reply.trim());
+    } catch {
+      // leave whatever the user already had
+    } finally {
+      setComposeGenBusy(false);
+    }
+  };
+  const doSend = async () => {
+    if (!composingId || sendBusy || !composeSubject.trim() || !composeBody.trim()) return;
+    setSendBusy(true);
+    setSendError(null);
+    setSendResult(null);
+    const { error: saveErr } = await updateCampaign(composingId, { subject: composeSubject.trim(), body: composeBody.trim() });
+    if (saveErr) { setSendBusy(false); setSendError(saveErr.message); return; }
+    const res = await sendCampaign(composingId);
+    setSendBusy(false);
+    if (res.error) { setSendError(res.error); return; }
+    setSendResult({ sent: res.sent, failed: res.failed, skipped: res.skipped });
+    await load();
+  };
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
@@ -469,6 +567,46 @@ function CampaignsView() {
             {!loading && list.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No campaigns yet — launch your first from the panel.</p>}
             {list.map((c) => {
               const Icon = channelIcon[c.channel] ?? Megaphone;
+              if (schedulingId === c.id) {
+                return (
+                  <div key={c.id} className="space-y-3 rounded-2xl border border-gold/40 bg-background/30 p-3">
+                    <p className="text-sm font-medium text-foreground">Schedule “{c.name}”</p>
+                    <div className="flex flex-wrap gap-2">
+                      <DatePicker value={schedDate} onChange={setSchedDate} className="rounded-lg border border-border bg-background/40 px-3 py-1.5 text-xs" />
+                      <input type="time" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} className="rounded-lg border border-border bg-background/40 px-3 py-1.5 text-xs text-foreground outline-none focus:border-gold/50" />
+                    </div>
+                    <p className="text-[0.7rem] text-muted-foreground">This records when you intend to launch it — Campaign Studio doesn't send anything on its own, so nothing fires automatically at this time.</p>
+                    <div className="flex gap-2">
+                      <button onClick={confirmSchedule} disabled={!schedDate} className="rounded-full px-4 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}>Set schedule</button>
+                      <button onClick={() => setSchedulingId(null)} className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                    </div>
+                  </div>
+                );
+              }
+              if (composingId === c.id) {
+                return (
+                  <div key={c.id} className="space-y-3 rounded-2xl border border-gold/40 bg-background/30 p-4">
+                    <p className="text-sm font-medium text-foreground">Compose “{c.name}” — sends to real {c.audience} customers with an email on file</p>
+                    <div className="flex gap-2">
+                      <input value={composeSubject} onChange={(e) => setComposeSubject(e.target.value)} placeholder="Subject line" className="min-w-0 flex-1 rounded-lg border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
+                      <button onClick={suggestComposeSubject} disabled={composeSubjBusy} className="shrink-0 rounded-lg border border-border px-3 text-xs text-gold hover:border-gold/40 disabled:opacity-50">{composeSubjBusy ? "…" : "Suggest"}</button>
+                    </div>
+                    <textarea value={composeBody} onChange={(e) => setComposeBody(e.target.value)} rows={5} placeholder="Message…" className="w-full rounded-lg border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none focus:border-gold/50" />
+                    <button onClick={generateBody} disabled={composeGenBusy} className="rounded-lg border border-border px-3 py-1.5 text-xs text-gold hover:border-gold/40 disabled:opacity-50">{composeGenBusy ? "Generating…" : "Generate with AI"}</button>
+                    <p className="text-[0.7rem] text-muted-foreground">Every recipient gets a real unsubscribe link. Customers who've opted out, or have no email on file, are skipped automatically.</p>
+                    {sendError && <p className="text-xs text-rose-300">{sendError}</p>}
+                    {sendResult && (
+                      <p className="flex items-center gap-1.5 text-xs text-emerald-300"><CheckCircle2 className="size-3.5 shrink-0" /> Sent to {sendResult.sent} customer{sendResult.sent === 1 ? "" : "s"}{sendResult.failed ? `, ${sendResult.failed} failed` : ""}{sendResult.skipped ? `, ${sendResult.skipped} skipped (no email / unsubscribed)` : ""}.</p>
+                    )}
+                    <div className="flex gap-2">
+                      {!sendResult && (
+                        <button onClick={doSend} disabled={sendBusy || !composeSubject.trim() || !composeBody.trim()} className="flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:opacity-50" style={{ background: "var(--gradient-gold)" }}><Send className="size-3.5" /> {sendBusy ? "Sending…" : "Send now"}</button>
+                      )}
+                      <button onClick={() => setComposingId(null)} className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">{sendResult ? "Close" : "Cancel"}</button>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div key={c.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 rounded-2xl border border-border bg-background/30 p-3 sm:grid-cols-[auto_1.4fr_1fr_1fr_auto]">
                   <span className="grid size-9 place-items-center rounded-lg border border-border bg-glass"><Icon className="size-4 text-gold" /></span>
@@ -476,7 +614,17 @@ function CampaignsView() {
                   <select value={c.status} onChange={(e) => changeStatus(c.id, e.target.value as CampaignStatus)} className="hidden rounded-lg border border-border bg-background/40 px-2 py-1 text-xs outline-none focus:border-gold/50 sm:block" style={{ color: statusColor[c.status] }}>
                     {CAMPAIGN_STATUSES.map((s) => <option key={s} value={s} className="text-foreground">{s}</option>)}
                   </select>
-                  <span className="hidden text-xs text-muted-foreground sm:block">{c.sent ? `${formatNum(c.sent)} sent · ${c.open}% open` : "—"}</span>
+                  {c.channel === "Email" && c.sent === 0 ? (
+                    <button onClick={() => startCompose(c)} className="hidden items-center gap-1.5 text-xs text-gold hover:underline sm:flex">
+                      <Send className="size-3 shrink-0" /> Compose &amp; send
+                    </button>
+                  ) : c.status === "Scheduled" ? (
+                    <button onClick={() => startScheduling(c)} className="hidden items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground sm:flex">
+                      <Clock className="size-3 shrink-0" /> {c.scheduledAt ? fmtScheduled(c.scheduledAt) : "Set date"} <Pencil className="size-3 shrink-0" />
+                    </button>
+                  ) : (
+                    <span className="hidden text-xs text-muted-foreground sm:block">{c.sent ? `${formatNum(c.sent)} sent · ${c.open}% open` : "—"}</span>
+                  )}
                   <span className="text-right text-sm font-semibold tabular-nums text-gold">{c.roi ? `${c.roi}x` : "—"}</span>
                 </div>
               );
@@ -495,6 +643,7 @@ function CampaignsView() {
                 <button key={c} onClick={() => setChannel(c)} className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors", channel === c ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={channel === c ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>{c}</button>
               ))}
             </div>
+            {channel !== "Email" && <p className="mt-1.5 text-[0.65rem] text-muted-foreground">{channel} campaigns are tracked here but don't send yet — only Email sends for real right now.</p>}
           </label>
           <label className="mt-3 block text-xs">
             <span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Audience</span>

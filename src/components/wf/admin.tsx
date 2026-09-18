@@ -1779,24 +1779,27 @@ const viewMeta: Record<ViewKey, { title: string; sub: string }> = {
 
 const VALID_VIEW_KEYS: ViewKey[] = ["settings", "billing", "users", "roles", "permissions", "ai", "integrations", "security", "audit", "monitoring"];
 
-function tabFromUrl(): ViewKey {
-  const t = new URLSearchParams(window.location.search).get("tab");
+function parseTab(searchStr: string): ViewKey {
+  const t = new URLSearchParams(searchStr).get("tab");
   return (VALID_VIEW_KEYS as string[]).includes(t ?? "") ? (t as ViewKey) : "settings";
 }
 
 export function AdminWorkspace() {
-  // Sidebar/topbar links outside this page (e.g. the "Settings" link in
-  // AppShell) navigate to /admin?tab=X. TanStack Router doesn't remount this
-  // component for a search-only navigation, so reading the URL once on mount
-  // isn't enough — react to router search-string changes via useRouterState,
-  // otherwise clicking "Settings" while already on /admin does nothing.
+  // Which tab is active is derived directly from the URL on every render --
+  // not mirrored into its own state via useEffect. Sidebar/topbar links
+  // outside this page (e.g. "Administration"/"Integrations" in AppShell)
+  // navigate to /admin?tab=X; TanStack Router doesn't remount this
+  // component for a search-only navigation, so a separate synced-via-effect
+  // state briefly rendered the PREVIOUS tab's content on every click before
+  // the effect caught up one tick later. Deriving `active` straight from
+  // useRouterState removes that lag entirely, since there's nothing to
+  // catch up -- it's correct on the very first render.
   const { role } = useOrg();
+  const navigate = useNavigate();
   const searchStr = useRouterState({ select: (s) => s.location.searchStr });
-  const [active, setActiveState] = useState<ViewKey>(tabFromUrl);
-  useEffect(() => setActiveState(tabFromUrl()), [searchStr]);
+  const active = parseTab(searchStr);
   const setActive = (key: ViewKey) => {
-    setActiveState(key);
-    window.history.replaceState(null, "", `/admin?tab=${key}`);
+    void navigate({ to: "/admin", search: { tab: key }, replace: true });
   };
   const meta = viewMeta[active];
   return (

@@ -878,7 +878,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mobileAiOpen, setMobileAiOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const { signedIn, authLoading, loading, orgs } = useOrg();
+  const { signedIn, authLoading, loading, orgs, orgsError, refresh } = useOrg();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -890,10 +890,26 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Signed in but no business yet → finish onboarding first.
+  // Signed in but no business yet → finish onboarding first. Never fires on
+  // a failed fetch (orgsError) -- that's not the same as "no business", and
+  // treating it that way is what previously sent owners with real
+  // businesses into onboarding to create a duplicate.
   useEffect(() => {
-    if (!authLoading && signedIn && !loading && orgs.length === 0) navigate({ to: "/onboarding" });
-  }, [authLoading, signedIn, loading, orgs, navigate]);
+    if (!authLoading && signedIn && !loading && !orgsError && orgs.length === 0) navigate({ to: "/onboarding" });
+  }, [authLoading, signedIn, loading, orgsError, orgs, navigate]);
+
+  if (signedIn && orgsError) {
+    return (
+      <div className="grid min-h-screen place-items-center p-6">
+        <div className="glass max-w-sm rounded-3xl p-8 text-center">
+          <p className="text-sm font-semibold text-foreground">Couldn't load your businesses</p>
+          <p className="mt-2 text-xs text-muted-foreground">{orgsError}</p>
+          <p className="mt-2 text-xs text-muted-foreground">This is a loading problem, not a sign of a missing or deleted account — your data is safe.</p>
+          <button onClick={() => void refresh()} className="mt-4 rounded-full px-4 py-2 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110" style={{ background: "var(--gradient-gold)" }}>Try again</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex min-h-screen">

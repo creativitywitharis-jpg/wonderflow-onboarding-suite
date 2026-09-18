@@ -10,6 +10,14 @@ type OrgContextValue = {
   orgs: OrgRow[];
   role: string | null;
   loading: boolean;
+  /**
+   * Set when fetching this person's organizations failed outright (e.g. a
+   * schema mismatch) rather than genuinely returning zero rows. Callers
+   * that redirect on "no orgs" (AppShell's onboarding redirect) must check
+   * this first -- treating a failed fetch as "no business" previously sent
+   * signed-in owners to create a duplicate business.
+   */
+  orgsError: string | null;
   userName: string;
   userEmail: string;
   refresh: () => Promise<void>;
@@ -24,17 +32,30 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   const [org, setOrg] = useState<OrgRow | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [orgsError, setOrgsError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user) {
       setOrgs([]);
       setOrg(null);
       setRole(null);
+      setOrgsError(null);
       setLoading(false);
       return;
     }
     setLoading(true);
-    const list = await getMyOrgs();
+    let list: OrgRow[];
+    try {
+      list = await getMyOrgs();
+      setOrgsError(null);
+    } catch (e) {
+      // Leave any previously-loaded orgs/org in place -- a failed fetch is
+      // not the same as "this person has no business," and callers must
+      // not redirect to onboarding based on it.
+      setOrgsError(e instanceof Error ? e.message : "Couldn't load your businesses.");
+      setLoading(false);
+      return;
+    }
     setOrgs(list);
     const activeId = getActiveOrgId();
     const active = list.find((o) => o.id === activeId) ?? list[0] ?? null;
@@ -78,6 +99,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
         orgs,
         role,
         loading,
+        orgsError,
         userName,
         userEmail: user?.email ?? "",
         refresh: load,

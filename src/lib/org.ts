@@ -146,11 +146,19 @@ export async function deleteOrganization(orgId: string): Promise<{ error: Error 
   return { error: error ? new Error(error.message) : null };
 }
 
-/** Every organization the current user is a member of (RLS-scoped). */
+/**
+ * Every organization the current user is a member of (RLS-scoped).
+ * Throws on a real query failure (e.g. a column the client expects but the
+ * database doesn't have yet) instead of silently returning an empty list --
+ * a schema mismatch here previously looked identical to "this person has no
+ * business" and sent signed-in owners into onboarding to create a
+ * duplicate. Callers must not treat a caught error the same as zero orgs.
+ */
 export async function getMyOrgs(): Promise<OrgRow[]> {
-  const { data } = await orgTable()
+  const { data, error } = await orgTable()
     .select(ORG_COLS)
     .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
   return (data as OrgRow[]) ?? [];
 }
 

@@ -4,8 +4,7 @@ export type AdvisorMsg = { id: string; conversation_id: string; role: "user" | "
 export type ConversationSummary = { conversationId: string; title: string; updatedAt: string };
 
 const COLS = "id,conversation_id,role,text,created_at";
-// Ships in migration 0050 — reach the table untyped until Lovable regenerates DB types.
-const table = () => (supabase as unknown as { from: (t: string) => any }).from("advisor_messages");
+const table = () => supabase.from("advisor_messages");
 
 /** This person's own past conversations for an org, most recently active first. */
 export async function listConversations(orgId: string): Promise<ConversationSummary[]> {

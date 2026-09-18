@@ -3,8 +3,7 @@ import { supabase } from "./supabase";
 export type SavedView = { id: string; name: string; metric: string; dim: string; chart: string; created_at: string };
 
 const COLS = "id,name,metric,dim,chart,created_at";
-// Ships in migration 0051 — reach the table untyped until Lovable regenerates DB types.
-const table = () => (supabase as unknown as { from: (t: string) => any }).from("analytics_saved_views");
+const table = () => supabase.from("analytics_saved_views");
 
 /** Every saved analytics view for an org, newest first — shared across the team. */
 export async function listSavedViews(orgId: string): Promise<SavedView[]> {

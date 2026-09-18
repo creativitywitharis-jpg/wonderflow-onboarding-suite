@@ -323,6 +323,7 @@ export type Database = {
       campaigns: {
         Row: {
           audience: string | null
+          body: string | null
           budget: number
           channel: string
           click_rate: number
@@ -335,10 +336,12 @@ export type Database = {
           roi: number
           sent: number
           status: string
+          subject: string | null
           updated_at: string
         }
         Insert: {
           audience?: string | null
+          body?: string | null
           budget?: number
           channel?: string
           click_rate?: number
@@ -351,10 +354,12 @@ export type Database = {
           roi?: number
           sent?: number
           status?: string
+          subject?: string | null
           updated_at?: string
         }
         Update: {
           audience?: string | null
+          body?: string | null
           budget?: number
           channel?: string
           click_rate?: number
@@ -367,6 +372,7 @@ export type Database = {
           roi?: number
           sent?: number
           status?: string
+          subject?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -487,6 +493,7 @@ export type Database = {
           company: string | null
           created_at: string
           email: string | null
+          email_opt_out: boolean
           health: number
           id: string
           ltv: number
@@ -502,6 +509,7 @@ export type Database = {
           company?: string | null
           created_at?: string
           email?: string | null
+          email_opt_out?: boolean
           health?: number
           id?: string
           ltv?: number
@@ -517,6 +525,7 @@ export type Database = {
           company?: string | null
           created_at?: string
           email?: string | null
+          email_opt_out?: boolean
           health?: number
           id?: string
           ltv?: number
@@ -1972,6 +1981,10 @@ export type Database = {
       shares_org: { Args: { other: string }; Returns: boolean }
       transfer_ownership: {
         Args: { p_new_owner_user_id: string; p_org_id: string }
+        Returns: undefined
+      }
+      unsubscribe_customer: {
+        Args: { p_customer_id: string; p_org_id: string }
         Returns: undefined
       }
     }

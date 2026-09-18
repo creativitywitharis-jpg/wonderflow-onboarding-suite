@@ -1319,6 +1319,7 @@ export type Database = {
       }
       organizations: {
         Row: {
+          address: string | null
           ai_model: string
           created_at: string
           created_by: string | null
@@ -1329,11 +1330,14 @@ export type Database = {
           industry: string | null
           ingest_key: string | null
           name: string
+          phone: string | null
           plan: string
           slug: string | null
           timezone: string
+          website: string | null
         }
         Insert: {
+          address?: string | null
           ai_model?: string
           created_at?: string
           created_by?: string | null
@@ -1344,11 +1348,14 @@ export type Database = {
           industry?: string | null
           ingest_key?: string | null
           name: string
+          phone?: string | null
           plan?: string
           slug?: string | null
           timezone?: string
+          website?: string | null
         }
         Update: {
+          address?: string | null
           ai_model?: string
           created_at?: string
           created_by?: string | null
@@ -1359,9 +1366,11 @@ export type Database = {
           industry?: string | null
           ingest_key?: string | null
           name?: string
+          phone?: string | null
           plan?: string
           slug?: string | null
           timezone?: string
+          website?: string | null
         }
         Relationships: []
       }

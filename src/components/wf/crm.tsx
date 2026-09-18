@@ -40,7 +40,7 @@ import { Avatar, Bar, Donut, Reveal, SectionLabel, StatTile, formatNum } from "@
 import { useCountUp } from "@/hooks/use-count-up";
 import { useInView } from "@/hooks/use-in-view";
 import { useOrg } from "@/lib/org-context";
-import { createCustomer, insertCustomers, listCustomers, sendCustomerMessage, updateCustomer, type DbCustomer, type NewCustomer } from "@/lib/customers";
+import { createCustomer, deleteCustomer, insertCustomers, listCustomers, sendCustomerMessage, updateCustomer, type DbCustomer, type NewCustomer } from "@/lib/customers";
 import { askAI } from "@/lib/ai";
 import { addInteraction, listCustomerInteractions, listInteractions, type DbInteraction, type InteractionChannel } from "@/lib/interactions";
 import { CsvImport } from "@/components/wf/CsvImport";
@@ -151,6 +151,7 @@ type CustomersState = {
   loading: boolean;
   addCustomer: (c: NewCustomer) => Promise<void>;
   editCustomer: (id: string, patch: Partial<NewCustomer>) => Promise<{ error: Error | null }>;
+  removeCustomer: (id: string) => Promise<{ error: Error | null }>;
   importCustomers: (rows: NewCustomer[]) => Promise<{ error: Error | null }>;
   seed: () => Promise<void>;
   resegment: () => Promise<{ changed: number; total: number }>;
@@ -210,6 +211,16 @@ function CustomersProvider({ children }: { children: ReactNode }) {
     [load],
   );
 
+  const removeCustomer = useCallback(
+    async (id: string) => {
+      const { error } = await deleteCustomer(id);
+      await load();
+      return { error };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [load],
+  );
+
   const seed = useCallback(
     async () => {
       if (!org) return;
@@ -244,7 +255,7 @@ function CustomersProvider({ children }: { children: ReactNode }) {
     [org?.id, customers, load],
   );
 
-  return <CustomersCtx.Provider value={{ customers, loading, addCustomer, editCustomer, importCustomers, seed, resegment }}>{children}</CustomersCtx.Provider>;
+  return <CustomersCtx.Provider value={{ customers, loading, addCustomer, editCustomer, removeCustomer, importCustomers, seed, resegment }}>{children}</CustomersCtx.Provider>;
 }
 
 // Segment metadata — real counts and revenue share are derived from the org's
@@ -694,7 +705,7 @@ function ProfilesView({
   onSelect: (id: string) => void;
 }) {
   const { org } = useOrg();
-  const { customers, editCustomer } = useCustomersData();
+  const { customers, editCustomer, removeCustomer } = useCustomersData();
   const c = customers.find((x) => x.id === selectedId) ?? customers[0];
   const [timeline, setTimeline] = useState<{ icon: LucideIcon; t: string; d: string }[]>([]);
   const [editing, setEditing] = useState(false);
@@ -706,6 +717,19 @@ function ProfilesView({
   const [composeGenBusy, setComposeGenBusy] = useState(false);
   const [sendBusy, setSendBusy] = useState(false);
   const [sendMsg, setSendMsg] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const doDelete = async () => {
+    if (!c || deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    const { error } = await removeCustomer(c.id);
+    setDeleteBusy(false);
+    if (error) { setDeleteError(error.message); return; }
+    setConfirmingDelete(false);
+  };
 
   const openEdit = () => {
     if (!c) return;
@@ -887,6 +911,24 @@ function ProfilesView({
             >
               <Pencil className="size-3.5" /> {editing ? "Close editor" : "Edit details"}
             </button>
+
+            {confirmingDelete ? (
+              <div className="mt-2 w-full space-y-2 rounded-xl border border-rose-400/30 bg-rose-500/5 p-3 text-left">
+                <p className="text-xs text-foreground/85">Permanently delete <span className="font-medium text-foreground">{c.name}</span>? Their orders, invoices, and message history stay on record for accounting — only their profile and reward codes are removed. This can't be undone.</p>
+                {deleteError && <p className="text-xs text-rose-300">{deleteError}</p>}
+                <div className="flex gap-2">
+                  <button onClick={doDelete} disabled={deleteBusy} className="rounded-full bg-rose-500/90 px-3 py-1.5 text-xs font-semibold text-white transition-all hover:brightness-110 disabled:opacity-50">{deleteBusy ? "Deleting…" : "Yes, delete"}</button>
+                  <button onClick={() => { setConfirmingDelete(false); setDeleteError(null); }} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmingDelete(true)}
+                className="mt-2 flex w-full items-center justify-center gap-2 rounded-full border border-border bg-glass px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-rose-400/50 hover:text-rose-300"
+              >
+                <Trash2 className="size-3.5" /> Delete customer
+              </button>
+            )}
 
             {editing && (
               <div className="mt-4 w-full space-y-2.5 border-t border-border pt-4 text-left">

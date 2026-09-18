@@ -66,6 +66,18 @@ export async function updateCustomer(id: string, patch: Partial<NewCustomer>) {
 }
 
 /**
+ * Permanently delete a customer (RLS: owner/admin/manager only). Their
+ * orders, invoices, and interaction history are kept for real accounting
+ * and activity records -- those rows just lose the customer link (their
+ * foreign keys are ON DELETE SET NULL); only reward codes, which are
+ * meaningless without the customer, are deleted along with them.
+ */
+export async function deleteCustomer(id: string) {
+  const { error } = await supabase.from("customers").delete().eq("id", id);
+  return { error: error ? new Error(error.message) : null };
+}
+
+/**
  * Send a one-off direct email to a customer right now, with a subject/body
  * the sender writes themselves -- the CRM profile's "Message" button.
  * Distinct from the AI-only "email_customer" automation action. Logs a real

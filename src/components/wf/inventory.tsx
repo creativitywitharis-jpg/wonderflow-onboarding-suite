@@ -48,6 +48,7 @@ import {
 } from "@/lib/products";
 import { listSuppliers, type DbSupplier } from "@/lib/suppliers";
 import { createPurchaseOrder } from "@/lib/purchase-orders";
+import { listMovements, logMovement, type DbMovement } from "@/lib/stock-movements";
 
 /* ──────────────────────────────────────────────────────────────────────
  * Types + data
@@ -198,12 +199,19 @@ function InventoryProvider({ children }: { children: ReactNode }) {
     [org?.id, load],
   );
 
-  const adjust = useCallback(async (id: string, delta: number) => {
-    const s = await adjustStock(id, delta);
-    if (s !== null) {
-      setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, stock: s, status: stockStatus(s, p.reorder) } : p)));
-    }
-  }, []);
+  const adjust = useCallback(
+    async (id: string, delta: number) => {
+      const s = await adjustStock(id, delta);
+      if (s !== null) {
+        setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, stock: s, status: stockStatus(s, p.reorder) } : p)));
+        if (org && delta !== 0) {
+          const p = products.find((x) => x.id === id);
+          if (p) void logMovement(org.id, { product_id: p.id, product_name: p.name, sku: p.sku, type: "Adjusted", qty: delta });
+        }
+      }
+    },
+    [org, products],
+  );
 
   const seed = useCallback(
     async () => {
@@ -247,16 +255,6 @@ const healthPillars = [
   { label: "Turnover", value: 76 },
   { label: "Forecast accuracy", value: 91 },
   { label: "Deadstock control", value: 68 },
-];
-
-const movements = [
-  { type: "Received", name: "Golden Hour Balm", sku: "SKU-1003", qty: 60, time: "12m ago" },
-  { type: "Sold", name: "Aurora Serum", sku: "SKU-1001", qty: -8, time: "24m ago" },
-  { type: "Sold", name: "Velvet Lip Oil", sku: "SKU-1007", qty: -5, time: "38m ago" },
-  { type: "Returned", name: "Radiance Mask", sku: "SKU-1005", qty: 2, time: "1h ago" },
-  { type: "Adjusted", name: "Midnight Oil", sku: "SKU-1002", qty: -3, time: "2h ago" },
-  { type: "Transfer", name: "Silk Cleanser", sku: "SKU-1004", qty: -20, time: "3h ago" },
-  { type: "Sold", name: "Dew Mist", sku: "SKU-1006", qty: -11, time: "4h ago" },
 ];
 
 const movementTone: Record<string, { color: string; icon: LucideIcon }> = {
@@ -864,35 +862,62 @@ function ReorderView() {
   );
 }
 
+function movementTimeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  return `${Math.floor(hr / 24)}d ago`;
+}
+
 function MovementView() {
-  const inbound = movements.filter((m) => m.qty > 0).reduce((a, m) => a + m.qty, 0);
-  const outbound = movements.filter((m) => m.qty < 0).reduce((a, m) => a + Math.abs(m.qty), 0);
+  const { org } = useOrg();
+  const [movements, setMovements] = useState<DbMovement[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!org) { setMovements([]); setLoading(false); return; }
+    setLoading(true);
+    listMovements(org.id).then(setMovements).finally(() => setLoading(false));
+  }, [org?.id]);
+
+  const startOfToday = new Date().setHours(0, 0, 0, 0);
+  const today = movements.filter((m) => new Date(m.created_at).getTime() >= startOfToday);
+  const inbound = today.filter((m) => m.qty > 0).reduce((a, m) => a + m.qty, 0);
+  const outbound = today.filter((m) => m.qty < 0).reduce((a, m) => a + Math.abs(m.qty), 0);
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-3">
         <StatTile label="Units in (today)" value={inbound} icon={PackagePlus} />
         <StatTile label="Units out (today)" value={outbound} icon={TrendingDown} />
-        <StatTile label="Net movement" value={inbound - outbound} icon={Activity} positive={inbound - outbound >= 0} />
+        <StatTile label="Net movement (today)" value={inbound - outbound} icon={Activity} positive={inbound - outbound >= 0} />
       </div>
       <Reveal>
         <GlassCard className="p-6">
           <SectionLabel icon={Activity}>Stock movement</SectionLabel>
           <div className="mt-4 space-y-1">
-            {movements.map((m, i) => {
+            {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>}
+            {!loading && movements.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">No stock movement yet — adjusting a product's stock in Products will show up here.</p>
+            )}
+            {movements.map((m) => {
               const tone = movementTone[m.type];
               return (
-                <div key={i} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
+                <div key={m.id} className="flex items-center gap-3 rounded-xl px-2 py-2.5">
                   <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-border bg-glass">
                     <tone.icon className="size-4" style={{ color: tone.color }} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-foreground/90"><span className="font-medium">{m.type}</span> · {m.name}</p>
+                    <p className="truncate text-sm text-foreground/90"><span className="font-medium">{m.type}</span> · {m.product_name}</p>
                     <p className="font-mono text-xs text-muted-foreground">{m.sku}</p>
                   </div>
                   <span className="text-sm font-semibold tabular-nums" style={{ color: m.qty > 0 ? "oklch(0.72 0.14 155)" : "oklch(0.84 0.14 84)" }}>
                     {m.qty > 0 ? "+" : ""}{m.qty}
                   </span>
-                  <span className="flex w-20 items-center justify-end gap-1 text-xs text-muted-foreground"><Clock className="size-3" /> {m.time}</span>
+                  <span className="flex w-20 items-center justify-end gap-1 text-xs text-muted-foreground"><Clock className="size-3" /> {movementTimeAgo(m.created_at)}</span>
                 </div>
               );
             })}
@@ -962,7 +987,7 @@ function AssistantView() {
           </span>
           <div>
             <p className="text-sm font-semibold tracking-tight">Inventory Copilot</p>
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="size-1.5 rounded-full bg-emerald-400" /> Forecasting 912 SKUs</p>
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="size-1.5 rounded-full bg-emerald-400" /> Forecasting {products.length} SKU{products.length === 1 ? "" : "s"}</p>
           </div>
         </div>
 

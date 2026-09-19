@@ -50,3 +50,6 @@ verify_jwt = true
 
 [functions.email-customer]
 verify_jwt = true
+
+[functions.invoice-view]
+verify_jwt = false

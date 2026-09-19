@@ -42,7 +42,7 @@ import { deleteOrganization, enabledModulesFor, INDUSTRIES, leaveOrganization, t
 import { deleteMyAccount, signOut } from "@/lib/use-auth";
 import { connectSlack, disconnectSlack, listConnections, syncStripe, testSlack, type DbConnection } from "@/lib/connections";
 import { hasStripeKey, removeStripeKey, saveStripeKey } from "@/lib/stripe-credentials";
-import { disableIngest, enableIngest, getIngestKey, inboundUrl } from "@/lib/inbound";
+import { disableIngest, enableIngest, getIngestKey, inboundUrl, invoiceViewUrl } from "@/lib/inbound";
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
 import { PLANS, getAiUsage, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
 import { cancelInvitation, deleteMember, inviteMember, listInvitations, listMembers, setMemberStatus, updateMember, type Invitation, type Member } from "@/lib/team";
@@ -890,6 +890,7 @@ function FormEndpointCard() {
 { "type": "supplier", "name": "Northwind Supply",
   "category": "Packaging", "country": "USA",
   "email": "sales@northwind.co", "lead_time_days": 7, "spend": 42000 }`;
+  const invoiceUrl = key ? invoiceViewUrl(key) : "";
 
   const copy = (text: string, what: string) => {
     navigator.clipboard?.writeText(text).then(() => { setCopied(what); setTimeout(() => setCopied(null), 1600); }).catch(() => {});
@@ -963,6 +964,20 @@ function FormEndpointCard() {
                   </div>
                   <pre className="overflow-x-auto rounded-xl border border-border bg-background/40 p-3 font-mono text-[0.68rem] leading-relaxed text-foreground/80">{supplierExample}</pre>
                 </div>
+              </div>
+            </div>
+
+            {/* Fetch-an-invoice docs */}
+            <div className="rounded-2xl border border-border bg-background/20 p-3">
+              <p className="text-[0.65rem] font-semibold uppercase tracking-wide text-gold">Fetch an invoice document</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                GET this URL (swap <span className="font-mono text-foreground/80">INVOICE_ID</span> for a real invoice's id — e.g. from the <span className="text-foreground/80">invoice.paid</span> webhook payload) to download that invoice as an HTML file. In n8n, an HTTP Request node with Response Format set to "File" turns it into binary data, ready to attach in Gmail or convert to PDF.
+              </p>
+              <div className="mt-2 flex items-center gap-2 rounded-xl border border-border bg-background/40 px-3 py-2">
+                <code className="min-w-0 flex-1 truncate font-mono text-[0.68rem] text-foreground/85">{invoiceUrl}</code>
+                <button onClick={() => copy(invoiceUrl, "inv")} className="flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[0.6rem] text-muted-foreground hover:text-foreground">
+                  {copied === "inv" ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3" />} {copied === "inv" ? "Copied" : "Copy"}
+                </button>
               </div>
             </div>
 

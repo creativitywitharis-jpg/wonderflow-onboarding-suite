@@ -6,6 +6,17 @@ export function inboundUrl(key: string): string {
   return `${base}/functions/v1/inbound?key=${key}`;
 }
 
+/**
+ * The public endpoint that returns one invoice as a fetchable HTML document
+ * (e.g. for n8n/Zapier to download and attach elsewhere). `invoiceId`
+ * defaults to a placeholder token meant to be replaced with the real id —
+ * e.g. an expression referencing the invoice.paid webhook's payload.
+ */
+export function invoiceViewUrl(key: string, invoiceId = "INVOICE_ID"): string {
+  const base = (import.meta as { env?: { VITE_SUPABASE_URL?: string } }).env?.VITE_SUPABASE_URL ?? "";
+  return `${base}/functions/v1/invoice-view?id=${invoiceId}&key=${key}`;
+}
+
 /** Read the org's current ingest key (null if the form endpoint is off). */
 export async function getIngestKey(orgId: string): Promise<string | null> {
   const { data } = await supabase.from("organizations").select("ingest_key").eq("id", orgId).maybeSingle();

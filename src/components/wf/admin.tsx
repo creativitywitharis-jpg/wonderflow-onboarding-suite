@@ -1015,6 +1015,16 @@ function FormEndpointCard() {
                   <li>The result lands as a real <span className="font-mono text-foreground/80">.html</span> attachment. Some mail apps preview <span className="font-mono text-foreground/80">.html</span> attachments as raw source instead of rendering them — that's the viewer, not the file; downloading and opening it shows the real styled invoice.</li>
                 </ol>
               </div>
+              <div className="mt-2 rounded-xl border border-border bg-background/30 p-3">
+                <p className="text-[0.65rem] font-semibold text-foreground/85">To use it in Make.com, step by step:</p>
+                <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-[0.7rem] leading-relaxed text-muted-foreground">
+                  <li>Trigger: <span className="text-foreground/80">Webhooks → Custom webhook</span>. Copy its URL into "Outbound webhooks" below, subscribed to <span className="text-foreground/80">Invoice paid</span>, save, then click <span className="text-foreground/80">Run once</span> in Make and mark a real invoice paid in Finance so it catches a genuine sample (not the endpoint's "Test" button — that sends a generic ping with no invoice data).</li>
+                  <li>Add an <span className="text-foreground/80">HTTP</span> module — specifically <span className="text-foreground/80">"Download a file"</span>, not "Make a request" (that one doesn't return an attachable file).</li>
+                  <li>Build its <span className="text-foreground/80">URL</span> field the same way: type the URL above up to <span className="font-mono text-foreground/80">?id=</span>, click in and insert <span className="font-mono text-foreground/80">data: invoice_id</span> from the webhook module, then keep typing <span className="font-mono text-foreground/80">&key=...</span> with your real key right after it.</li>
+                  <li>Add a <span className="text-foreground/80">Gmail → Send an Email</span> module. In its <span className="text-foreground/80">Attachments</span> field, select the <span className="text-foreground/80">HTTP - Download a file</span> module directly (the whole file bundle) — not a mapped sub-field, and not the raw invoice id.</li>
+                  <li>If Gmail shows <span className="font-mono text-foreground/80">[403] insufficient authentication scopes</span> on the connection, create a fresh connection and allow every permission Google's consent screen asks for — a partial grant causes exactly this error.</li>
+                </ol>
+              </div>
             </div>
 
             <div className="flex gap-2">

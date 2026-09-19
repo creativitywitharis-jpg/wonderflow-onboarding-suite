@@ -1006,6 +1006,15 @@ function FormEndpointCard() {
                   <li>Run it. The node's binary output can now be attached directly in a Gmail node, or piped through an HTML-to-PDF node first.</li>
                 </ol>
               </div>
+              <div className="mt-2 rounded-xl border border-border bg-background/30 p-3">
+                <p className="text-[0.65rem] font-semibold text-foreground/85">To use it in Zapier, step by step:</p>
+                <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-[0.7rem] leading-relaxed text-muted-foreground">
+                  <li>Trigger: <span className="text-foreground/80">Webhooks by Zapier → Catch Hook</span>. Paste its URL into "Outbound webhooks" below, subscribed to <span className="text-foreground/80">Invoice paid</span>, then click Test here so Zapier has a real sample to learn from.</li>
+                  <li>On the trigger's Configure step, set <span className="text-foreground/80">"Pick off a Child Key"</span> to <span className="font-mono text-foreground/80">data</span> — the real fields (<span className="font-mono text-foreground/80">invoice_id</span>, <span className="font-mono text-foreground/80">number</span>, etc.) are nested one level in, and this flattens them so later steps can find them directly.</li>
+                  <li>Add an action, e.g. <span className="text-foreground/80">Gmail → Send Email</span>. In its <span className="text-foreground/80">Attachments</span> field, don't just insert the invoice id alone — type the URL above up to <span className="font-mono text-foreground/80">?id=</span>, insert the <span className="text-foreground/80">Data Invoice Id</span> field from the trigger right there, then keep typing <span className="font-mono text-foreground/80">&key=...</span> with your real key. One field, three parts: typed text, inserted field, typed text.</li>
+                  <li>The result lands as a real <span className="font-mono text-foreground/80">.html</span> attachment. Some mail apps preview <span className="font-mono text-foreground/80">.html</span> attachments as raw source instead of rendering them — that's the viewer, not the file; downloading and opening it shows the real styled invoice.</li>
+                </ol>
+              </div>
             </div>
 
             <div className="flex gap-2">

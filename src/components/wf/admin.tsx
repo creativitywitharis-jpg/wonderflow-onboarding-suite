@@ -945,6 +945,15 @@ function FormEndpointCard() {
             </div>
             <p className="text-xs text-muted-foreground">Works with any tool that can POST a form — Webflow, WordPress, Framer, Typeform, Zapier/Make. Recognised fields: <span className="text-foreground/80">name, email, phone, company, message</span>. Add an <span className="text-foreground/80">amount</span> and it's logged as an order (rolling into loyalty).</p>
 
+            <div className="rounded-xl border border-border bg-background/30 p-3">
+              <p className="text-[0.65rem] font-semibold text-foreground/85">To send a lead from n8n instead of a website form:</p>
+              <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-[0.7rem] leading-relaxed text-muted-foreground">
+                <li>Add an <span className="text-foreground/80">HTTP Request</span> node. Method: <span className="font-mono text-foreground/80">POST</span>. URL: the endpoint above.</li>
+                <li>Set <span className="text-foreground/80">Body Content Type</span> to <span className="font-mono text-foreground/80">JSON</span> — <em>not</em> "Using Fields Below" (that wraps your data in an extra field n8n adds, so WonderFlow never sees <span className="font-mono text-foreground/80">name</span>/<span className="font-mono text-foreground/80">email</span> directly).</li>
+                <li>In the JSON body box, write the real fields directly — e.g. <span className="font-mono text-foreground/80">{"{ \"name\": \"...\", \"email\": \"...\" }"}</span>, pulling values from earlier nodes with expressions.</li>
+              </ol>
+            </div>
+
             {/* Catalog sync docs */}
             <div className="rounded-2xl border border-border bg-background/20 p-3">
               <p className="text-[0.65rem] font-semibold uppercase tracking-wide text-gold">Push products &amp; suppliers</p>
@@ -964,6 +973,14 @@ function FormEndpointCard() {
                   </div>
                   <pre className="overflow-x-auto rounded-xl border border-border bg-background/40 p-3 font-mono text-[0.68rem] leading-relaxed text-foreground/80">{supplierExample}</pre>
                 </div>
+              </div>
+              <div className="mt-2 rounded-xl border border-border bg-background/30 p-3">
+                <p className="text-[0.65rem] font-semibold text-foreground/85">To use one of these in n8n, step by step:</p>
+                <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-[0.7rem] leading-relaxed text-muted-foreground">
+                  <li>Add an <span className="text-foreground/80">HTTP Request</span> node. Method: <span className="font-mono text-foreground/80">POST</span>. URL: the endpoint above (not this whole example — just the URL before the <span className="font-mono text-foreground/80">{"{"}</span>).</li>
+                  <li>Set <span className="text-foreground/80">Body Content Type</span> to <span className="font-mono text-foreground/80">JSON</span> — <em>not</em> "Using Fields Below". That mode wraps everything as text inside one extra field instead of sending real top-level fields, so nothing matches and the sync silently fails.</li>
+                  <li>Paste just the <span className="font-mono text-foreground/80">{"{ ... }"}</span> object (copied above) into the JSON body box, and edit the values to real data.</li>
+                </ol>
               </div>
             </div>
 
@@ -1118,6 +1135,17 @@ function WebhooksCard() {
             <code className="font-mono text-foreground/80">x-wonderflow-signature: sha256=…</code>. Recompute{" "}
             <code className="font-mono text-foreground/80">HMAC-SHA256(secret, rawBody)</code> with the signing secret above and compare — a match proves it genuinely came from WonderFlow, unaltered. The secret never travels in the request.
           </p>
+        </div>
+
+        <div className="mt-2 rounded-xl border border-border bg-background/30 p-3">
+          <p className="text-[0.65rem] font-semibold text-foreground/85">To receive these in n8n, step by step:</p>
+          <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-[0.7rem] leading-relaxed text-muted-foreground">
+            <li>In n8n, create a workflow and add a <span className="text-foreground/80">Webhook</span> trigger node. Method: <span className="font-mono text-foreground/80">POST</span>.</li>
+            <li>Copy its <span className="text-foreground/80">Production URL</span> (the one without <span className="font-mono text-foreground/80">-test</span> in the path) and paste it above in "Add endpoint".</li>
+            <li>Back in n8n, flip the <span className="text-foreground/80">Active</span> toggle (top right) and save. This step is easy to miss — the Production URL returns a 404 to everyone, including WonderFlow's "Test" button, until the workflow is switched on.</li>
+            <li>Click <span className="text-foreground/80">Test</span> on the endpoint here — it should now show up as an item in n8n.</li>
+          </ol>
+          <p className="mt-2 text-[0.7rem] text-muted-foreground">Each event lands as one item with <span className="font-mono text-foreground/80">event</span>, <span className="font-mono text-foreground/80">created_at</span>, and the actual details nested under <span className="font-mono text-foreground/80">data</span> — e.g. an invoice's id is at <span className="font-mono text-foreground/80">{"{{ $json.body.data.invoice_id }}"}</span>, not at the top level.</p>
         </div>
       </GlassCard>
     </Reveal>

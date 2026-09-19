@@ -971,13 +971,23 @@ function FormEndpointCard() {
             <div className="rounded-2xl border border-border bg-background/20 p-3">
               <p className="text-[0.65rem] font-semibold uppercase tracking-wide text-gold">Fetch an invoice document</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                GET this URL (swap <span className="font-mono text-foreground/80">INVOICE_ID</span> for a real invoice's id — e.g. from the <span className="text-foreground/80">invoice.paid</span> webhook payload) to download that invoice as an HTML file. In n8n, an HTTP Request node with Response Format set to "File" turns it into binary data, ready to attach in Gmail or convert to PDF.
+                Downloads one invoice as a real file — for attaching it elsewhere, e.g. forwarding via Gmail after an <span className="text-foreground/80">invoice.paid</span> webhook. The URL below is a <span className="text-foreground/80">template</span>: it will not work pasted in as-is, because <span className="font-mono text-foreground/80">INVOICE_ID</span> is a placeholder, not a real invoice.
               </p>
               <div className="mt-2 flex items-center gap-2 rounded-xl border border-border bg-background/40 px-3 py-2">
                 <code className="min-w-0 flex-1 truncate font-mono text-[0.68rem] text-foreground/85">{invoiceUrl}</code>
                 <button onClick={() => copy(invoiceUrl, "inv")} className="flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[0.6rem] text-muted-foreground hover:text-foreground">
                   {copied === "inv" ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3" />} {copied === "inv" ? "Copied" : "Copy"}
                 </button>
+              </div>
+              <div className="mt-3 rounded-xl border border-border bg-background/30 p-3">
+                <p className="text-[0.65rem] font-semibold text-foreground/85">To use it in n8n, step by step:</p>
+                <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-[0.7rem] leading-relaxed text-muted-foreground">
+                  <li>Add an <span className="text-foreground/80">HTTP Request</span> node right after your webhook node.</li>
+                  <li>Method: <span className="font-mono text-foreground/80">GET</span>. Paste the URL above into the URL field.</li>
+                  <li>Replace <span className="font-mono text-foreground/80">INVOICE_ID</span> in that pasted URL with <span className="font-mono text-foreground/80">{"{{ $json.body.data.invoice_id }}"}</span> — that's where the real id lives inside what the webhook sends.</li>
+                  <li>Under <span className="text-foreground/80">Options → Response</span>, set <span className="text-foreground/80">Response Format</span> to <span className="font-mono text-foreground/80">File</span> — this is what actually turns it into binary data.</li>
+                  <li>Run it. The node's binary output can now be attached directly in a Gmail node, or piped through an HTML-to-PDF node first.</li>
+                </ol>
               </div>
             </div>
 

@@ -11,7 +11,9 @@ import {
   CreditCard,
   Cpu,
   Database,
+  Facebook,
   Globe,
+  Instagram,
   KeyRound,
   Link2,
   Loader2,
@@ -28,6 +30,7 @@ import {
   UserPlus,
   Users,
   UserX,
+  Video,
   X,
   Zap,
   type LucideIcon,
@@ -42,6 +45,7 @@ import { deleteOrganization, enabledModulesFor, INDUSTRIES, leaveOrganization, t
 import { deleteMyAccount, signOut } from "@/lib/use-auth";
 import { connectSlack, disconnectSlack, listConnections, syncStripe, testSlack, type DbConnection } from "@/lib/connections";
 import { hasStripeKey, removeStripeKey, saveStripeKey } from "@/lib/stripe-credentials";
+import { disconnectSocial, listSocialConnections, startSocialConnect, type SocialConnection } from "@/lib/social";
 import { disableIngest, enableIngest, getIngestKey, inboundUrl, invoiceViewUrl } from "@/lib/inbound";
 import { EVENT_CATALOG, createWebhook, deleteWebhook, listWebhooks, testWebhook, toggleWebhook, type DbWebhookEndpoint } from "@/lib/webhooks";
 import { PLANS, getAiUsage, getSubscription, openBillingPortal, planLimits, startCheckout, type PlanId, type SubscriptionRow } from "@/lib/billing";
@@ -1351,9 +1355,122 @@ function StripeCard({ conn, onChange }: { conn?: DbConnection; onChange: () => v
   );
 }
 
+// Real OAuth connections to Instagram/Facebook (one Meta app, one flow --
+// Meta returns a Facebook Page connection and, if that Page has a linked
+// Instagram Business account, an Instagram connection too) and TikTok.
+// Posting itself isn't wired up yet -- this is the connection layer,
+// ready for Content Studio to use once built. Until META_APP_ID/
+// TIKTOK_CLIENT_KEY are added as secrets (i.e. once your developer apps
+// are approved), Connect shows a clear "not configured yet" error instead
+// of a broken redirect.
+function MetaCard({ connections, onChange }: { connections: SocialConnection[]; onChange: () => void }) {
+  const { org } = useOrg();
+  const ig = connections.find((c) => c.provider === "meta_instagram");
+  const fb = connections.find((c) => c.provider === "meta_facebook");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const connect = async () => {
+    if (!org || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await startSocialConnect(org.id, "meta");
+    if (err) { setBusy(false); setError(err); }
+    // on success the page navigates away to Meta's consent screen
+  };
+  const disconnect = async (id: string) => {
+    setBusy(true);
+    await disconnectSocial(id);
+    setBusy(false);
+    onChange();
+  };
+
+  return (
+    <Reveal className="h-full">
+      <GlassCard className="flex h-full flex-col p-6">
+        <div className="flex items-center justify-between">
+          <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><Instagram className="size-5 text-gold" /></span>
+          {(ig || fb) && <span className="flex items-center gap-1.5 text-xs text-emerald-300"><StatusDot tone="ok" /> Connected</span>}
+        </div>
+        <p className="mt-4 text-sm font-semibold text-foreground">Instagram &amp; Facebook</p>
+        <p className="mt-1 flex-1 text-xs text-muted-foreground">Connect a Facebook Page (and its linked Instagram Business account) to post from WonderFlow.</p>
+
+        {!ig && !fb && (
+          <button onClick={connect} disabled={busy} className="mt-4 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)" }}>{busy ? "Redirecting…" : "Connect"}</button>
+        )}
+        {error && <p className="mt-2 text-[0.7rem] text-rose-300">{error}</p>}
+
+        {(ig || fb) && (
+          <div className="mt-4 space-y-2">
+            {ig && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-background/30 px-3 py-2">
+                <span className="flex items-center gap-1.5 text-xs text-foreground/85"><Instagram className="size-3.5" /> {ig.account_name ?? "Instagram"}</span>
+                <button onClick={() => disconnect(ig.id)} disabled={busy} className="text-[0.65rem] text-muted-foreground hover:text-rose-300 disabled:opacity-50">Disconnect</button>
+              </div>
+            )}
+            {fb && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-background/30 px-3 py-2">
+                <span className="flex items-center gap-1.5 text-xs text-foreground/85"><Facebook className="size-3.5" /> {fb.account_name ?? "Facebook Page"}</span>
+                <button onClick={() => disconnect(fb.id)} disabled={busy} className="text-[0.65rem] text-muted-foreground hover:text-rose-300 disabled:opacity-50">Disconnect</button>
+              </div>
+            )}
+          </div>
+        )}
+      </GlassCard>
+    </Reveal>
+  );
+}
+
+function TikTokCard({ connections, onChange }: { connections: SocialConnection[]; onChange: () => void }) {
+  const { org } = useOrg();
+  const conn = connections.find((c) => c.provider === "tiktok");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const connect = async () => {
+    if (!org || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await startSocialConnect(org.id, "tiktok");
+    if (err) { setBusy(false); setError(err); }
+  };
+  const disconnect = async () => {
+    if (!conn) return;
+    setBusy(true);
+    await disconnectSocial(conn.id);
+    setBusy(false);
+    onChange();
+  };
+
+  return (
+    <Reveal className="h-full">
+      <GlassCard className="flex h-full flex-col p-6">
+        <div className="flex items-center justify-between">
+          <span className="grid size-11 place-items-center rounded-2xl border border-border bg-glass"><Video className="size-5 text-gold" /></span>
+          {conn && <span className="flex items-center gap-1.5 text-xs text-emerald-300"><StatusDot tone="ok" /> Connected</span>}
+        </div>
+        <p className="mt-4 text-sm font-semibold text-foreground">TikTok</p>
+        <p className="mt-1 flex-1 text-xs text-muted-foreground">Connect your TikTok account to post from WonderFlow.</p>
+
+        {!conn ? (
+          <button onClick={connect} disabled={busy} className="mt-4 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60" style={{ background: "var(--gradient-gold)" }}>{busy ? "Redirecting…" : "Connect"}</button>
+        ) : (
+          <div className="mt-4 flex items-center justify-between gap-2 rounded-xl border border-border bg-background/30 px-3 py-2">
+            <span className="text-xs text-foreground/85">{conn.account_name ?? "TikTok account"}</span>
+            <button onClick={disconnect} disabled={busy} className="text-[0.65rem] text-muted-foreground hover:text-rose-300 disabled:opacity-50">Disconnect</button>
+          </div>
+        )}
+        {error && <p className="mt-2 text-[0.7rem] text-rose-300">{error}</p>}
+      </GlassCard>
+    </Reveal>
+  );
+}
+
 function IntegrationsView() {
   const { org } = useOrg();
   const [conns, setConns] = useState<DbConnection[]>([]);
+  const [socialConns, setSocialConns] = useState<SocialConnection[]>([]);
+  const [socialNotice, setSocialNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = async () => {
     if (!org) return;
@@ -1362,21 +1479,43 @@ function IntegrationsView() {
     } catch {
       /* connections table not applied yet — show all as available */
     }
+    setSocialConns(await listSocialConnections(org.id));
   };
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [org?.id]);
 
+  // The OAuth callback redirects back here with a plain status flag (never
+  // tokens) — surface it once, then clean the URL so a refresh doesn't
+  // re-show a stale banner.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("social_connected");
+    const err = params.get("social_error");
+    if (connected) setSocialNotice({ ok: true, text: `✓ Connected ${connected === "instagram" ? "Instagram" : connected === "facebook" ? "Facebook" : "TikTok"}.` });
+    else if (err) setSocialNotice({ ok: false, text: err });
+    if (connected || err) {
+      params.delete("social_connected");
+      params.delete("social_error");
+      window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+    }
+  }, []);
+
   const statusOf = (id: string) => conns.find((c) => c.provider === id);
 
   return (
     <div className="space-y-4">
+      {socialNotice && (
+        <p className={cn("rounded-2xl border px-4 py-3 text-sm", socialNotice.ok ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300" : "border-rose-400/30 bg-rose-500/5 text-rose-200")}>{socialNotice.text}</p>
+      )}
       <FormEndpointCard />
       <WebhooksCard />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <SlackCard conn={statusOf("slack")} onChange={load} />
         <StripeCard conn={statusOf("stripe")} onChange={load} />
+        <MetaCard connections={socialConns} onChange={load} />
+        <TikTokCard connections={socialConns} onChange={load} />
         {PROVIDERS.map((p, i) => (
           <Reveal key={p.id} delay={i * 50} className="h-full">
             <GlassCard className="flex h-full flex-col p-6">

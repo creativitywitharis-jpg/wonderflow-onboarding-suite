@@ -263,7 +263,11 @@ function Welcome() {
       </section>
 
       <footer className="border-t border-border/60 px-6 py-8 text-center text-xs text-muted-foreground">
-        WonderFlow OS · the AI operating system for small business · {new Date().getFullYear()}
+        <p>WonderFlow OS · the AI operating system for small business · {new Date().getFullYear()}</p>
+        <p className="mt-2 flex items-center justify-center gap-4">
+          <Link to="/privacy" className="hover:text-foreground">Privacy Policy</Link>
+          <Link to="/terms" className="hover:text-foreground">Terms of Service</Link>
+        </p>
       </footer>
     </main>
   );

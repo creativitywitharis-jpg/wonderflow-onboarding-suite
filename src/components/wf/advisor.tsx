@@ -378,7 +378,7 @@ function PredictionsView() {
                     <p className="text-[0.6rem] uppercase tracking-wide text-muted-foreground">confidence</p>
                   </div>
                 </div>
-                <div className="mt-3"><Sparkline data={p.trend} id={`pred-${i}`} /></div>
+                <div className="mt-3" title="Direction is real; the exact shape is illustrative — this business doesn't have tracked historical trend data yet"><Sparkline data={p.trend} id={`pred-${i}`} /></div>
               </GlassCard>
             </Reveal>
           ))}

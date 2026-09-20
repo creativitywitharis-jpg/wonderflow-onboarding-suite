@@ -639,6 +639,11 @@ function CampaignsView() {
 
 const contentTypes = ["Email", "Social post", "Ad copy", "Blog intro", "Design (image)"] as const;
 const tones = ["Bold", "Friendly", "Professional", "Playful"] as const;
+// Temporary manual kill-switch: WonderFlow is being handed out for free
+// right now to early testers for honest feedback, and image generation
+// costs real money per call regardless of plan -- so it's off for
+// everyone until this is flipped back on, not just gated by plan.
+const IMAGE_GEN_ENABLED = false;
 
 function ContentView() {
   const { org } = useOrg();
@@ -652,9 +657,10 @@ function ContentView() {
   const [copied, setCopied] = useState(false);
   const isImage = type === "Design (image)";
   // Image generation costs real money per call (OpenAI) — gated to orgs with
-  // an actual paid plan, not the free trial default.
+  // an actual paid plan, not the free trial default. Also see
+  // IMAGE_GEN_ENABLED above, which overrides this off entirely for now.
   const isSubscribed = !!org?.plan && org.plan !== "trial";
-  const imageLocked = isImage && !isSubscribed;
+  const imageLocked = isImage && (!IMAGE_GEN_ENABLED || !isSubscribed);
 
   const generate = async () => {
     if (busy || imageLocked) return;
@@ -703,12 +709,21 @@ function ContentView() {
             <div className="flex items-center gap-2"><Wand2 className="size-4 text-gold" /><p className="text-sm font-semibold">AI Content Studio</p></div>
             <label className="mt-4 block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Type</span>
               <div className="flex flex-wrap gap-1.5">
-                {contentTypes.map((t) => (<button key={t} onClick={() => setType(t)} className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors", type === t ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={type === t ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>{t}</button>))}
+                {contentTypes.filter((t) => IMAGE_GEN_ENABLED || t !== "Design (image)").map((t) => (<button key={t} onClick={() => setType(t)} className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors", type === t ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={type === t ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>{t}</button>))}
+                {!IMAGE_GEN_ENABLED && (
+                  <button type="button" disabled title="Image generation is temporarily off during early access" className="cursor-not-allowed rounded-full border border-border bg-glass px-2.5 py-1 text-xs text-muted-foreground/50">
+                    Design (image) <span className="text-gold">*</span>
+                  </button>
+                )}
                 <button type="button" disabled title="Video generation — coming soon" className="cursor-not-allowed rounded-full border border-border bg-glass px-2.5 py-1 text-xs text-muted-foreground/50">
                   Video <span className="text-gold">*</span>
                 </button>
               </div>
-              {imageLocked && <p className="mt-1.5 text-[0.65rem] text-muted-foreground">Image generation is a paid-plan feature — costs real money per image, so it's not on the free trial.</p>}
+              {imageLocked && (
+                <p className="mt-1.5 text-[0.65rem] text-muted-foreground">
+                  {IMAGE_GEN_ENABLED ? "Image generation is a paid-plan feature — costs real money per image, so it's not on the free trial." : "Image generation is temporarily off during early access."}
+                </p>
+              )}
             </label>
             <label className="mt-3 block text-xs"><span className="mb-1.5 block uppercase tracking-wide text-muted-foreground">Tone</span>
               <div className="flex flex-wrap gap-1.5">{tones.map((t) => (<button key={t} onClick={() => setTone(t)} className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors", tone === t ? "border-gold/50 text-foreground" : "border-border bg-glass text-muted-foreground")} style={tone === t ? { background: "oklch(0.84 0.14 84 / 12%)" } : undefined}>{t}</button>))}</div>

@@ -274,13 +274,6 @@ const poStatusColor: Record<string, string> = {
   Received: "oklch(0.72 0.14 155)",
 };
 
-const materials = [
-  { name: "Amber Glass Bottle", your: 0.82, market: 0.94, trend: [0.9, 0.92, 0.89, 0.86, 0.84, 0.83, 0.82], change: -4 },
-  { name: "Jojoba Oil (per L)", your: 12.4, market: 11.8, trend: [10.8, 11.1, 11.4, 11.9, 12.0, 12.2, 12.4], change: 3 },
-  { name: "Kraft Box", your: 0.36, market: 0.41, trend: [0.4, 0.39, 0.39, 0.38, 0.37, 0.36, 0.36], change: -2 },
-  { name: "Pump Dispenser", your: 0.28, market: 0.33, trend: [0.34, 0.33, 0.32, 0.31, 0.3, 0.29, 0.28], change: -6 },
-];
-
 /* ──────────────────────────────────────────────────────────────────────
  * Small viz
  * ─────────────────────────────────────────────────────────────────── */
@@ -771,7 +764,7 @@ function SupplierProfile({ s, onBack }: { s: Supplier; onBack: () => void }) {
               <div className="relative flex items-start gap-3">
                 <span className="orb grid size-9 shrink-0 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Brain className="size-4" stroke="oklch(0.2 0.02 70)" /></span>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">AI supplier summary</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Supplier summary</p>
                   <p className="mt-2 text-sm leading-relaxed text-foreground/90">
                     {s.name} is a {s.status.toLowerCase()} {s.category.toLowerCase()} supplier with {s.reliability}% reliability and {s.onTime}% on-time delivery.
                     {" "}Pricing runs {s.priceIndex < 0 ? `${Math.abs(s.priceIndex)}% below` : `${s.priceIndex}% above`} market.
@@ -854,7 +847,7 @@ function CompareView() {
             <div className="relative flex items-center gap-3">
               <span className="orb grid size-9 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Sparkles className="size-4" stroke="oklch(0.2 0.02 70)" /></span>
               <p className="text-sm text-foreground/90">
-                AI verdict: <span className="font-semibold text-gold">{winner?.name}</span> is the strongest overall —
+                Verdict: <span className="font-semibold text-gold">{winner?.name}</span> is the strongest overall —
                 best balance of price, reliability and delivery. Consider it your primary for {winner?.category.toLowerCase()}.
               </p>
             </div>
@@ -1070,60 +1063,62 @@ function OrdersView() {
   );
 }
 
+// Honestly empty: comparing "your price" to a real market benchmark needs an
+// external price-tracking data source, which nothing here is connected to.
+// Showing fabricated market numbers would be a real lie, not a stretch --
+// so this stays an honest empty state until a real feed exists, the same
+// call made for Growth's Analytics tab (no web-traffic/ad-spend tracking).
 function PricingView() {
-  const savings = materials.filter((m) => m.your < m.market).reduce((a, m) => a + (m.market - m.your), 0);
   return (
-    <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile label="Tracked materials" value={64} icon={Package} />
-        <StatTile label="Below market" value={72} suffix="%" delta="5 pts" icon={TrendingDown} />
-        <StatTile label="Est. monthly savings" value={8400} prefix="$" delta="3.2%" icon={DollarSign} />
-      </div>
-      <Reveal>
-        <GlassCard className="p-6">
-          <div className="flex items-center justify-between">
-            <SectionLabel icon={DollarSign}>Price intelligence</SectionLabel>
-            <span className="text-xs text-muted-foreground">your price vs market</span>
-          </div>
-          <div className="mt-4 space-y-2">
-            {materials.map((m) => {
-              const cheaper = m.your < m.market;
-              const diff = Math.round(((m.your - m.market) / m.market) * 100);
-              return (
-                <div key={m.name} className="grid grid-cols-[1fr_auto_auto] items-center gap-4 rounded-2xl border border-border bg-background/30 p-3 sm:grid-cols-[1.4fr_auto_auto_auto]">
-                  <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{m.name}</p><p className="text-xs text-muted-foreground">market ${m.market.toFixed(2)}</p></div>
-                  <div className="hidden sm:block"><PriceLine data={m.trend} up={m.change > 0} /></div>
-                  <span className="text-right text-sm font-semibold tabular-nums text-foreground">${m.your.toFixed(2)}</span>
-                  <Delta value={`${Math.abs(diff)}%`} positive={cheaper} />
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-4 flex items-center gap-2 rounded-2xl border border-gold/25 bg-glass p-3 text-sm text-foreground/85">
-            <Zap className="size-4 shrink-0 text-gold" />
-            You're beating market on 3 of 4 key materials — locking Jojoba Oil now could avoid a projected 6% Q4 rise.
-          </p>
-        </GlassCard>
-      </Reveal>
-    </div>
+    <Reveal>
+      <GlassCard className="p-10 text-center">
+        <span className="orb mx-auto grid size-14 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
+          <DollarSign className="size-6" stroke="oklch(0.2 0.02 70)" />
+        </span>
+        <h2 className="mt-5 text-xl" style={{ fontFamily: "var(--font-display)" }}>No market price feed connected</h2>
+        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+          Comparing what you pay to a real market price needs an external price-tracking data source, which isn't
+          connected yet — so there's nothing honest to show here. Your actual purchase order costs are already real
+          and visible under the Purchase orders tab.
+        </p>
+      </GlassCard>
+    </Reveal>
   );
 }
 
 function RiskView() {
   const { suppliers } = useSuppliersData();
   const high = suppliers.filter((s) => s.risk === "High");
-  const categoriesRisk = [
-    { label: "Delivery risk", value: 28 },
-    { label: "Financial risk", value: 16 },
-    { label: "Geographic concentration", value: 42 },
-    { label: "Single-source exposure", value: 34 },
-  ];
+  const totalSpend = suppliers.reduce((a, s) => a + s.spend, 0);
+  // Spend-weighted, using each supplier's real impact/likelihood (already
+  // honestly derived from real rating + lead time) -- not a fabricated score.
+  const portfolioRisk = totalSpend
+    ? Math.round(suppliers.reduce((a, s) => a + (s.impact * s.likelihood) / 100 * (s.spend / totalSpend), 0))
+    : 0;
+  const avgLeadTime = suppliers.length ? Math.round(suppliers.reduce((a, s) => a + s.leadTime, 0) / suppliers.length) : 0;
+
+  // Real risk exposure by supplier category, spend-weighted. Replaces a
+  // fabricated "risk type" breakdown (financial risk / single-source
+  // exposure aren't tracked anywhere, so they can't be shown honestly).
+  const byCategory = new Map<string, { spend: number; weighted: number }>();
+  for (const s of suppliers) {
+    const cat = s.category || "Uncategorized";
+    const cur = byCategory.get(cat) ?? { spend: 0, weighted: 0 };
+    cur.spend += s.spend;
+    cur.weighted += ((s.impact * s.likelihood) / 100) * s.spend;
+    byCategory.set(cat, cur);
+  }
+  const categoryRisk = [...byCategory.entries()]
+    .map(([label, v]) => ({ label, value: v.spend ? Math.round(v.weighted / v.spend) : 0 }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 4);
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile label="High-risk suppliers" value={1} icon={ShieldAlert} positive={false} />
-        <StatTile label="Portfolio risk score" value={22} suffix="/100" icon={ShieldCheck} />
-        <StatTile label="Single-sourced items" value={11} icon={AlertTriangle} positive={false} />
+        <StatTile label="High-risk suppliers" value={high.length} icon={ShieldAlert} positive={high.length === 0} />
+        <StatTile label="Portfolio risk score" value={portfolioRisk} suffix="/100" icon={ShieldCheck} positive={portfolioRisk < 40} />
+        <StatTile label="Avg. lead time" value={avgLeadTime} suffix=" days" icon={AlertTriangle} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
@@ -1137,12 +1132,14 @@ function RiskView() {
 
         <Reveal className="h-full" delay={80}>
           <GlassCard className="flex h-full flex-col p-6">
-            <SectionLabel icon={BarChart3}>Risk exposure</SectionLabel>
-            <div className="mt-5 space-y-4">
-              {categoriesRisk.map((c) => (
+            <SectionLabel icon={BarChart3}>Risk by category</SectionLabel>
+            <p className="mt-1 text-xs text-muted-foreground">Spend-weighted, from real supplier rating &amp; lead time</p>
+            <div className="mt-4 space-y-4">
+              {categoryRisk.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">Add suppliers to see risk by category.</p>}
+              {categoryRisk.map((c) => (
                 <div key={c.label}>
-                  <div className="flex items-baseline justify-between text-sm"><span className="text-foreground/80">{c.label}</span><span className="tabular-nums text-muted-foreground">{c.value}%</span></div>
-                  <div className="mt-1.5"><Bar value={c.value * 2} tone={c.value > 35 ? "gold" : "muted"} /></div>
+                  <div className="flex items-baseline justify-between text-sm"><span className="text-foreground/80">{c.label}</span><span className="tabular-nums text-muted-foreground">{c.value}/100</span></div>
+                  <div className="mt-1.5"><Bar value={c.value} tone={c.value > 50 ? "gold" : "muted"} /></div>
                 </div>
               ))}
             </div>
@@ -1215,7 +1212,7 @@ function AssistantView() {
           <span className="orb grid size-9 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}><Bot className="size-4" stroke="oklch(0.2 0.02 70)" /></span>
           <div>
             <p className="text-sm font-semibold tracking-tight">Procurement Copilot</p>
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="size-1.5 rounded-full bg-emerald-400" /> Monitoring 48 suppliers</p>
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="size-1.5 rounded-full bg-emerald-400" /> Monitoring {suppliers.length} supplier{suppliers.length === 1 ? "" : "s"}</p>
           </div>
         </div>
         <div ref={scrollRef} className="mt-4 flex-1 space-y-3 overflow-y-auto pr-1">

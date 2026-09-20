@@ -22,10 +22,13 @@ import { Route as GrowthRouteImport } from './routes/growth'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as OrdersRouteImport } from './routes/orders'
+import { Route as PlatformRouteImport } from './routes/platform'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ScoreRouteImport } from './routes/score'
 import { Route as SuppliersRouteImport } from './routes/suppliers'
 import { Route as TeamRouteImport } from './routes/team'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as UnsubscribeRouteImport } from './routes/unsubscribe'
 import { Route as LovableEmailAuthPreviewRouteImport } from './routes/lovable/email/auth/preview'
 import { Route as LovableEmailAuthWebhookRouteImport } from './routes/lovable/email/auth/webhook'
@@ -95,6 +98,16 @@ const OrdersRoute = OrdersRouteImport.update({
   path: '/orders',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlatformRoute = PlatformRouteImport.update({
+  id: '/platform',
+  path: '/platform',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
@@ -113,6 +126,11 @@ const SuppliersRoute = SuppliersRouteImport.update({
 const TeamRoute = TeamRouteImport.update({
   id: '/team',
   path: '/team',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const UnsubscribeRoute = UnsubscribeRouteImport.update({
@@ -145,10 +163,13 @@ export interface FileRoutesByFullPath {
   '/inventory': typeof InventoryRoute
   '/onboarding': typeof OnboardingRoute
   '/orders': typeof OrdersRoute
+  '/platform': typeof PlatformRoute
+  '/privacy': typeof PrivacyRoute
   '/reset-password': typeof ResetPasswordRoute
   '/score': typeof ScoreRoute
   '/suppliers': typeof SuppliersRoute
   '/team': typeof TeamRoute
+  '/terms': typeof TermsRoute
   '/unsubscribe': typeof UnsubscribeRoute
   '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
   '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
@@ -167,10 +188,13 @@ export interface FileRoutesByTo {
   '/inventory': typeof InventoryRoute
   '/onboarding': typeof OnboardingRoute
   '/orders': typeof OrdersRoute
+  '/platform': typeof PlatformRoute
+  '/privacy': typeof PrivacyRoute
   '/reset-password': typeof ResetPasswordRoute
   '/score': typeof ScoreRoute
   '/suppliers': typeof SuppliersRoute
   '/team': typeof TeamRoute
+  '/terms': typeof TermsRoute
   '/unsubscribe': typeof UnsubscribeRoute
   '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
   '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
@@ -190,10 +214,13 @@ export interface FileRoutesById {
   '/inventory': typeof InventoryRoute
   '/onboarding': typeof OnboardingRoute
   '/orders': typeof OrdersRoute
+  '/platform': typeof PlatformRoute
+  '/privacy': typeof PrivacyRoute
   '/reset-password': typeof ResetPasswordRoute
   '/score': typeof ScoreRoute
   '/suppliers': typeof SuppliersRoute
   '/team': typeof TeamRoute
+  '/terms': typeof TermsRoute
   '/unsubscribe': typeof UnsubscribeRoute
   '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
   '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
@@ -214,10 +241,13 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/onboarding'
     | '/orders'
+    | '/platform'
+    | '/privacy'
     | '/reset-password'
     | '/score'
     | '/suppliers'
     | '/team'
+    | '/terms'
     | '/unsubscribe'
     | '/lovable/email/auth/preview'
     | '/lovable/email/auth/webhook'
@@ -236,10 +266,13 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/onboarding'
     | '/orders'
+    | '/platform'
+    | '/privacy'
     | '/reset-password'
     | '/score'
     | '/suppliers'
     | '/team'
+    | '/terms'
     | '/unsubscribe'
     | '/lovable/email/auth/preview'
     | '/lovable/email/auth/webhook'
@@ -258,10 +291,13 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/onboarding'
     | '/orders'
+    | '/platform'
+    | '/privacy'
     | '/reset-password'
     | '/score'
     | '/suppliers'
     | '/team'
+    | '/terms'
     | '/unsubscribe'
     | '/lovable/email/auth/preview'
     | '/lovable/email/auth/webhook'
@@ -281,10 +317,13 @@ export interface RootRouteChildren {
   InventoryRoute: typeof InventoryRoute
   OnboardingRoute: typeof OnboardingRoute
   OrdersRoute: typeof OrdersRoute
+  PlatformRoute: typeof PlatformRoute
+  PrivacyRoute: typeof PrivacyRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   ScoreRoute: typeof ScoreRoute
   SuppliersRoute: typeof SuppliersRoute
   TeamRoute: typeof TeamRoute
+  TermsRoute: typeof TermsRoute
   UnsubscribeRoute: typeof UnsubscribeRoute
   LovableEmailAuthPreviewRoute: typeof LovableEmailAuthPreviewRoute
   LovableEmailAuthWebhookRoute: typeof LovableEmailAuthWebhookRoute
@@ -383,6 +422,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrdersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/platform': {
+      id: '/platform'
+      path: '/platform'
+      fullPath: '/platform'
+      preLoaderRoute: typeof PlatformRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/reset-password': {
       id: '/reset-password'
       path: '/reset-password'
@@ -409,6 +462,13 @@ declare module '@tanstack/react-router' {
       path: '/team'
       fullPath: '/team'
       preLoaderRoute: typeof TeamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/unsubscribe': {
@@ -449,10 +509,13 @@ const rootRouteChildren: RootRouteChildren = {
   InventoryRoute: InventoryRoute,
   OnboardingRoute: OnboardingRoute,
   OrdersRoute: OrdersRoute,
+  PlatformRoute: PlatformRoute,
+  PrivacyRoute: PrivacyRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   ScoreRoute: ScoreRoute,
   SuppliersRoute: SuppliersRoute,
   TeamRoute: TeamRoute,
+  TermsRoute: TermsRoute,
   UnsubscribeRoute: UnsubscribeRoute,
   LovableEmailAuthPreviewRoute: LovableEmailAuthPreviewRoute,
   LovableEmailAuthWebhookRoute: LovableEmailAuthWebhookRoute,

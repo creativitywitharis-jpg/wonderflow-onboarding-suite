@@ -146,6 +146,7 @@ const APP_PREFIXES = [
   "/admin",
   "/automation",
   "/team",
+  "/platform",
 ];
 
 function RootComponent() {

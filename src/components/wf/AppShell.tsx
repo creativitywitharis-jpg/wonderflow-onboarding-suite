@@ -27,6 +27,7 @@ import {
   Search,
   Send,
   Shield,
+  ShieldAlert,
   ShoppingCart,
   Sparkles,
   Star,
@@ -46,6 +47,7 @@ import { signOut } from "@/lib/use-auth";
 import { askAI } from "@/lib/ai";
 import { listHelpMessages, saveHelpMessage } from "@/lib/help";
 import { listFeedback, submitFeedback, type FeedbackEntry, type FeedbackType } from "@/lib/feedback";
+import { isPlatformAdmin } from "@/lib/platform-admin";
 import { getAiUsage, planLimits } from "@/lib/billing";
 import { buildInsights, type Insight } from "@/lib/insights";
 
@@ -591,6 +593,11 @@ function Sidebar({ collapsed, onToggle, onHelp, onFeedback }: { collapsed: boole
   const { org, orgs, role, userName, userEmail, switchOrg } = useOrg();
   const navigate = useNavigate();
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  // Only ever true for the specific account(s) in platform_admins -- see
+  // that table's migration for why this is deliberately not something a
+  // regular org owner/admin can have.
+  const [platformAdmin, setPlatformAdmin] = useState(false);
+  useEffect(() => { isPlatformAdmin().then(setPlatformAdmin); }, []);
 
   const enabled = org?.enabled_modules ?? ALL_MODULES;
   const planMods = planLimits(org?.plan).modules;
@@ -730,6 +737,11 @@ function Sidebar({ collapsed, onToggle, onHelp, onFeedback }: { collapsed: boole
 
       {/* bottom */}
       <div className="space-y-0.5 border-t border-border pt-2">
+        {platformAdmin && (
+          <Link to="/platform" title={collapsed ? "Platform" : undefined} className={cn("flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}>
+            <ShieldAlert className="size-4 shrink-0" />{!collapsed && "Platform"}
+          </Link>
+        )}
         <button onClick={onFeedback} title={collapsed ? "Suggestions & Reviews" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><Megaphone className="size-4 shrink-0" />{!collapsed && "Suggestions & Reviews"}</button>
         <button onClick={onHelp} title={collapsed ? "Help" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><HelpCircle className="size-4 shrink-0" />{!collapsed && "Help"}</button>
         <button onClick={doSignOut} title={collapsed ? "Sign out" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-glass hover:text-foreground", collapsed && "justify-center px-0")}><LogOut className="size-4 shrink-0" />{!collapsed && "Sign out"}</button>

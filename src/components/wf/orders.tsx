@@ -329,15 +329,6 @@ function sampleOrders(customers: DbCustomer[]): NewOrder[] {
   }));
 }
 
-const products = [
-  { id: "p1", name: "Aurora Serum", price: 68, tag: "Bestseller" },
-  { id: "p2", name: "Midnight Oil", price: 54, tag: "Popular" },
-  { id: "p3", name: "Golden Hour Balm", price: 42, tag: "New" },
-  { id: "p4", name: "Silk Cleanser", price: 36, tag: "" },
-  { id: "p5", name: "Radiance Mask", price: 48, tag: "" },
-  { id: "p6", name: "Dew Mist", price: 28, tag: "" },
-];
-
 const revenueSeries = [42, 48, 45, 58, 54, 66, 72, 68, 81, 77, 89, 96];
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -742,17 +733,13 @@ function DetailsView({ orderId }: { orderId: string }) {
           <Reveal>
             <GlassCard className="glass-strong relative overflow-hidden p-6">
               <div className="veil pointer-events-none absolute inset-0 opacity-60" />
-              <div className="relative flex items-start gap-3">
-                <span className="orb grid size-9 shrink-0 place-items-center rounded-full" style={{ background: "var(--gradient-gold)" }}>
-                  <Brain className="size-4" stroke="oklch(0.2 0.02 70)" />
+              <div className="relative flex items-center gap-3">
+                <span className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-glass">
+                  <Truck className="size-4 text-gold" />
                 </span>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Order intelligence</p>
-                  <ul className="mt-3 space-y-2 text-sm text-foreground/85">
-                    <li className="flex items-center gap-2"><CheckCircle2 className="size-3.5 text-emerald-400" /> Fraud risk: low (score 4/100)</li>
-                    <li className="flex items-center gap-2"><Truck className="size-3.5 text-gold" /> Predicted delivery: {o.eta}</li>
-                    <li className="flex items-center gap-2"><Zap className="size-3.5 text-gold" /> Upsell: Dew Mist, bought with this 61% of the time</li>
-                  </ul>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">Delivery</p>
+                  <p className="mt-1 text-sm text-foreground/85">{o.eta && o.eta !== "—" ? `ETA ${o.eta}` : "No ETA set yet"}</p>
                 </div>
               </div>
             </GlassCard>
@@ -781,9 +768,7 @@ function DetailsView({ orderId }: { orderId: string }) {
 
 function CreateView() {
   const { customers, addOrder, products: dbProducts } = useOrdersData();
-  const catalog = dbProducts.length
-    ? dbProducts.map((p) => ({ id: p.id, name: p.name, price: Number(p.price), tag: "" }))
-    : products;
+  const catalog = dbProducts.map((p) => ({ id: p.id, name: p.name, price: Number(p.price), tag: "" }));
   const [cart, setCart] = useState<Record<string, number>>({});
   const [customer, setCustomer] = useState("");
   const [busy, setBusy] = useState(false);
@@ -841,20 +826,23 @@ function CreateView() {
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">AI order assistant</p>
                 <p className="mt-2 text-sm leading-relaxed text-foreground/90">
-                  Building an order{customer ? <> for <span className="text-gold">{customer}</span></> : ""}. Add
-                  items from your catalog — top sellers are one tap away.
+                  {catalog.length
+                    ? <>Building an order{customer ? <> for <span className="text-gold">{customer}</span></> : ""}. Add items from your catalog — top sellers are one tap away.</>
+                    : "Add products in Inventory first, then they'll show up here to build an order from."}
                 </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {catalog.slice(0, 3).map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => add(p.id)}
-                      className="flex items-center gap-1.5 rounded-full border border-gold/30 bg-glass px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-gold/60"
-                    >
-                      <Plus className="size-3 text-gold" /> {p.name} · ${p.price}
-                    </button>
-                  ))}
-                </div>
+                {catalog.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {catalog.slice(0, 3).map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => add(p.id)}
+                        className="flex items-center gap-1.5 rounded-full border border-gold/30 bg-glass px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-gold/60"
+                      >
+                        <Plus className="size-3 text-gold" /> {p.name} · ${p.price}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </GlassCard>
@@ -863,6 +851,7 @@ function CreateView() {
         <Reveal delay={60}>
           <GlassCard className="p-6">
             <SectionLabel icon={Package}>Product catalog</SectionLabel>
+            {catalog.length === 0 && <p className="mt-4 text-center text-sm text-muted-foreground">No products yet — add some in Inventory to sell them here.</p>}
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {catalog.map((p) => (
                 <div key={p.id} className="flex items-center gap-3 rounded-2xl border border-border bg-background/30 p-3">

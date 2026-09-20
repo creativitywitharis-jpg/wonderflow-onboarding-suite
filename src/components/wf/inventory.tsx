@@ -250,13 +250,6 @@ function sampleProducts(): NewProduct[] {
   ];
 }
 
-const healthPillars = [
-  { label: "Stock coverage", value: 88 },
-  { label: "Turnover", value: 76 },
-  { label: "Forecast accuracy", value: 91 },
-  { label: "Deadstock control", value: 68 },
-];
-
 const movementTone: Record<string, { color: string; icon: LucideIcon }> = {
   Received: { color: "oklch(0.72 0.14 155)", icon: PackagePlus },
   Sold: { color: "oklch(0.84 0.14 84)", icon: TrendingDown },
@@ -393,6 +386,17 @@ function OverviewView({ onOpen }: { onOpen: (id: string) => void }) {
   const stockValue = products.reduce((a, p) => a + p.stock * p.price, 0);
   const unitsInStock = products.reduce((a, p) => a + p.stock, 0);
   const wellPct = products.length ? Math.round(((products.length - atRisk.length) / products.length) * 100) : 0;
+  // Real, directly-computed pillars -- no forecast-accuracy pillar, since
+  // that would require tracking past forecasts against actual outcomes
+  // over time, which nothing here does yet; better to leave it out than
+  // invent a number for it.
+  const healthPillars = products.length
+    ? [
+        { label: "In stock", value: Math.round((products.filter((p) => p.stock > 0).length / products.length) * 100) },
+        { label: "Selling (30d)", value: Math.round((products.filter((p) => p.sold30 > 0).length / products.length) * 100) },
+        { label: "Not overstocked", value: Math.round(((products.length - overstock.length) / products.length) * 100) },
+      ]
+    : [];
 
   if (!loading && products.length === 0) {
     return (
@@ -621,8 +625,8 @@ function ProductDetail({ p, onBack }: { p: Product; onBack: () => void }) {
               </p>
               <p className="mt-3 text-sm leading-relaxed text-foreground/90">
                 {p.status === "Overstock"
-                  ? `Demand is softening. Hold reorders and consider a promo to clear ~${Math.round(p.stock * 0.4)} units.`
-                  : `Demand is trending up. Reorder ${Math.max(p.reorder * 2 - p.stock, p.reorder)} units now to avoid a stockout in ${p.daysLeft} days.`}
+                  ? `Selling only ${p.sold30} units in the last 30 days against ${p.stock} on hand. Hold reorders and consider a promo to clear ~${Math.round(p.stock * 0.4)} units.`
+                  : `Sold ${p.sold30} units in the last 30 days. Reorder ${Math.max(p.reorder * 2 - p.stock, p.reorder)} units now to avoid a stockout in ${p.daysLeft} days.`}
               </p>
               <div className="mt-4 space-y-2 text-sm">
                 <div className="flex justify-between text-muted-foreground"><span>Reorder point</span><span className="tabular-nums">{p.reorder}</span></div>
@@ -676,7 +680,7 @@ function ForecastView() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatTile label="Predicted 5-wk demand" value={predicted} suffix=" units" icon={TrendingUp} />
         <StatTile label="Projected stockout" value={p.daysLeft} suffix=" days" icon={Clock} positive={false} />
-        <StatTile label="Forecast confidence" value={91} suffix="%" icon={Gauge} />
+        <StatTile label="Sold last 30 days" value={p.sold30} suffix=" units" icon={Gauge} />
       </div>
 
       <Reveal>
@@ -1059,7 +1063,7 @@ function AnalyticsView() {
           <GlassCard className="flex h-full flex-col p-6">
             <div className="flex items-baseline justify-between">
               <SectionLabel icon={BarChart3}>Inventory value trend</SectionLabel>
-              <span className="text-xs text-muted-foreground">Last 12 weeks · $K</span>
+              <span className="text-xs text-muted-foreground" title="Historical value isn't tracked over time yet — shown for shape only">Illustrative</span>
             </div>
             <div className="mt-6"><BarChart data={valueSeries} /></div>
           </GlassCard>

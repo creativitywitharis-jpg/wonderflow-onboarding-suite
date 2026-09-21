@@ -1,15 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
 import {
   ArrowRight,
   BarChart3,
   Boxes,
   Brain,
-  Check,
   Factory,
   LayoutGrid,
   Megaphone,
-  Send,
   ShoppingCart,
   Sparkles,
   Users,
@@ -19,15 +16,6 @@ import {
 import { Backdrop } from "@/components/wf/Backdrop";
 import { Brand } from "@/components/wf/Brand";
 import { Eyebrow, GhostButton, GlassCard, GoldButton } from "@/components/wf/ui";
-import { supabase } from "@/lib/supabase";
-
-// ── Waitlist wiring ───────────────────────────────────────────────────────
-// Primary: WonderFlow's own `waitlist` edge function (stores signups + sends a
-// branded welcome email via Resend). If it isn't deployed yet, the form falls
-// back to this Formspree endpoint, then to a plain email — so no signup is ever
-// lost while the backend waits to deploy.
-const WAITLIST_ENDPOINT = "https://formspree.io/f/mzeprnqv";
-const CONTACT_EMAIL = "hello@wonderglowstudios.org";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -36,86 +24,14 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "WonderFlow OS is the AI-powered operating system for small businesses — CRM, orders, inventory, finance, marketing and automation in one place, with an AI that runs it alongside you. Join the waitlist.",
+          "WonderFlow OS is the AI-powered operating system for small businesses — CRM, orders, inventory, finance, marketing and automation in one place, with an AI that runs it alongside you. Sign up free.",
       },
       { property: "og:title", content: "WonderFlow OS — one AI command center for your whole business" },
-      { property: "og:description", content: "Replace six tools and a spreadsheet with one intelligent workspace. Join the early-access waitlist." },
+      { property: "og:description", content: "Replace six tools and a spreadsheet with one intelligent workspace. Start free today." },
     ],
   }),
   component: Welcome,
 });
-
-function WaitlistForm({ big = false }: { big?: boolean }) {
-  const [email, setEmail] = useState("");
-  const [state, setState] = useState<"idle" | "sending" | "done" | "error">("idle");
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    const value = email.trim();
-    if (!value || state === "sending") return;
-    setState("sending");
-
-    // 1) Preferred: WonderFlow's own endpoint (stores + sends a branded welcome).
-    try {
-      const { error } = await supabase.functions.invoke("waitlist", { body: { email: value, source: "landing" } });
-      if (!error) {
-        setState("done");
-        return;
-      }
-    } catch {
-      /* function not deployed yet — fall through to Formspree */
-    }
-
-    // 2) Fallback: Formspree.
-    if (WAITLIST_ENDPOINT) {
-      try {
-        const r = await fetch(WAITLIST_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ email: value, source: "landing" }),
-        });
-        setState(r.ok ? "done" : "error");
-        return;
-      } catch {
-        setState("error");
-        return;
-      }
-    }
-
-    // 3) Last resort: open an email so nothing is ever lost.
-    window.location.href = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent("WonderFlow waitlist")}&body=${encodeURIComponent(`Please add me to the waitlist: ${value}`)}`;
-    setState("done");
-  }
-
-  if (state === "done") {
-    return (
-      <div className={`flex items-center justify-center gap-2 rounded-full border border-gold/40 bg-glass px-5 py-3 text-sm text-foreground/90 ${big ? "sm:text-base" : ""}`}>
-        <Check className="size-4 text-gold" /> You're on the list — we'll be in touch soon.
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <form onSubmit={submit} className={`mx-auto flex w-full max-w-md flex-col gap-2 sm:flex-row ${big ? "max-w-lg" : ""}`}>
-        <input
-          type="email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@company.com"
-          className="min-w-0 flex-1 rounded-full border border-border bg-background/50 px-5 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-gold/50"
-        />
-        <GoldButton type="submit" className="justify-center">
-          {state === "sending" ? "Joining…" : "Join the waitlist"} <Send className="size-4" />
-        </GoldButton>
-      </form>
-      {state === "error" && (
-        <p className="mt-2 text-center text-xs text-rose-300">Something went wrong — email us at {CONTACT_EMAIL}.</p>
-      )}
-    </div>
-  );
-}
 
 const modules = [
   { icon: Users, label: "CRM" },
@@ -164,8 +80,8 @@ function Welcome() {
           <Link to="/auth" className="hidden sm:block">
             <GhostButton className="px-5 py-2.5">Sign in</GhostButton>
           </Link>
-          <a href="#waitlist">
-            <GoldButton className="px-5 py-2.5">Join the waitlist</GoldButton>
+          <a href="/auth?mode=signup">
+            <GoldButton className="px-5 py-2.5">Sign up</GoldButton>
           </a>
         </div>
       </header>
@@ -179,10 +95,15 @@ function Welcome() {
         <p className="rise mx-auto mt-6 max-w-xl text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg" style={{ animationDelay: "160ms" }}>
           Stop juggling six tools and a spreadsheet. WonderFlow OS runs your CRM, orders, inventory, finances, marketing and more — with an AI that thinks alongside you.
         </p>
-        <div className="rise mt-9" style={{ animationDelay: "240ms" }}>
-          <WaitlistForm />
-          <p className="mt-3 text-xs text-muted-foreground">Free to join · No card required · Early founders get lifetime perks.</p>
+        <div className="rise mt-9 flex flex-col items-center gap-3 sm:flex-row sm:justify-center" style={{ animationDelay: "240ms" }}>
+          <a href="/auth?mode=signup">
+            <GoldButton className="px-7 py-3 text-base">Sign up free <ArrowRight className="size-4" /></GoldButton>
+          </a>
+          <Link to="/auth">
+            <GhostButton className="px-7 py-3 text-base">Sign in</GhostButton>
+          </Link>
         </div>
+        <p className="rise mt-3 text-xs text-muted-foreground" style={{ animationDelay: "240ms" }}>Free to join · No card required · Early founders get lifetime perks.</p>
       </section>
 
       {/* Problem strip */}
@@ -253,10 +174,14 @@ function Welcome() {
       </section>
 
       {/* Final CTA */}
-      <section id="waitlist" className="mx-auto max-w-3xl scroll-mt-20 px-6 pb-24 text-center">
+      <section id="signup" className="mx-auto max-w-3xl scroll-mt-20 px-6 pb-24 text-center">
         <h2 className="text-4xl tracking-tight sm:text-5xl" style={{ fontFamily: "var(--font-display)" }}>Be <span className="gold-text italic">first</span> in line.</h2>
-        <p className="mx-auto mt-4 max-w-md text-sm text-muted-foreground sm:text-base">Join the waitlist for early access — and lifetime perks for the founders who get in first.</p>
-        <div className="mt-8"><WaitlistForm big /></div>
+        <p className="mx-auto mt-4 max-w-md text-sm text-muted-foreground sm:text-base">Sign up free — and lock in lifetime perks as one of the founding users.</p>
+        <div className="mt-8">
+          <a href="/auth?mode=signup">
+            <GoldButton className="px-7 py-3 text-base">Sign up free <ArrowRight className="size-4" /></GoldButton>
+          </a>
+        </div>
         <p className="mt-6 text-xs text-muted-foreground">
           Already have an account? <Link to="/auth" className="text-gold hover:underline">Sign in <ArrowRight className="inline size-3" /></Link>
         </p>

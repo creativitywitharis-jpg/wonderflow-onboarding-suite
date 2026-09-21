@@ -35,20 +35,16 @@ const perks = [
 ];
 
 function AuthScreen() {
-  // Every real path into this page (sign-out redirects, the session-expired
-  // guard in __root.tsx, "Sign in" links on the landing page, the
-  // reset-password back-link) is a RETURNING user -- there's no actual
-  // "create account" entry point anywhere in the app (the landing page's
-  // signup path is the waitlist form, not this page). Defaulting to signup
-  // meant nearly everyone landed on the wrong tab and, combined with
-  // Supabase's silent no-error response for an already-registered email,
-  // saw a misleading "check your email to confirm" message instead of ever
-  // actually signing in. The one real exception: arriving via a fresh team
-  // invite link (?invite=...) usually means a brand-new teammate who has no
-  // account yet, so that specific case still defaults to Create account.
-  const [mode, setMode] = useState<"signup" | "signin">(() =>
-    new URLSearchParams(window.location.search).get("invite") ? "signup" : "signin",
-  );
+  // Most paths into this page (sign-out redirects, the session-expired guard
+  // in __root.tsx, the reset-password back-link) are a RETURNING user, so
+  // this defaults to Sign in. Two real exceptions default to Create account
+  // instead: a fresh team invite link (?invite=...), and the landing page's
+  // "Sign up" button (?mode=signup), which is the app's actual signup entry
+  // point.
+  const [mode, setMode] = useState<"signup" | "signin">(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("invite") || params.get("mode") === "signup" ? "signup" : "signin";
+  });
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
